@@ -28,15 +28,15 @@ def pad(data, page=PAGE):
     return data if rem == 0 else data + b"\x00" * (page - rem)
 
 
-def build(kernel, cmdline, kernel_addr, tags_addr, name):
-    if len(kernel) > 32 * 1024 * 1024:
-        sys.exit("kernel is %d bytes, larger than the 32 MB partition" % len(kernel))
+def build(kernel, ramdisk, cmdline, kernel_addr, tags_addr, name):
+    if len(kernel) + len(ramdisk) > 32 * 1024 * 1024:
+        sys.exit("kernel+ramdisk larger than the 32 MB partition")
 
     hdr = bytearray(HEADER_V1)
     struct.pack_into("<8s", hdr, 0, b"ANDROID!")
     struct.pack_into("<I", hdr, 8, len(kernel))
     struct.pack_into("<I", hdr, 12, kernel_addr)
-    struct.pack_into("<I", hdr, 16, 0)          # ramdisk_size
+    struct.pack_into("<I", hdr, 16, len(ramdisk))  # ramdisk_size
     struct.pack_into("<I", hdr, 20, 0x21280000)  # ramdisk_addr
     struct.pack_into("<I", hdr, 24, 0)          # second_size
     struct.pack_into("<I", hdr, 28, 0x21180000)  # second_addr
@@ -56,17 +56,20 @@ def build(kernel, cmdline, kernel_addr, tags_addr, name):
     digest = hashlib.sha1()
     digest.update(kernel)
     digest.update(struct.pack("<I", len(kernel)))
-    digest.update(struct.pack("<I", 0))
+    digest.update(ramdisk)
+    digest.update(struct.pack("<I", len(ramdisk)))
     digest.update(struct.pack("<I", 0))
     hdr[576:596] = digest.digest()
 
-    return pad(bytes(hdr)) + pad(kernel)
+    out = pad(bytes(hdr)) + pad(kernel)
+    return out + pad(ramdisk) if ramdisk else out
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-k", "--kernel", required=True, help="arch/arm64/boot/Image")
+    ap.add_argument("-r", "--ramdisk", default=None, help="ramdisk (none for a bare kernel)")
     ap.add_argument("-o", "--output", required=True)
     ap.add_argument("-c", "--cmdline",
                     default="console=tty0 earlycon ignore_loglevel maxcpus=1")
@@ -77,12 +80,16 @@ def main():
 
     with open(args.kernel, "rb") as f:
         kernel = f.read()
+    ramdisk = b""
+    if args.ramdisk:
+        with open(args.ramdisk, "rb") as f:
+            ramdisk = f.read()
 
-    img = build(kernel, args.cmdline, args.kernel_addr, args.tags_addr, args.name)
+    img = build(kernel, ramdisk, args.cmdline, args.kernel_addr, args.tags_addr, args.name)
     with open(args.output, "wb") as f:
         f.write(img)
 
-    print("%s: %d bytes (kernel %d)" % (args.output, len(img), len(kernel)))
+    print("%s: %d bytes (kernel %d, ramdisk %d)" % (args.output, len(img), len(kernel), len(ramdisk)))
 
 
 if __name__ == "__main__":
