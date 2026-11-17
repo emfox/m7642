@@ -15,7 +15,7 @@
 | 功能 | 主线现状 | 厂商素材 | 缺口 | 估工 | 风险 |
 |---|---|---|---|---|---|
 | CPU / GIC / 定时器 | ✅ `arm,gic-400`、`armv8-timer` | ⚠️ 次核源码缺失 | `mstar-spin-table` 是 PM 窗口里的 3 字邮箱，非标准 spin-table；**P0 单核即可**，见 `smp.md` | P0 不阻塞，P2 后补 1–2 周 | 中 |
-| 串口 | ✅ 8250 通用 | ✅ | 物理基址未知（root 才能读） | 1 天 | 低 |
+| 串口 | ✅ 8250 通用 | ✅ 基址 `0x1F201300`、123 MHz | **已解决**：8 字节步距 = `reg-shift = <3>` + `reg-io-width = <4>`；细节见 `uart.md` | **0**（只需 DT 节点） | 低 |
 | **WiFi** | ✅ `mt76` 认 `0e8d:7663` | 闭源 .ko | USB 侧：16 位拼接访问器（~40 行）+ PHY 序列 + DT 节点；基址/中断已实测 | 1–2 周 | 低 |
 | **蓝牙** | ✅ `btusb` + `btmtk`（v6.6 有 `FIRMWARE_MT7663`） | 闭源 | 新内核对 MT7663 的路径要实测 | 1–2 周 | 中 |
 | 存储 eMMC | ❌ 私有 `mstar_mci` | ✅ `mstar_mci_v5.c` 源码 | 移植进 mmc 框架 | 3–6 周 | 中 |
@@ -34,7 +34,7 @@
 ## 2. 阶段划分（每阶段都有可见成果）
 
 **P0 · 最小可启动（1–2 周）**
-`dts/m7642-minimal.dts` + 主线 arm64 + initramfs + `simplefb` + MT7663。
+`arch/arm64/boot/dts/mstar/` 下的 dtsi + 板级 dts + 主线 arm64 + initramfs + `simplefb` + MT7663。
 判据：电视上出现内核日志，WiFi 能起来、能 ping。
 产出：证明"主线能在这块板子上跑"，这是后面一切的前提。
 

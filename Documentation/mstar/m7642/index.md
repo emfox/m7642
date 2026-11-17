@@ -10,6 +10,7 @@
 | [portability.md](portability.md) | 各驱动的离线编译移植成本评分（v7.3 + GCC 13.3） |
 | [roadmap.md](roadmap.md) | 阶段划分与估工 |
 | [display.md](display.md) | 面板怎么亮：GOP 寄存器探测 + simplefb 路线 |
+| [uart.md](uart.md) | 串口：基址、8 字节寄存器步距、中断号（零驱动工作） |
 | [gop-registers.md](gop-registers.md) | GOP 全量寄存器图、黄金基线、易变寄存器 |
 | [usb.md](usb.md) | USB 寄存器地图（四路基址、16 位拼接访问器） |
 | [usb-phy.md](usb-phy.md) | UTMI 上电序列：活体 vs m7322 源码对照 |
@@ -29,6 +30,8 @@
 4. **SMP 不是标准 spin-table**：release 寄存器在 `pm + 2*cpu-release-addr`，是 3 字邮箱 + ack。
    P0 单核即可。
 5. **HDMI 零源码**：GPL 包里 `drv/hdmitx4vx1/` 只剩一个 Kconfig；HDCP 是硬件引擎 + OTP 密钥。
+6. **串口不用写驱动**：`0x1F201300`，寄存器步距 8 字节（`reg-shift = <3>`），SPI 0，123 MHz。
+   厂商把 8250 偏移翻倍再 `<<2`，净值就是标准 8250 —— 见 `uart.md`。
 
 ## 在线实验纪律（代价换来的）
 

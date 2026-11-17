@@ -1,0 +1,80 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * TCL 65S535D Pro (FFALCON "鹤6"), MStar m7642 / MT9652
+ *
+ * Bring-up target: serial console plus the framebuffer the bootloader is
+ * already scanning out.  No display, USB or storage driver is involved --
+ * fbcon paints into the live scanout buffer, which is enough to see that
+ * the kernel boots.
+ */
+
+/dts-v1/;
+
+#include "m7642.dtsi"
+
+/ {
+	model = "TCL 65S535D Pro";
+	compatible = "tcl,65s535d-pro", "mstar,m7642";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		/*
+		 * maxcpus=1: see the CPU comment in m7642.dtsi.
+		 * ignore_loglevel so early failures are visible on fbcon too.
+		 */
+		bootargs = "console=tty0 earlycon ignore_loglevel maxcpus=1";
+		stdout-path = "serial0:115200n8";
+	};
+
+	/*
+	 * Three discontiguous windows, taken from /proc/iomem of the running
+	 * vendor kernel.  They match the vendor cmdline
+	 *   total_memory=3G LX_MEM=0x21600000
+	 *   LX_MEM2=0x54400000,0x49600000 LX_MEM3=0x180000000,0x40000000
+	 * The vendor DT only publishes the first 128 MB and gets the rest
+	 * from the bootloader, so these have to be spelled out here.
+	 */
+	memory@20200000 {
+		device_type = "memory";
+		reg = <0x0 0x20200000 0x0 0x21600000>;
+	};
+
+	memory@54400000 {
+		device_type = "memory";
+		reg = <0x0 0x54400000 0x0 0x49600000>;
+	};
+
+	memory@180000000 {
+		device_type = "memory";
+		reg = <0x1 0x80000000 0x0 0x40000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		framebuffer: framebuffer@2d100000 {
+			reg = <0x0 0x2d100000 0x0 0x7e9000>;
+			no-map;
+		};
+	};
+
+	/*
+	 * The bootloader has already programmed tcon and panel timing and
+	 * keeps scanning out of this buffer; nothing in the kernel touches
+	 * the display controller.  Sizes come from /sys/class/graphics/fb0.
+	 */
+	framebuffer@2d100000 {
+		compatible = "simple-framebuffer";
+		reg = <0x0 0x2d100000 0x0 0x7e9000>;
+		width = <1920>;
+		height = <1080>;
+		stride = <7680>;
+		format = "a8r8g8b8";
+		status = "okay";
+	};
+};

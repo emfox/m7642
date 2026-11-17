@@ -27,7 +27,7 @@
 | 1 | CPU 4×Cortex-A73 | `compatible="arm,cortex-a73","arm,armv8"`；`enable-method="mstar-spin-table"` | — | A73 ✓，但 `mstar-spin-table` **非标准**（主线只有 `psci`/`spin-table`） |
 | 2 | GIC-400 | `interrupt-controller@16001000`，`reg=0x16001000+0x16002000` | — | ✓ `arm,gic-400`（地址已拿到） |
 | 3 | 架构定时器 | `armv8-timer` | — | ✓ |
-| 4 | 串口 | `serial8250` + `CONFIG_SERIAL_8250_CONSOLE=y`，`console=ttyS0,115200` | 8250 通用 | ✓ `8250_of`，只缺 base 地址 |
+| 4 | 串口 | `serial8250` + `CONFIG_SERIAL_8250_CONSOLE=y`，`console=ttyS0,115200` | 8250 通用，8 字节步距 | ✓ `8250_of` 直接可用：`0x1F201300` + `reg-shift=<3>`，见 `uart.md` |
 | 5 | eMMC (BJTD4R) | `mmc0:0001 MMC_NAME=BJTD4R` | `mstar_mci` / `mstar_mci_v5.c`，`CONFIG_MMC_MSTAR_MMC_EMMC=y` | ✗ **非 sdhci、非 dw_mmc**，私有寄存器 |
 | 6 | I2C ×3 | `i2c-0/1/2` → "Mstar I2C adapter" | `Mstar-iic` | ✗ 私有；但 `CONFIG_I2C_ALGOBIT=y`，可用 `i2c-gpio` 绕 |
 | 7 | 以太网 | `eth0`，platform driver `Mstar-emac` | `mdrv_emac_v3.c` | ✗ 非 stmmac/dwmac |
@@ -100,7 +100,7 @@ mdrv_graphic_io.c:776   mstar_fb_fix.smem_start = recovery_addr;
 **fbcon 就能直接把文字画在电视上**，一行显示驱动都不用写。
 唯一前提是 bootloader 的显示初始化不被任何代码重置——而主线根本不会去碰 tcon。
 
-骨架 DTS 见 `dts/m7642-minimal.dts`（gic/memory/cpus/timer/simplefb 均已填真实值）。
+骨架 DTS 见 `arch/arm64/boot/dts/mstar/m7642.dtsi` + `m7642-tcl-65s535d.dts`。
 
 WiFi 这一半没这么幸运：MT7663 走 USB，主线 `mt76` 认这颗芯片，
 但 USB 需要 EHCI 节点 + PHY/供电，而 MStar 的 PHY 初始化在私有 PM 块里。

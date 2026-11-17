@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * MStar m7642 (marketed by MediaTek as MT9652)
+ *
+ * Only the blocks that mainline Linux can drive are described.  Everything
+ * else on this SoC is behind closed HAL code with no documented register
+ * map, so inventing nodes for it would only produce empty drivers.  See
+ * Documentation/mstar/m7642/ for what is known about each block.
+ *
+ * Naming: the vendor DT roots at "arm,m7642"; upstream wants the real
+ * vendor prefix, which is registered as "mstar," in vendor-prefixes.yaml.
+ */
+
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+
+/ {
+	compatible = "mstar,m7642";
+	#address-cells = <2>;
+	#size-cells = <2>;
+	interrupt-parent = <&gic>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73";
+			reg = <0x0>;
+			enable-method = "spin-table";
+			cpu-release-addr = <0x0 0x100510>;
+		};
+
+		cpu1: cpu@1 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73";
+			reg = <0x1>;
+			enable-method = "spin-table";
+			cpu-release-addr = <0x0 0x100510>;
+		};
+
+		cpu2: cpu@2 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73";
+			reg = <0x2>;
+			enable-method = "spin-table";
+			cpu-release-addr = <0x0 0x100510>;
+		};
+
+		cpu3: cpu@3 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73";
+			reg = <0x3>;
+			enable-method = "spin-table";
+			cpu-release-addr = <0x0 0x100510>;
+		};
+	};
+
+	/*
+	 * The firmware has no PSCI.  The vendor release protocol is a three
+	 * word mailbox at pm_base + (cpu-release-addr * 2) followed by an ack
+	 * handshake, which does not match mainline spin-table.  Booting with
+	 * maxcpus=1 is the only thing that works until a matching
+	 * cpu_operations implementation exists (see smp.md).
+	 */
+
+	gic: interrupt-controller@16001000 {
+		compatible = "arm,gic-400";
+		reg = <0x0 0x16001000 0x0 0x1000>,	/* GICD */
+		      <0x0 0x16002000 0x0 0x4000>;	/* GICC */
+		interrupt-controller;
+		#interrupt-cells = <3>;
+	};
+
+	/*
+	 * No timer node in the vendor DT -- its board code registers the
+	 * architected timer by hand.  The PPI assignments below are the
+	 * architectural ones and need no knowledge of the SoC.
+	 */
+	timer {
+		compatible = "arm,armv8-timer";
+		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
+	};
+
+	/*
+	 * 8250 with 8-byte register stride: register N lives at byte
+	 * offset N * 8.  The vendor patch redefines the register offsets to
+	 * 0x00/0x02/0x04.. and then shifts by two, which is the same thing
+	 * as reg-shift = <3> with 32-bit access.  123 MHz on real silicon.
+	 */
+	uart0: serial@1f201300 {
+		compatible = "ns16550a";
+		reg = <0x0 0x1f201300 0x0 0x100>;
+		clock-frequency = <123000000>;
+		reg-shift = <3>;
+		reg-io-width = <4>;
+		interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
+	};
+};
