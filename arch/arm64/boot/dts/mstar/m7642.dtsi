@@ -76,9 +76,15 @@
 	 * No timer node in the vendor DT -- its board code registers the
 	 * architected timer by hand.  The PPI assignments below are the
 	 * architectural ones and need no knowledge of the SoC.
+	 *
+	 * clock-frequency is 12 MHz, read out of the vendor DT (0xb71b00).
+	 * It has to be spelled out: mboot does not program CNTFRQ_EL0, and
+	 * without a frequency the driver cannot register a clock event and
+	 * the kernel panics before it can print anything.
 	 */
 	timer {
 		compatible = "arm,armv8-timer";
+		clock-frequency = <12000000>;
 		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
 			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
 			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
