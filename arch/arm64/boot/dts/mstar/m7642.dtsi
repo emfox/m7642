@@ -101,6 +101,22 @@
 	};
 
 	/*
+	 * mboot prints on UART2 (its env says console=ttyS2,115200n8) while
+	 * the vendor kernel uses UART0.  Enable this one as well when a serial
+	 * cable is attached, otherwise the bootloader stage looks silent.
+	 * Kept disabled by default: the input clock has not been measured yet.
+	 */
+	uart2: serial@1f220d00 {
+		compatible = "ns16550a";
+		reg = <0x0 0x1f220d00 0x0 0x100>;
+		clock-frequency = <123000000>;
+		reg-shift = <3>;
+		reg-io-width = <4>;
+		interrupts = <GIC_SPI 50 IRQ_TYPE_LEVEL_HIGH>;
+		status = "disabled";
+	};
+
+	/*
 	 * Four EHCI controllers, all with 16-bit registers (see
 	 * "split-registers" below).  The addresses are the vendor "ehc" base
 	 * inside the USB block at 0x1f200000, the interrupts are the vendor

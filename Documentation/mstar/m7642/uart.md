@@ -106,7 +106,32 @@ serinfo:1.0 driver revision:
 ⟹ **寄存器 N 位于字节偏移 N×8，32 位可读**，即 `reg-shift = <3>` + `reg-io-width = <4>` 成立。
 注意同一个值在 `+X` 和 `+X+4` 都出现（地址译码忽略 bit2），所以 32 位读不会读到拼接垃圾。
 
-## 五、两个已知风险
+## 五、哪个口才是"调试口"：mboot 用 ttyS2
+
+从 `mboot.bin` 内置 env 里读到的：
+
+```
+console=ttyS2,115200n8
+baudrate=115200
+```
+
+而厂商 Android 内核的 cmdline 是 `console=ttyS0`。设备上三个口实际并存：
+
+```
+0: uart:16550 port:FFFFFF800A201300 irq:32    <- Android 内核打日志
+1: uart:16550 port:FFFFFF800A220C00 irq:71
+2: uart:16550 port:FFFFFF800A220D00 irq:82    <- mboot 打日志
+```
+
+⟹ **接串口调试时两个口都要开**：从上电到内核接管之间，只有 ttyS2 有输出；
+内核起来之后才轮到 ttyS0。只接 ttyS0 会看到"mboot 阶段一片空白"，很容易误判成
+"串口没通"或"板子没启动"。
+
+在 DTS 上就是 `serial0`（`0x1F201300`）与 `serial2`（`0x1F220D00`）都 `status = "okay"`，
+cmdline 写 `console=ttyS0,115200 earlycon console=ttyS2,115200` —— 两个都收，
+哪个有输出都不会漏。
+
+## 六、两个已知风险
 
 1. **分频器写入需要等 USR 空闲。** 厂商在 `8250_port.c` 里重写了写除数的那一段：
    先置 MCR 环回，然后轮询 `USR` 的 busy/rx_busy 位最多 10 次，再写 LCR.DLAB 并回读确认。
@@ -116,7 +141,7 @@ serinfo:1.0 driver revision:
 2. **`USR` 不是标准 8250 的 SCR。** 主线不会读写 SCR，所以正常路径无关；
    但 `no-loopback-test` 可能需要加上，因为标准环回自检依赖 SCR。
 
-## 六、DTS 校验记录
+## 七、DTS 校验记录
 
 `arch/arm64/boot/dts/mstar/` 下的两个 DTS 已用内核自带 `scripts/dtc` 编译通过：
 
