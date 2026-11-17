@@ -23,6 +23,8 @@ fw/                            固件（.bin）分析脚本
 
 命名与分层尽量对齐内核树（`Documentation/<vendor>/<soc>/`、`arch/arm64/boot/dts/<vendor>/`、
 `drivers/<子系统>/`、`tools/`、`patches/`），这样将来 `git format-patch` 出来的东西可以直接往上游送。
+每一块最终落到哪个文件，见 `Documentation/mstar/m7642/upstreaming.md`——
+**主线是按子系统组织的，不存在"m7642 驱动目录"这种写法**。
 
 ## 现在到哪一步了
 

@@ -81,7 +81,33 @@ WiFi 的吞吐掉一半也能用。所以：
 
 ⟹ 这条从"中风险、1–2 周"下调成"**P0 不阻塞，P2 后补 1–2 周**"。
 
-## 六、待办
+## 六、主线先例：`arch/arm/mach-mstar/mstarv7.c`
 
-- [ ] 反汇编 `init_cpu` / `postboot_cpu`，定出邮箱三个字的含义
-- [ ] 从 mboot 侧确认从核在 `pm+0x200A20` 上到底怎么轮询（mboot 二进制在 `fw/mboot/`）
+同类 IP 在 ARMv7 的 MStar/SigmaStar SoC 上**主线已经支持**（`mstar,smpctrl` 绑定，
+`Documentation/devicetree/bindings/arm/mstar/mstar,smpctrl.yaml`），做法是三个 16 位写：
+
+```c
+#define MSTARV7_CPU1_BOOT_ADDR_HIGH	0x4c
+#define MSTARV7_CPU1_BOOT_ADDR_LOW	0x50
+#define MSTARV7_CPU1_UNLOCK		0x58
+#define MSTARV7_CPU1_UNLOCK_MAGIC	0xbabe
+...
+writew(bootaddr & 0xffff,        smpctrl + 0x50);	/* LOW  */
+writew((bootaddr >> 16) & 0xffff, smpctrl + 0x4c);	/* HIGH */
+writew(MSTARV7_CPU1_UNLOCK_MAGIC, smpctrl + 0x58);	/* 解锁 */
+arch_send_wakeup_ipi_mask(cpumask_of(cpu));
+```
+
+对照 m7642 的 `prepare_cpu`：**同样是三个 16 位写**（`+0 / +4 / +8`，值都 `& 0xffff`），
+位置同构、只是寄存器排布不同（msc313 是 `0x4c/0x50/0x58`，m7642 是连续的三个）。
+⟹ 高度可能同一个 IP 家族，邮箱三字大概率是 **{addr_low, addr_high, unlock_magic}**，
+魔数在 msc313 上是 `0xbabe`。
+
+已 dump 的 1 KB 窗口里没出现 `0xbabe`（`prepare_cpu` 只有前 0xd0 字节是有效代码），
+把 `len` 加到 4096 再 dump 一次就能确认。
+
+## 七、待办
+
+- [ ] 扩大 dump 到 4 KB，确认 `0xbabe` 是否出现在 `prepare_cpu` / `boot_cpu` 里
+- [ ] 若确认，直接照 `mstarv7.c` 改写 arm64 版 ops（工作量从"反推"降到"抄"）
+- [ ] 从 mboot 侧确认从核在 `pm+0x200A20` 上到底怎么轮询（mboot 二进制在 `tv/fw/mboot/`）

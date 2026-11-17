@@ -6,6 +6,7 @@
 | 文档 | 内容 |
 |---|---|
 | [hardware.md](hardware.md) | 这台机器上有什么硬件、主线认不认（14 项清单） |
+| [upstreaming.md](upstreaming.md) | 每一块最后落到主线哪个目录（按子系统，不按设备） |
 | [portability.md](portability.md) | 各驱动的离线编译移植成本评分（v7.3 + GCC 13.3） |
 | [roadmap.md](roadmap.md) | 阶段划分与估工 |
 | [display.md](display.md) | 面板怎么亮：GOP 寄存器探测 + simplefb 路线 |
