@@ -1,0 +1,111 @@
+// Minimal DT for booting a mainline arm64 kernel on MStar/MediaTek m7642 (TCL 65S535D Pro).
+// Goal: fbcon on screen + secondaries, no vendor display/USB/eMMC drivers.
+// Status: addresses taken from the live device tree and /proc/cmdline; unverified.
+//   gic / memory / cpus : from /proc/device-tree (dt/M7642-live.dts)
+//   fb address          : cmdline recovery_fbaddr=0x2D100000, consumed by
+//                         early_param("recovery_fbaddr") in mdrv_graphic_io.c,
+//                         i.e. the bootloader already owns a live scanout buffer.
+//   uart                : base address still unknown, node commented out.
+/dts-v1/;
+
+/ {
+	model = "M7642";
+	compatible = "mstar,m7642";
+	#address-cells = <0x2>;
+	#size-cells = <0x2>;
+	interrupt-parent = <&gic>;
+
+	chosen {
+		// tty0 = fbcon. Add "console=ttyS0,115200" once the uart base is known.
+		bootargs = "console=tty0 earlycon ignore_loglevel";
+	};
+
+	memory@20200000 {
+		device_type = "memory";
+		// vendor DT only publishes the LX_MEM window; cmdline says total_memory=3G
+		// split as LX_MEM=0x21600000 LX_MEM2=0x54400000,0x49600000 LX_MEM3=0x180000000,0x40000000
+		// TODO: replace with the real map before expecting more than 128 MB of RAM.
+		reg = <0x0 0x20200000 0x0 0x8000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <0x2>;
+		#size-cells = <0x2>;
+		ranges;
+
+		framebuffer: framebuffer@2d100000 {
+			reg = <0x0 0x2d100000 0x0 0x7e9000>;	// 1920*1080*4
+			no-map;
+		};
+	};
+
+	cpus {
+		#address-cells = <0x2>;
+		#size-cells = <0x0>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73", "arm,armv8";
+			reg = <0x0 0x0>;
+			enable-method = "spin-table";
+			cpu-release-addr = <0x0 0x100510>;	// same value the vendor DT uses
+		};
+		cpu1: cpu@1 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73", "arm,armv8";
+			reg = <0x0 0x1>;
+			enable-method = "spin-table";
+			cpu-release-addr = <0x0 0x100510>;
+		};
+		cpu2: cpu@2 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73", "arm,armv8";
+			reg = <0x0 0x2>;
+			enable-method = "spin-table";
+			cpu-release-addr = <0x0 0x100510>;
+		};
+		cpu3: cpu@3 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a73", "arm,armv8";
+			reg = <0x0 0x3>;
+			enable-method = "spin-table";
+			cpu-release-addr = <0x0 0x100510>;
+		};
+	};
+
+	// Vendor DT calls this "mstar-spin-table"; mainline only knows "spin-table".
+	// If secondaries never come up, firmware has no PSCI and the release protocol
+	// differs -- then the only path is "maxcpus=1" plus a vendor-style trampoline.
+
+	gic: interrupt-controller@16001000 {
+		compatible = "arm,gic-400";
+		reg = <0x0 0x16001000 0x0 0x1000>,	// GICD
+		      <0x0 0x16002000 0x0 0x4000>,	// GICC
+		      <0x0 0x16004000 0x0 0x2000>,	// GICH
+		      <0x0 0x16006000 0x0 0x2000>;	// GICV
+		interrupt-controller;
+		#interrupt-cells = <0x3>;
+	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		interrupts = <0x1 0xd 0x4>,	// NS phys
+			     <0x1 0xe 0x4>,	// virtual
+			     <0x1 0xb 0x4>,	// secure phys
+			     <0x1 0xa 0x4>;	// hyp
+	};
+
+	// Bootloader already programmed tcon/panel and keeps scanning out of this buffer.
+	// simplefb just paints into it -- no display driver needed.
+	framebuffer@2d100000 {
+		compatible = "simple-framebuffer";
+		reg = <0x0 0x2d100000 0x0 0x7e9000>;
+		width = <1920>;
+		height = <1080>;
+		stride = <7680>;	// matches /sys/class/graphics/fb0/stride
+		format = "a8r8g8b8";	// 32bpp, 4 bytes/pixel
+	};
+
+	// TODO: uart@<base> { compatible = "ns16550a"; reg = <...>; clock-frequency = <...>; };
+	// Base is the only number missing; /proc/tty/driver/serial and /proc/iomem are root-only.
+};
