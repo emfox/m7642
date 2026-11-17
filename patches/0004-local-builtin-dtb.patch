@@ -1,0 +1,124 @@
+From b685fe973dfb340d83c58fd9bd867e1f78e0a3bf Mon Sep 17 00:00:00 2001
+From: emfox <emfox@debian.org>
+Date: Tue, 17 Nov 2026 18:38:18 +0800
+Subject: [PATCH] arm64: mstar: use a device tree built into the image
+
+Local bring-up aid, not for upstream.
+
+The m7642 bootloader reads its DTB from a dedicated raw partition which the
+stock kernel depends on as well, and there is no fallback path: whatever ends
+up there is used for both the normal and the recovery boot.  Replacing it from
+Linux is therefore a one-way door, while the tree we need differs from the
+vendor's (memory nodes, an armv8 timer, our own peripherals).
+
+Carry the board DTB in the image and point __fdt_pointer at it instead, so the
+firmware partition stays untouched and the stock boot path keeps working.
+
+Off by default; enabled through CONFIG_MSTAR_M7642_BUILTIN_DTB.  The device
+tree must be built before the image (`make dtbs` first) because the blob is
+pulled in with .incbin.
+
+Signed-off-by: emfox <emfox@debian.org>
+---
+ arch/arm64/Kconfig.platforms  | 14 ++++++++++++++
+ arch/arm64/kernel/Makefile    |  2 ++
+ arch/arm64/kernel/m7642-dtb.S | 22 ++++++++++++++++++++++
+ arch/arm64/kernel/setup.c     | 12 ++++++++++++
+ 4 files changed, 50 insertions(+)
+ create mode 100644 arch/arm64/kernel/m7642-dtb.S
+
+diff --git a/arch/arm64/Kconfig.platforms b/arch/arm64/Kconfig.platforms
+index 8a0d328..d6823d3 100644
+--- a/arch/arm64/Kconfig.platforms
++++ b/arch/arm64/Kconfig.platforms
+@@ -196,6 +196,20 @@ config ARCH_MSTAR
+ 	  This enables support for MStar TV SoCs, now part of MediaTek.
+ 	  Currently covers the m7642, marketed as the MT9652.
+ 
++config MSTAR_M7642_BUILTIN_DTB
++	bool "Use the built-in device tree on m7642"
++	depends on ARCH_MSTAR
++	help
++	  Bring-up aid.  Ignore the device tree passed by the bootloader and
++	  use the board DTB compiled into the image instead.
++
++	  This bootloader reads its DTB from a dedicated raw partition that
++	  the stock kernel depends on as well, so replacing it there is a
++	  one-way door.  Carrying our own copy keeps that partition intact.
++
++	  Say N for a kernel that should honour the firmware's device tree.
++
++
+ config ARCH_MESON
+ 	bool "Amlogic Platforms"
+ 	help
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index ea66339..b4268f2 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -88,5 +88,7 @@ ifeq ($(CONFIG_DEBUG_EFI),y)
+ AFLAGS_head.o += -DVMLINUX_PATH="\"$(abspath vmlinux)\""
+ endif
+ 
++obj-$(CONFIG_MSTAR_M7642_BUILTIN_DTB)	+= m7642-dtb.o
++
+ # for cleaning
+ subdir- += vdso vdso32
+diff --git a/arch/arm64/kernel/m7642-dtb.S b/arch/arm64/kernel/m7642-dtb.S
+new file mode 100644
+index 0000000..5ac4051
+--- /dev/null
++++ b/arch/arm64/kernel/m7642-dtb.S
+@@ -0,0 +1,22 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * LOCAL BRING-UP AID -- not intended for upstream.
++ *
++ * Embeds the board DTB into the image so the kernel can ignore the device
++ * tree handed over by the bootloader.  This bootloader loads its DTB from a
++ * dedicated raw partition that the stock kernel also depends on, so writing
++ * our own tree there cannot be undone from Linux.  Carrying the tree in the
++ * image keeps that partition pristine.
++ *
++ * The .dtb is produced by `make dtbs` and found relative to the build root,
++ * so device trees must be built before the image.
++ */
++
++	.section .init.rodata, "a"
++	.balign 8
++	.global __m7642_dtb
++__m7642_dtb:
++	.incbin "arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dtb"
++	.global __m7642_dtb_end
++__m7642_dtb_end:
++	.balign 8
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+index 29c6100..4fa06df 100644
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -59,6 +59,10 @@ static int num_standard_resources;
+ static struct resource *standard_resources;
+ 
+ phys_addr_t __fdt_pointer __initdata;
++
++#ifdef CONFIG_MSTAR_M7642_BUILTIN_DTB
++extern char __m7642_dtb[];
++#endif
+ u64 mmu_enabled_at_boot __initdata;
+ 
+ /*
+@@ -289,6 +293,14 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	early_fixmap_init();
+ 	early_ioremap_init();
+ 
++#ifdef CONFIG_MSTAR_M7642_BUILTIN_DTB
++	/*
++	 * Bring-up aid: ignore the firmware's device tree and use the board
++	 * DTB carried in the image.  The vendor tree lives in a raw partition
++	 * the stock kernel also uses, so it must not be replaced from Linux.
++	 */
++	__fdt_pointer = __pa_symbol(__m7642_dtb);
++#endif
+ 	setup_machine_fdt(__fdt_pointer);
+ 
+ 	/*

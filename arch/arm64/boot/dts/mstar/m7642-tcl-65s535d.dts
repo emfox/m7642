@@ -24,8 +24,10 @@
 		/*
 		 * maxcpus=1: see the CPU comment in m7642.dtsi.
 		 * ignore_loglevel so early failures are visible on fbcon too.
+		 * Two consoles on purpose: fbcon works without any driver (the
+		 * bootloader keeps scanning out) while ttyS0 needs the pads.
 		 */
-		bootargs = "console=tty0 earlycon ignore_loglevel maxcpus=1";
+		bootargs = "console=tty0 console=ttyS0,115200n8 earlycon ignore_loglevel maxcpus=1";
 		stdout-path = "serial0:115200n8";
 	};
 

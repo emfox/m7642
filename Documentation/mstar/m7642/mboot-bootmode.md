@@ -193,20 +193,43 @@ offset 51:  全 0 到 4K 结束
 command 字段不是标准 BCB 的 32 字节——它后面紧跟着一串值。所以**写更长的命令会覆盖它们**，
 必须先备份、后校验。
 
-### mboot 不清理 BCB（实测，这是关键结论）
+### "mboot 不清理 BCB" —— 这个结论已被推翻（2026-11-17 18:22 复测）
 
-做了一次受控对照：只做普通 `adb reboot`，不动任何分区，然后读回 BCB：
+第一次做的对照是"只做普通 `adb reboot`，读回 BCB，发现还是 `boot-adb`"，于是判成"非消费式"。
+**这个推理是错的**，因为被测的命令本身是 mboot 不认识的 `boot-adb`。
+
+改用 mboot 认得的 `boot-poweron` 重做，写入后再重启，读回：
 
 ```
-重启前: 62 6f 6f 74 2d 61 64 62 00 e7 3b 00 b3 e7 3b 00 ...   ("boot-adb")
-重启后: 62 6f 6f 74 2d 61 64 62 00 e7 3b 00 b3 e7 3b 00 ...   ("boot-adb")  ← 原样保留
+写入前写入的:  62 6f 6f 74 2d 70 6f 77 65 72 6f 6e 00   ("boot-poweron")
+重启后读回:    62 6f 6f 74 2d 61 64 62 00 72 6f 6e 00   ("boot-adb\0" + "ron\0")
+                                             ^^^^^^^^^^ 后 3 字节是 "boot-poweron" 的尾巴
 ```
 
-⟹ **BCB 是非消费式的**：mboot 读过之后不清空。
+前 8 字节被改写成 `boot-adb`，偏移 9 起还是我们写的 `...ron`。这说明：
 
-**推论**：一旦把 command 写成 `boot-recovery`，而 recovery 里的内核又起不来（不会执行
-`finish_recovery()` 去清 BCB），那么**每次重启都会再进一次 recovery —— 稳定死循环**。
-这条把"改成 recovery 就能安全试"的想法彻底否掉了。
+- **Android 每次启动都会把 command 字段重写成 `boot-adb`**（只覆盖 8 字节 + NUL），
+- 所以"重启后还是 `boot-adb`"根本不能证明 mboot 清没清——它被覆盖了。
+
+⟹ **mboot 对 `boot-recovery` 到底消费不消费，目前仍是未知**。要判定它，只能拿一个
+认识、又能观察到副作用的命令做实验；而唯一有意义的观察量（`boot-recovery` 之后能不能回到
+正常启动）正是我们不敢赌的那一步。**在拿到安全网之前，按"非消费式"处理。**
+
+### 另一条通路阵亡：eMMC 上没有任何 FAT 分区
+
+内置默认 env 里有标准的 `bootcmd`：
+
+```
+bootcmd=if mmc rescan 0; then if run loadbootscript; then run bootscript; \
+        else if run loaduimage; then run mmcboot; fi; fi; fi
+loadbootscript=fatload mmc 0 ${loadaddr} boot.scr
+bootscript=echo Running bootscript ...; source ${loadaddr}
+```
+
+一度以为可以往 FAT 分区放一个 `boot.scr` 来执行任意 U-Boot 命令（零 flash 写入）。
+实测扫描全部 26 个分区的首扇区，**没有一个带 FAT 签名**（`fatstr=0`），也没有 FAT 的 BPB 结构。
+⟹ `fatload mmc 0 boot.scr` 必然失败，这段 `bootcmd` 是 U-Boot 的通用默认值、在本机上是死代码。
+（这也解释了为什么它指向 `uImage` 而我们这台机器根本没有 uImage。）
 
 ### recovery 无法远程控制（实测）
 
