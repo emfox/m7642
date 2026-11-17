@@ -236,6 +236,30 @@ v3 有全部板级分区、v4 结构与官方完全一致，两者都被拒 ⟹ 
 3. **命令条数不是闸门**（147 条 vs 官方 150 条照样过），`check_script_cmd_count`
    只防空脚本/溢出，不是"必须 150 条"。
 
+#### 补记（23:20）：`/data` 不是被脚本擦的，是 mboot 自己擦的
+
+上表那次"成功"刷完后，`/data/app` 为 0 个应用、`/data/data` 0 个包、
+`/data/system/packages.xml` 时间戳是刷机后首次启动（23:15）。即 **`/data` 被格式化了**，
+"保住 `/data`"这个目标没达成。（用户观察到 WiFi 密码还在，是因为它存在 `persist` 分区——
+升级脚本的 20 个分区里没有 `persist`/`MPOOL`/`eeprom_a`，与 `/data` 无关。）
+
+原因在 mboot 里：
+
+```
+do_wipe_datacache_check
+do recovery wipe data or cache.
+```
+
+⟹ **按键强制升级这条路径下，mboot 自己会擦 data/cache**，与脚本里有无
+`mmc erase.p userdata` 无关。所以「删 userdata 段以保住数据」这个思路从一开始就不成立，
+之前所有围绕它的推理都白费。
+
+**推论**：想保住数据，唯一可能是**不触发 wipe 判断**，而 wipe 判断大概率挂在
+「升级了 system/vendor」上。所以**只写 `recovery` 的部分升级包**才是换内核的正确路径——
+它不碰 system/vendor，应当不触发 `do_wipe_datacache_check`。
+mboot 里的 `do_usb_partial_upgrade_to_emmc`（日志 `partial upgrade from USB to eMMC`）
+正是为这种场景准备的。
+
 #### 前面三次失败全部归因错误
 
 | 时间 | 包 | 当时的结论 | 真实原因 |
