@@ -68,7 +68,7 @@ def build(lines, payload_paths, out, tag=PRODUCT_TAG):
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("-o", "--out", required=True)
+    ap.add_argument("-o", "--out", required=False, help="output file (not needed with --dry-run)")
     ap.add_argument("-p", "--part", action="append", default=[],
                     metavar="NAME=FILE[:1]",
                     help="partition to erase and write; append :1 for the vendor's trailing flag")
@@ -90,6 +90,8 @@ def main():
     if a.dry_run:
         print("\n".join(lines))
         return
+    if not a.out:
+        sys.exit("-o is required unless --dry-run")
     total = build(lines, paths, a.out, a.tag)
     print("%s: %d bytes (payload %d)" %
           (a.out, total, sum(os.path.getsize(p) for p in paths)))
