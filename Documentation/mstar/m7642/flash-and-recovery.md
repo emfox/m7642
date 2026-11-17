@@ -181,28 +181,59 @@ v5 是决定性反例：payload 改过、AllBinCRC 早就对不上，照样刷�
 **也排除「版本要比机器新」**：救砖时刷的就是同版本（V147 刷 V147）的官方包，成功了。
 （这条路一度看起来最像，因为电视自带「本地升级」会报"无可升级版本"，但那是 UI 自己的判断。）
 
-⟹ 剩下的解释只有一个方向：**脚本除了 CRC 之外还有结构性要求**，而我们的包与官方包之间
-唯一的*结构*差别是——官方脚本第一个 part 是 `tvconfig`，而我们的包一个板级分区都没有。
-mboot 在升级前后要读 tvconfig 拿板级参数／升级配置，缺这一块可能直接放弃整个包。
+**「缺板级分区」这个假设已被证伪**（2026-11-17 22:10）。逐包统计 `# File Partition:`：
+
+```
+官方      20 段: tvconfig,mboot,recovery,boot,optee,armfw,RT_PM,dtb,frc,cm4,mbootbak,...
+v3        19 段: 同上，只少了 userdata（板级分区 tvconfig/mboot/mbootbak 全在）
+v4        20 段: 与官方逐段相同
+v5        20 段: 与官方逐段相同
+```
+
+v3 有全部板级分区、v4 结构与官方完全一致，两者都被拒 ⟹ 板级分区不是闸门。
+
+**真正的第二条闸门：脚本命令条数。** mboot 内建符号表里有连续一串函数
+（`check_script_crc` → `check_script_cmd_count` → `read_dynamic_script_size` →
+`LoadScript2DramByUsb` → `_check_upgrade_script_cmd_count` → `get_script_next_line` →
+`loadscript` → `runscript_linebyline`），配套日志串 `Empty Script`、
+`Size is not enough, Cmd Too Many !!!!!!!!!!!!!!!!!`。实测脚本命令条数：
+
+| 包 | 命令数 | 脚本 | header CRC | 结果 |
+|---|---|---|---|---|
+| 官方 / v5 | 150 | 原样 | 对 | 能刷 |
+| v3 | 147 | 删 userdata 段 | 错（没重算） | 被拒 |
+| v4 | 150 | 改一行 bootargs | 错（没重算） | 被拒 |
+| 自制 20 KB / 32 MB | **3** | 全新 | 对 | 被拒 |
+
+⟹ 两个假设各管一半、互不矛盾：**v3/v4 死于 header CRC 没重算；自制的两张盘死于命令数
+只有 3 条**（被当成 `Empty Script`）。这也解释了为什么重算 CRC 之后仍被拒 —— CRC 不是我那
+两张盘的死因。具体阈值未知（只知道有这个检查），但 147 与 3 之间差了两个数量级。
+
+旁证：mboot 里还有 `setenv MstarUpgrade_complete 0`（升级开始时置 0）与官方脚本末尾的
+`setenv MstarUpgrade_complete 1`（升级完成后置 1）。这是"升级未完成则下次上电续刷"的标记
+机制，也是"升级中途绝不能断电"的成因。
 
 `0xb74aabba` 的算法也还没对上：官方包试了 8 种 CRC-32 变体（反射/非反射 × init 0/0xFFFFFFFF
 × xorout 0/0xFFFFFFFF）与 3 种覆盖范围（`[0x4000,EOF-32)`、`[0,EOF-32)`、`[0x4000,EOF)`），
 最接近的是标准 CRC-32 的 `0x164cb165`，全不匹配。mboot 里另有 `hw_crc32_04C11DB7`，
 可能是硬件 CRC 单元的分块口径。
 
-### 下一步：先验"结构"而不是"校验"
+### 下一步：拿官方包做减法，而不是自制造加法
 
-最便宜且零风险的对照实验：做一张**只写 `tvconfig`** 的盘（内容 = 设备上现在的 tvconfig，
-原样回写，32 MB），命令形状与官方第一段逐字同形。它把"缺板级分区"这个变量单独隔离出来：
+自制包要先解决"命令数阈值"这一个未知量，而且不知道除了条数还有没有别的检查。
+更划算的是从官方包**做减法**：`patch-header.py` 删掉 `# File Partition: userdata` 整段并
+重算 header CRC，payload 一字节不动（AllBinCRC 因此仍与官方值一致）。
 
-- 能刷 ⟹ 结构是闸门，接着把 `misc` / `recovery` 和 `tvconfig` 拼在一张盘里；
-- 也不能刷 ⟹ 与"结构"无关，回到校验方向（那就要么抓 `hw_crc32_04C11DB7` 的口径，
-  要么放弃自制包，用 `patch-header.py` 只改官方包）。
+```
+150 条命令 - userdata 的 3 条 = 147 条    ← 远高于任何可能的阈值
+```
 
-### 另一条不依赖自制的路：只改官方包的脚本
+- **能刷** ⟹ 脚本可改、CRC 重算即合法，同时直接得到一张**保住 `/data` 的全量包**
+  （应用、登录态、答题闸门的 state 全留下）。判据很干净：刷完看 Projectivy / F-Droid /
+  tv-quiz 还在不在，在就是在 `userdata` 段被删掉了；
+- **不能刷** ⟹ 还有第三种约束，且与命令数无关，那就放弃自制包，只保留官方全量包做兜底。
 
-AllBinCRC 不被强制这一条如果成立，那「payload 一字节不动、只删 `userdata` 段并重算 header CRC」
-的全量包就能保住 `/data`。工具：`tools/host/rescue/patch-header.py`。没实测。
+零风险：脚本里的擦除命令本身就在被删的那一段里，删掉等于"不擦 `/data`"，不会造成新的破坏。
 
 ### 剩余待验证
 
