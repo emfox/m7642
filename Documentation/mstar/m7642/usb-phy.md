@@ -143,6 +143,44 @@ m7642 的机器码里**没有** `movz #0x10e0`、也没有对 `UTMI+0x48`（0x24
 `0x21`(HS connection fail into VFALL)、`0x41`(EOF1 window)、`0x84`(chirp detect)、
 `0x29`(chirp source select)、`0x1d`(MIU 下界地址)。
 
+## 四ter、驱动已写出：`patches/0002-phy-mstar-usb2-utmi.patch`
+
+`drivers/phy/mstar/phy-mstar-usb.c`，310 行，外加 Kconfig/Makefile 和
+`Documentation/devicetree/bindings/phy/mstar,usb2-phy.yaml`。用 GCC 13.3 交叉编译通过、零告警。
+
+结构：
+
+```c
+static void __iomem *reg16(void __iomem *base, unsigned int reg)
+{
+	return base + reg * 2;          /* 寄存器 N 在字节偏移 N*2 */
+}
+static void __iomem *reg16_hi(void __iomem *base, unsigned int reg)
+{
+	return base + reg * 2 - 1;      /* 厂商的 "N*2-1" 高字节访问 */
+}
+```
+
+顺序完全照着 `Titania3_series_start_ehc()`：置端接覆盖 → UPLL → 释放 UHC reset →
+squelch → CA 校准（带 100×10us 超时，**没有照抄厂商的死循环**）→ UHC select（OTG 口跳过）→
+VBUS → 撤端接覆盖 → UHC MIU 效率 → TX/RX 若干模拟微调 → 硬件 chirp/disconnect 电平 →
+eye 参数 → 一串 ECO。
+
+每一处写前面都有一行注释说明意图，ECO 块各自独立成行并标注 `ECO:`。
+三个窗口用 `reg-names = "utmi","usbc","uhc"` 传，档位参数可选覆盖：
+
+| 属性 | 默认 |
+|---|---|
+| `mstar,squelch` | `0x02` |
+| `mstar,disconnect` | `0x60` |
+| `mstar,chirp` | `0x80` |
+| `mstar,eye-param` | `10 02 00 81` |
+| `mstar,otg-port` | 无（有则跳过 UHC select 那一步） |
+
+**未在硬件上跑过。** 这是本轮能给出的最强形态：所有输入都有出处，但"能不能点亮"要等
+串口通了才能回答。下一步把它接进 DT（四个 PHY 节点 + 给 EHCI 节点加 `phys`），
+再把 `status` 从 disabled 改掉。
+
 ## 五、对移植的意义
 主线要跑 MT7663，PHY 侧只需：
 
