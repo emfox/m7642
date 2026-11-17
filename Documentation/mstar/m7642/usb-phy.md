@@ -86,8 +86,32 @@ m7642 的机器码里**没有** `movz #0x10e0`、也没有对 `UTMI+0x48`（0x24
 ⟹ m7642 的 UPLL 设置被简化成"置一个使能位"。**移植时这一段要按 m7642 写**，
 其余照抄。这一处不影响时序主干（CA 校准、端接覆盖、VBUS 都在）。
 
-## 五、对移植的意义
+## 四bis、哪些可选分支真的编进去了
 
+源码里整段序列被一堆 `#ifdef` 和 `flag & EHCFLAG_*` 包着。从 `physeq.asm` 里按特征立即数
+反查，能定下"编进去了"这一层：
+
+| 源码分支 | 特征指令 | 结论 |
+|---|---|---|
+| `ENABLE_USB_HS_CUR_DRIVE_DM_ALLWAYS_HIGH_PATCH` | `#0x10*2=0x20`、`#0x52*2=0xa4` 都在主路径 | 编进去了 |
+| `EHCFLAG_TESTPKG` | `movz w1,#0x2084` + `strh [x19,#0x4]` | **已确认执行**（0x37c0） |
+| `ENABLE_DOUBLE_DATARATE_SETTING` | 0xd*2-1 = `0x19`，全文件无此偏移 | **没编进去** |
+| `EHCFLAG_DOUBLE_DATARATE` | `movz w0,#0x76`（480×1.5） | 编进去了，但走不走到由运行时 flag 定 |
+| `EHCFLAG_DPDM_SWAP` | `add x1,x19,#0x15` 多处 | 编进去了，同上 |
+| squelch（`u_param->squelch`） | `add x0,x19,#0x54`（0x2a*2）在主路径 | 编进去了，但值为 0 时跳过 |
+
+**所以还差两个运行时输入**，都不是从二进制里看一眼就能得到的：
+
+1. **`hw_init` 的 flag 字**：`ehci_mstar_hw_init(hcd, utmi, usbc, uhc, flag)` 的第五个参数。
+   它决定 TESTPKG / DOUBLE_DATARATE / DPDM_SWAP / OTG 里哪些位是置的。
+   要定下来得顺着 `ehci_hcd_mstar_drv_probe` 里的 `bl` 找到调用点、再看 w4 的来源，
+   而 probe 的 3 KB dump 里 `bl` 目标都是相对地址，需要先把每个目标反查成函数名。
+2. **squelch 值**：`hcd->utmi_param.squelch` 由板级配置填，m7322 的默认值不能直接套。
+
+在有把握之前不动手写 PHY 驱动 —— 猜错一个 bit 的后果是端口起不来或者挂死，
+而这两种现象在串口没通之前都很难和别的原因区分开。
+
+## 五、对移植的意义
 主线要跑 MT7663，PHY 侧只需：
 
 1. 换基址：端口 3 的 `utmi=USB+0x02900`、`usbc=USB+0x02400`、`ehc=USB+0x02600`
