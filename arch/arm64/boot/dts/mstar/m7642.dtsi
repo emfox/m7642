@@ -119,6 +119,7 @@
 		compatible = "mstar,m7642-ehci", "generic-ehci";
 		reg = <0x0 0x1f204800 0x0 0x200>;
 		interrupts = <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH>;
+		phys = <&usb_phy1>;
 		split-registers;
 		status = "disabled";
 	};
@@ -127,6 +128,7 @@
 		compatible = "mstar,m7642-ehci", "generic-ehci";
 		reg = <0x0 0x1f201a00 0x0 0x200>;
 		interrupts = <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
+		phys = <&usb_phy2>;
 		split-registers;
 		status = "disabled";
 	};
@@ -135,6 +137,7 @@
 		compatible = "mstar,m7642-ehci", "generic-ehci";
 		reg = <0x0 0x1f202600 0x0 0x200>;
 		interrupts = <GIC_SPI 36 IRQ_TYPE_LEVEL_HIGH>;
+		phys = <&usb_phy3>;
 		split-registers;
 		status = "disabled";
 	};
@@ -143,7 +146,55 @@
 		compatible = "mstar,m7642-ehci", "generic-ehci";
 		reg = <0x0 0x1f6e2800 0x0 0x200>;
 		interrupts = <GIC_SPI 62 IRQ_TYPE_LEVEL_HIGH>;
+		phys = <&usb_phy4>;
 		split-registers;
+		status = "disabled";
+	};
+
+	/*
+	 * One PHY per port.  The UHC window is the same register file the EHCI
+	 * node maps, hence the overlap; the driver maps it without reserving.
+	 * Port 1 is the OTG capable one, which is why its PHY is told to leave
+	 * the UHC select bit to the device controller.
+	 */
+	usb_phy1: phy@1f207500 {
+		compatible = "mstar,m7642-usb2-phy";
+		reg = <0x0 0x1f207500 0x0 0x200>,
+		      <0x0 0x1f200e00 0x0 0x100>,
+		      <0x0 0x1f204800 0x0 0x200>;
+		reg-names = "utmi", "usbc", "uhc";
+		#phy-cells = <0>;
+		mstar,otg-port;
+		status = "disabled";
+	};
+
+	usb_phy2: phy@1f207400 {
+		compatible = "mstar,m7642-usb2-phy";
+		reg = <0x0 0x1f207400 0x0 0x200>,
+		      <0x0 0x1f200f00 0x0 0x100>,
+		      <0x0 0x1f201a00 0x0 0x200>;
+		reg-names = "utmi", "usbc", "uhc";
+		#phy-cells = <0>;
+		status = "disabled";
+	};
+
+	usb_phy3: phy@1f202900 {
+		compatible = "mstar,m7642-usb2-phy";
+		reg = <0x0 0x1f202900 0x0 0x200>,
+		      <0x0 0x1f202400 0x0 0x100>,
+		      <0x0 0x1f202600 0x0 0x200>;
+		reg-names = "utmi", "usbc", "uhc";
+		#phy-cells = <0>;
+		status = "disabled";
+	};
+
+	usb_phy4: phy@1f6e2400 {
+		compatible = "mstar,m7642-usb2-phy";
+		reg = <0x0 0x1f6e2400 0x0 0x200>,
+		      <0x0 0x1f6e2200 0x0 0x100>,
+		      <0x0 0x1f6e2800 0x0 0x200>;
+		reg-names = "utmi", "usbc", "uhc";
+		#phy-cells = <0>;
 		status = "disabled";
 	};
 };

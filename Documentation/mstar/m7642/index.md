@@ -17,6 +17,7 @@
 | [hdmi.md](hdmi.md) | HDMI RX/TX 盘点（两条链路都零源码） |
 | [smp.md](smp.md) | 多核启动协议（非标准 spin-table） |
 | [remote-testing.md](remote-testing.md) | 不插 U 盘、不按键的远程验证路径 |
+| [boot-test.md](boot-test.md) | 启动路径：实测 boot image 参数、分区、可观察性 |
 | [online-test-ladder.md](online-test-ladder.md) | 在线验证的阶梯：从空模块到真探针 |
 
 ## 可背下来的几条

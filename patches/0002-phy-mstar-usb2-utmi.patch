@@ -1,6 +1,6 @@
-From 076d4bedcadcec9c453987b0bb0b8ce208ad64d5 Mon Sep 17 00:00:00 2001
+From a9777661863ed29300a8790a43dab2496b4a08b8 Mon Sep 17 00:00:00 2001
 From: emfox <emfox@debian.org>
-Date: Tue, 17 Nov 2026 16:55:20 +0800
+Date: Tue, 17 Nov 2026 17:07:50 +0800
 Subject: [PATCH] phy: mstar: add USB2 UTMI PHY driver for m7642
 
 MediaTek MT9652 (MStar m7642) has four EHCI ports, each with its own UTMI
@@ -19,13 +19,13 @@ port from the device tree.
 
 Signed-off-by: emfox <emfox@debian.org>
 ---
- .../bindings/phy/mstar,usb2-phy.yaml          |  75 +++++
+ .../bindings/phy/mstar,usb2-phy.yaml          |  78 +++++
  drivers/phy/Kconfig                           |   1 +
  drivers/phy/Makefile                          |   1 +
  drivers/phy/mstar/Kconfig                     |   6 +
  drivers/phy/mstar/Makefile                    |   2 +
- drivers/phy/mstar/phy-mstar-usb.c             | 310 ++++++++++++++++++
- 6 files changed, 395 insertions(+)
+ drivers/phy/mstar/phy-mstar-usb.c             | 326 ++++++++++++++++++
+ 6 files changed, 414 insertions(+)
  create mode 100644 Documentation/devicetree/bindings/phy/mstar,usb2-phy.yaml
  create mode 100644 drivers/phy/mstar/Kconfig
  create mode 100644 drivers/phy/mstar/Makefile
@@ -33,10 +33,10 @@ Signed-off-by: emfox <emfox@debian.org>
 
 diff --git a/Documentation/devicetree/bindings/phy/mstar,usb2-phy.yaml b/Documentation/devicetree/bindings/phy/mstar,usb2-phy.yaml
 new file mode 100644
-index 0000000..013c52e
+index 0000000..6f36c73
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/phy/mstar,usb2-phy.yaml
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,78 @@
 +# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 +%YAML 1.2
 +---
@@ -50,6 +50,9 @@ index 0000000..013c52e
 +  SoC's USB block: the UTMI analog registers, the USBC MAC control registers
 +  and the UHC host glue registers.  Registers in all three windows are 16 bits
 +  wide and addressed at twice their register number.
++
++  The UHC window is the host controller's own register file, so these regions
++  overlap the EHCI node and are mapped without reserving them.
 +
 +maintainers:
 +  - Emfox Zhou <emfox@debian.org>
@@ -158,10 +161,10 @@ index 0000000..9778133
 +obj-$(CONFIG_PHY_MSTAR_USB2)		+= phy-mstar-usb.o
 diff --git a/drivers/phy/mstar/phy-mstar-usb.c b/drivers/phy/mstar/phy-mstar-usb.c
 new file mode 100644
-index 0000000..a717fb8
+index 0000000..cea8e36
 --- /dev/null
 +++ b/drivers/phy/mstar/phy-mstar-usb.c
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,326 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * MStar m7642 USB2 UTMI PHY
@@ -404,6 +407,22 @@ index 0000000..a717fb8
 +	.owner		= THIS_MODULE,
 +};
 +
++/*
++ * The three windows sit inside the block the host controller also maps, and
++ * UHC is literally the controller's register file, so these have to be
++ * non-exclusive mappings.
++ */
++static void __iomem *map_window(struct platform_device *pdev, const char *name)
++{
++	struct resource *res;
++
++	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
++	if (!res)
++		return ERR_PTR(-EINVAL);
++
++	return devm_ioremap(&pdev->dev, res->start, resource_size(res));
++}
++
 +static int mstar_usb_phy_probe(struct platform_device *pdev)
 +{
 +	struct device *dev = &pdev->dev;
@@ -416,15 +435,15 @@ index 0000000..a717fb8
 +		return -ENOMEM;
 +	p->dev = dev;
 +
-+	p->utmi = devm_platform_ioremap_resource_byname(pdev, "utmi");
++	p->utmi = map_window(pdev, "utmi");
 +	if (IS_ERR(p->utmi))
 +		return PTR_ERR(p->utmi);
 +
-+	p->usbc = devm_platform_ioremap_resource_byname(pdev, "usbc");
++	p->usbc = map_window(pdev, "usbc");
 +	if (IS_ERR(p->usbc))
 +		return PTR_ERR(p->usbc);
 +
-+	p->uhc = devm_platform_ioremap_resource_byname(pdev, "uhc");
++	p->uhc = map_window(pdev, "uhc");
 +	if (IS_ERR(p->uhc))
 +		return PTR_ERR(p->uhc);
 +
