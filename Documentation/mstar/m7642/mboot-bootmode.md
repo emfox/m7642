@@ -166,9 +166,140 @@ R2（写 recovery + dtb）仍然需要一次物理到场，理由没变，但风
 前提：**先确认这台机器的 U 盘自动刷机确实工作**（用一个已知好的官方固件试一次）。
 这一步可以在动 dtb 之前做，而且完全不改任何东西。
 
-## 七、待办
+## 七、实测：BCB 可控，但 mboot 不清它
+
+### BCB 完全可控（已验证）
+
+misc 分区的第一个扇区可以被精确改写，逐字节恢复：
+
+```
+orig sector md5 = 296862321b339e4dcd271b0936c9ad6e
+写入 "boot-poweron" 后 = 3b69d55cadb7a5d79988d3425694d842
+从备份恢复后        = 296862321b339e4dcd271b0936c9ad6e   ← 与原始一致
+```
+
+**坑**：Android 的 toybox `dd` **禁用了 `conv` 选项**（`dd: conv option disabled`，退出码 1）。
+用 `conv=notrunc` 的写操作会**静默失败**（重定向到 `2>/dev/null` 时完全看不出来，连试三次都"成功"）。
+正确做法是**整块读-改-写**：读 4K → 改前 13 字节 → 写回整个 4K。
+
+misc 结构（实测）：
+
+```
+offset 0:   "boot-adb\0"          8 字符 + NUL
+offset 8:   10 个 u32，值形如 0x003be700 / 0x003be7b3 / ...（递增）
+offset 51:  全 0 到 4K 结束
+```
+
+command 字段不是标准 BCB 的 32 字节——它后面紧跟着一串值。所以**写更长的命令会覆盖它们**，
+必须先备份、后校验。
+
+### mboot 不清理 BCB（实测，这是关键结论）
+
+做了一次受控对照：只做普通 `adb reboot`，不动任何分区，然后读回 BCB：
+
+```
+重启前: 62 6f 6f 74 2d 61 64 62 00 e7 3b 00 b3 e7 3b 00 ...   ("boot-adb")
+重启后: 62 6f 6f 74 2d 61 64 62 00 e7 3b 00 b3 e7 3b 00 ...   ("boot-adb")  ← 原样保留
+```
+
+⟹ **BCB 是非消费式的**：mboot 读过之后不清空。
+
+**推论**：一旦把 command 写成 `boot-recovery`，而 recovery 里的内核又起不来（不会执行
+`finish_recovery()` 去清 BCB），那么**每次重启都会再进一次 recovery —— 稳定死循环**。
+这条把"改成 recovery 就能安全试"的想法彻底否掉了。
+
+### recovery 无法远程控制（实测）
+
+解包原厂 recovery 分区的 ramdisk（7.4 MB，gzip cpio）：
+
+```
+sbin/adbd      sbin/recovery   sbin/busybox   sbin/mksh   sbin/charger
+```
+
+工具齐全，但是：
+
+```
+prop.default:  ro.debuggable=0
+               ro.adb.secure=1
+init.rc:       service adbd ... (disabled)
+               on property:ro.debuggable=1  → start adbd
+```
+
+⟹ **adbd 根本不会自动启动**；就算手动拉起，`ro.adb.secure=1` 还需要在屏幕上点授权，
+而 recovery 的 UI 只有遥控器能操作。
+
+另一个细节（对将来有用）：
+
+```
+init.recovery.m7642.rc:
+    # enable ir input for reboot recovery case
+    write /sys/module/mdrv_ir/parameters/input_event_en 1
+    write /sys/module/mdrv_ir/parameters/input_dev_event_enable 1
+```
+
+⟹ **厂商专门为 recovery 场景启用了红外输入**。也就是说"进 recovery 后用遥控器出来"是厂商
+设计好的路径——但它要求有人在电视前。
+
+### 没有看门狗
+
+```
+/dev/watchdog*          不存在
+/sys/class/watchdog/    不存在
+```
+
+⟹ 内核挂死不会自动重启。（之前盲扫 MMIO 导致的自动重启是 SoC 的 external abort 硬件复位，
+不是看门狗。）
+
+### 顺带确认：fastboot 支持非 USB 传输
+
+```
+fastboot_port
+fb_udp_our_port=%d
+Listening for fastboot transfer on %s
+```
+
+⟹ mboot 的 fastboot 可以走网络（UDP）。BCB 白名单里也有 `boot-bootloader`。
+但进 fastboot 之后若无可用链路，同样出不来（没有超时回退的证据）。
+
+## 八、结论：唯一可行的路是把"自清 BCB"做进内核
+
+四条硬约束叠加起来，纯软件零风险路径**不存在**：
+
+| 约束 | 证据 |
+|---|---|
+| 无启动失败回退 | 静态：无 `bootcount` / `altbootcmd` |
+| 无看门狗 | 实测：`/dev/watchdog` 不存在 |
+| BCB 非消费式 | 实测：重启后原样保留 |
+| recovery 无远程入口 | 实测：`ro.debuggable=0`，adbd USB-only |
+
+**所以：任何"改启动路径"的尝试，失败都需要一次物理介入（断电 或 按遥控器）。**
+
+### 真正的出路
+
+让**内核自己在极早期清掉 BCB**。这样即使后续全都挂了，重启也会回到原厂 boot：
+
+```
+内核启动 → setup_arch（DTB/memory/timer）→ 【在这里写 misc 清 command】→ 继续启动
+                        ↑ 只要走到这里，就已经安全了
+```
+
+前置条件是**能在内核里写 eMMC**。而这本来就是主线移植的必做项（`mstar_mci_v5.c`，
+14 367 行，驱动侧只有 2 处错误，估工 1–2 周）。
+
+**它不是"额外成本"，而是把"必做项"提前——提前之后，整个测试才变得可反复。**
+
+### 在此之前能做什么（全部零风险）
+
+1. 把 misc / dtb / boot 头 / recovery 头全部备份到本地 —— **已完成**
+2. 验证 BCB 写入与恢复 —— **已完成**
+3. 离线把 DTB 校到最严（`dtc` + 手工核对 memory/timer/uart）
+4. 写 eMMC 最小写路径，**先在厂商内核里用 `insmod` 验证**（厂商内核在跑，出问题重启即可）
+
+## 九、待办
 
 - [ ] 验证 U 盘自动刷机（官方 BIN 放 U 盘根目录，断电重上电，看是否自动进入升级）
 - [ ] 确认 "Env Partition" 的具体分区名（`_write_env failed : can not find Env Partition(%s)` 里的 `%s`）
 - [ ] 反汇编 `get_boot_status_from_mtd0` 拿到 mtd0 偏移（需要先重建 ARM 符号表，成本较高，优先级低）
-- [ ] 把 `mboot-part-full-2026-11-17.bin`（5 MB）留档，将来恢复时作对照
+- [ ] 把 `mboot-part-full-2026-11-17.bin`（5 MB）与 `misc-part-full-2026-11-17.bin`（8 MB）留档
+- [ ] **写 eMMC 最小写路径，先进厂商内核验证，再放进主线 early init**
+- [ ] 固化成工具：`tools/device/set-bcb.sh`（整块写 + md5 校验 + 自动恢复）
