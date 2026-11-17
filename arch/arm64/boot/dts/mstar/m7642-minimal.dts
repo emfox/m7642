@@ -17,7 +17,9 @@
 
 	chosen {
 		// tty0 = fbcon. Add "console=ttyS0,115200" once the uart base is known.
-		bootargs = "console=tty0 earlycon ignore_loglevel";
+		// maxcpus=1: the vendor release protocol is not mainline spin-table
+		// (see Documentation/mstar/m7642/smp.md), so only CPU0 comes up for now.
+		bootargs = "console=tty0 earlycon ignore_loglevel maxcpus=1";
 	};
 
 	memory@20200000 {
@@ -73,9 +75,12 @@
 		};
 	};
 
-	// Vendor DT calls this "mstar-spin-table"; mainline only knows "spin-table".
-	// If secondaries never come up, firmware has no PSCI and the release protocol
-	// differs -- then the only path is "maxcpus=1" plus a vendor-style trampoline.
+	// Vendor DT says "mstar-spin-table"; mainline only knows "spin-table".
+	// The real protocol is not mainline spin-table: release registers live at
+	// pm_base + 2*cpu-release-addr and are a three-word mailbox with an ack
+	// handshake (Documentation/mstar/m7642/smp.md). Keep maxcpus=1 above until
+	// a matching cpu_operations implementation exists; the nodes are kept so the
+	// DTB matches the hardware.
 
 	gic: interrupt-controller@16001000 {
 		compatible = "arm,gic-400";
