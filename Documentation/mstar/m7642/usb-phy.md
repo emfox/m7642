@@ -94,22 +94,54 @@ m7642 的机器码里**没有** `movz #0x10e0`、也没有对 `UTMI+0x48`（0x24
 | 源码分支 | 特征指令 | 结论 |
 |---|---|---|
 | `ENABLE_USB_HS_CUR_DRIVE_DM_ALLWAYS_HIGH_PATCH` | `#0x10*2=0x20`、`#0x52*2=0xa4` 都在主路径 | 编进去了 |
-| `EHCFLAG_TESTPKG` | `movz w1,#0x2084` + `strh [x19,#0x4]` | **已确认执行**（0x37c0） |
+| `EHCFLAG_TESTPKG` | `movz w1,#0x2084` + `strh [x19,#0x4]` | 编译进去了，但**不会执行**（见第四节 bis 的更正） |
 | `ENABLE_DOUBLE_DATARATE_SETTING` | 0xd*2-1 = `0x19`，全文件无此偏移 | **没编进去** |
 | `EHCFLAG_DOUBLE_DATARATE` | `movz w0,#0x76`（480×1.5） | 编进去了，但走不走到由运行时 flag 定 |
 | `EHCFLAG_DPDM_SWAP` | `add x1,x19,#0x15` 多处 | 编进去了，同上 |
 | squelch（`u_param->squelch`） | `add x0,x19,#0x54`（0x2a*2）在主路径 | 编进去了，但值为 0 时跳过 |
 
-**所以还差两个运行时输入**，都不是从二进制里看一眼就能得到的：
+**这两个运行时输入的答案（2026-11-17 16:50 补）**：
 
-1. **`hw_init` 的 flag 字**：`ehci_mstar_hw_init(hcd, utmi, usbc, uhc, flag)` 的第五个参数。
-   它决定 TESTPKG / DOUBLE_DATARATE / DPDM_SWAP / OTG 里哪些位是置的。
-   要定下来得顺着 `ehci_hcd_mstar_drv_probe` 里的 `bl` 找到调用点、再看 w4 的来源，
-   而 probe 的 3 KB dump 里 `bl` 目标都是相对地址，需要先把每个目标反查成函数名。
-2. **squelch 值**：`hcd->utmi_param.squelch` 由板级配置填，m7322 的默认值不能直接套。
+1. **flag 字不用反汇编去追，源码里写死了**。`ehci_mstar_hw_init()` 的 `flag` 从 0 开始，
+   只可能被两个宏置位：
 
-在有把握之前不动手写 PHY 驱动 —— 猜错一个 bit 的后果是端口起不来或者挂死，
-而这两种现象在串口没通之前都很难和别的原因区分开。
+   | 端口 | `_USB_UTMI_DPDM_SWAP_Px` | `_USB_ENABLE_OTG_Px` | 结果 flag |
+   |---|---|---|---|
+   | 1（bus usb2） | 0 | 已定义 | `EHCFLAG_ENABLE_OTG` = 0x8 |
+   | 2（bus usb1） | 0 | 未定义 | 0 |
+   | 3（usb3，MT7663） | — | 未定义 | 0 |
+   | 4（usb4） | — | 未定义 | 0 |
+
+   `EHCFLAG_TESTPKG` / `EHCFLAG_DOUBLE_DATARATE` / `EHCFLAG_DPDM_SWAP` 的具名常量里
+   **没有任何地方置位** ⟹ 那三段是死代码。我上一版写"TESTPKG 已确认执行"是错的，
+   错在把"编进了二进制"当成了"会执行"。
+
+   **现场证据**（读 port3 的 UTMI，即 WiFi 那一路）：
+
+   ```
+   0x1f202904: 00 a0 00 00      reg 0x02 = 0xa000
+   ```
+
+   TESTPKG 会往这里写 `0x2084`，实际是 `0xa000` ⟹ 确实没执行。
+
+2. **squelch 等四个参数取编译期默认值**：活体 DT 的 `Mstar-ehci-N` 节点**一个属性都没有**
+   （没有 `utmi,squelch` / `utmi,chirp` / `utmi,disconnect` / `utmi,eye-param`），
+   所以走 `of_property_read_u8()` 失败分支：
+
+   | 参数 | 值 | 来源 |
+   |---|---|---|
+   | squelch | `0x02` | `UTMI_DISCON_LEVEL_2A & 0x0f`，`(0x60|0x02) & 0x0f` |
+   | disconnect | `0x60` | `UTMI_DISCON_LEVEL_2A & 0xf0` |
+   | chirp | `0x80` | `UTMI_CHIRP_DCT_LEVEL_42 & 0xf0` |
+   | eye[0..3] | `10 02 00 81` | `UTMI_EYE_SETTING_2C..2F`，`ehci-mstar-40932.h` 里前六个变体全是 `#if 0`，只有最后一个默认生效 |
+
+   注意 squelch = 0x02 ≠ 0，所以 `if (u_param->squelch)` 成立 ⟹ 那一次 `UTMI+0x54` 写入确实发生。
+
+所以 PHY 驱动**已经具备可写的条件**了。剩下的是把约 50 个 `#if defined(ENABLE_*_ECO)` 块逐个
+判定在 m7642 上是否生效 —— 判据是 `physeq.asm` 里有没有对应的 `(偏移, 位)` 组合。
+已确认存在的（偏移出现在指令里）：`0x05`(disconnect window)、`0x10`(240/120 phase)、
+`0x21`(HS connection fail into VFALL)、`0x41`(EOF1 window)、`0x84`(chirp detect)、
+`0x29`(chirp source select)、`0x1d`(MIU 下界地址)。
 
 ## 五、对移植的意义
 主线要跑 MT7663，PHY 侧只需：
