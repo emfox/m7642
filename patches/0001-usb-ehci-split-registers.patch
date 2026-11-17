@@ -1,0 +1,119 @@
+From ff3eafd6cb5497aeedb9cb7d63b750bada815d9a Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Tue, 17 Nov 2026 16:38:19 +0800
+Subject: [PATCH] usb: ehci: support controllers with split 32-bit registers
+
+Some SoCs do not decode 32-bit EHCI registers.  Every register is instead
+two independent 16-bit registers: the low half is mapped at twice the
+register offset, the high half four bytes above it.  A single 32-bit
+access then lands on the wrong pair of halfwords and the controller
+reports garbage capabilities during probe.
+
+Add a split_regs flag to struct ehci_hcd, set it from a "split-registers"
+device tree property in ehci-platform, and combine or program the halves
+in ehci_readl() and ehci_writel().
+
+Signed-off-by: Emfox Zhou <emfox@debian.org>
+---
+ .../devicetree/bindings/usb/generic-ehci.yaml |  9 ++++++
+ drivers/usb/host/ehci-platform.c              |  3 ++
+ drivers/usb/host/ehci.h                       | 28 +++++++++++++++++++
+ 3 files changed, 40 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/usb/generic-ehci.yaml b/Documentation/devicetree/bindings/usb/generic-ehci.yaml
+index ae9fb70..acf0f6b 100644
+--- a/Documentation/devicetree/bindings/usb/generic-ehci.yaml
++++ b/Documentation/devicetree/bindings/usb/generic-ehci.yaml
+@@ -50,6 +50,7 @@ properties:
+               - brcm,bcm7435-ehci
+               - hpe,gxp-ehci
+               - ibm,476gtr-ehci
++              - mstar,m7642-ehci
+               - nxp,lpc1850-ehci
+               - qca,ar7100-ehci
+               - rockchip,rk3588-ehci
+@@ -138,6 +139,14 @@ properties:
+       Set this flag to indicate that the hardware sometimes turns on
+       the OC bit when an over-current isn't actually present.
+ 
++  split-registers:
++    $ref: /schemas/types.yaml#/definitions/flag
++    description:
++      Set this flag when the controller does not decode 32-bit EHCI
++      registers.  Each register is then two independent 16-bit registers,
++      the low half at twice the register offset and the high half four
++      bytes further up, and must be programmed one half at a time.
++
+   phys:
+     minItems: 1
+     maxItems: 3
+diff --git a/drivers/usb/host/ehci-platform.c b/drivers/usb/host/ehci-platform.c
+index f61f095..a806d07 100644
+--- a/drivers/usb/host/ehci-platform.c
++++ b/drivers/usb/host/ehci-platform.c
+@@ -294,6 +294,9 @@ static int ehci_platform_probe(struct platform_device *dev)
+ 		if (of_property_read_bool(dev->dev.of_node, "spurious-oc"))
+ 			ehci->spurious_oc = 1;
+ 
++		if (of_property_read_bool(dev->dev.of_node, "split-registers"))
++			ehci->split_regs = 1;
++
+ 		if (of_property_read_bool(dev->dev.of_node,
+ 					  "needs-reset-on-resume"))
+ 			priv->reset_on_resume = true;
+diff --git a/drivers/usb/host/ehci.h b/drivers/usb/host/ehci.h
+index d7a3c8d..ad57b0c 100644
+--- a/drivers/usb/host/ehci.h
++++ b/drivers/usb/host/ehci.h
+@@ -219,6 +219,7 @@ struct ehci_hcd {			/* one per controller */
+ 	unsigned		frame_index_bug:1; /* MosChip (AKA NetMos) */
+ 	unsigned		need_oc_pp_cycle:1; /* MPC834X port power */
+ 	unsigned		imx28_write_fix:1; /* For Freescale i.MX28 */
++	unsigned		split_regs:1; /* 32-bit registers in 16-bit halves */
+ 	unsigned		spurious_oc:1;
+ 	unsigned		is_aspeed:1;
+ 	unsigned		zx_wakeup_clear_needed:1;
+@@ -754,9 +755,29 @@ ehci_port_speed(struct ehci_hcd *ehci, unsigned int portsc)
+ #define writel_be(val, addr)	__raw_writel(val, (__force unsigned *)addr)
+ #endif
+ 
++/*
++ * Some controllers do not decode 32-bit EHCI registers.  Each register is
++ * two independent 16-bit registers instead: the low half sits at twice the
++ * register offset, the high half four bytes above that.  Both halves have
++ * to be programmed separately, a single 32-bit access lands on the wrong
++ * pair of halfwords.
++ */
++static inline void __iomem *ehci_split_reg(const __u32 __iomem *regs)
++{
++	unsigned long addr = (unsigned long)regs;
++
++	return (void __iomem *)((addr & ~0xffUL) + ((addr & 0xffUL) << 1));
++}
++
+ static inline unsigned int ehci_readl(const struct ehci_hcd *ehci,
+ 		__u32 __iomem *regs)
+ {
++	if (ehci->split_regs) {
++		void __iomem *reg = ehci_split_reg(regs);
++
++		return (readl(reg) & 0xffff) |
++		       ((readl(reg + 4) & 0xffff) << 16);
++	}
+ #ifdef CONFIG_USB_EHCI_BIG_ENDIAN_MMIO
+ 	return ehci_big_endian_mmio(ehci) ?
+ 		readl_be(regs) :
+@@ -781,6 +802,13 @@ static inline void imx28_ehci_writel(const unsigned int val,
+ static inline void ehci_writel(const struct ehci_hcd *ehci,
+ 		const unsigned int val, __u32 __iomem *regs)
+ {
++	if (ehci->split_regs) {
++		void __iomem *reg = ehci_split_reg(regs);
++
++		writel(val & 0xffff, reg);
++		writel((val >> 16) & 0xffff, reg + 4);
++		return;
++	}
+ #ifdef CONFIG_USB_EHCI_BIG_ENDIAN_MMIO
+ 	ehci_big_endian_mmio(ehci) ?
+ 		writel_be(val, regs) :

@@ -152,6 +152,30 @@ ehci_mstar_hw_init(hcd)                      // ehci-mstar.c:667
 工作量估计：**1–2 周**。USB 侧已无未知量，剩下都是写代码：基址表、中断号、访问器、序列，
 四样都在本目录两份文档里。
 
+## 八bis、落地方式：不搬厂商代码，改成一个 quirk
+
+厂商的做法是改 `ehci.h` 和 `8250` 那样直接改核心。主线要走另一条路，因为
+`ehci-platform` 已经把时钟、复位、PHY、vbus 都做成 DT 驱动的了：
+
+| 需要的东西 | 主线现成的 | 要补的 |
+|---|---|---|
+| 16 位拼接访问器 | 无 | `struct ehci_hcd` 加 1 个 bit，`ehci_readl/writel` 各加一个分支 |
+| 基址 / 中断 | DT `reg` + `interrupts` | 四个节点（已写进 `m7642.dtsi`，默认 disabled） |
+| UTMI 上电序列 | `generic PHY` 框架 | 一个 `drivers/phy/` 驱动 |
+| 时钟 / 复位 | `ehci-platform` 读 `clocks`/`resets` | 等 clkm 源码或实测后补 |
+
+已提交的补丁：`patches/0001-usb-ehci-split-registers.patch`（40 行，3 文件）。
+
+- `ehci.h`：`split_regs:1` 位 + `ehci_split_reg()`，读时拼两个半字、写时分别写两个半字；
+- `ehci-platform.c`：认 `split-registers` 属性；
+- `generic-ehci.yaml`：登记该属性与 `mstar,m7642-ehci`。
+
+选择「属性」而不是「按 compatible 判 vendor」，是因为它描述的是硬件事实（这堆寄存器就是
+16 位宽），与其他 SoC 复用同一个属性比硬编码一个厂商判断更合理。
+
+已验证：`ehci-platform.o` 与 `ehci-hcd.o` 用 GCC 13.3 交叉编译通过；DTB 用内核自带 `dtc` 无告警。
+**尚未在硬件上跑过** —— 设备当前的 adb 已掉线，等电视恢复后按 `remote-testing.md` 的流程验证。
+
 ## 九、事故教训（保留）
 
 试过在 `0xFD200000 + 0..0x40000` 按 `0x100` 步长扫 EHCI 签名找第三路 —— **设备当场重启**。

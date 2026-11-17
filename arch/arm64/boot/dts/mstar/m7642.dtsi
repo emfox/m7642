@@ -99,4 +99,51 @@
 		reg-io-width = <4>;
 		interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
 	};
+
+	/*
+	 * Four EHCI controllers, all with 16-bit registers (see
+	 * "split-registers" below).  The addresses are the vendor "ehc" base
+	 * inside the USB block at 0x1f200000, the interrupts are the vendor
+	 * virqs from /proc/interrupts minus 32, and the bus number column is
+	 * what the hardware reports at runtime:
+	 *
+	 *   ehci1  0x4800  virq 39  -> SPI  7  bus usb2
+	 *   ehci2  0x1a00  virq 65  -> SPI 33  bus usb1
+	 *   ehci3  0x2600  virq 68  -> SPI 36  bus usb3  (MT7663 wifi/BT)
+	 *   ehci4  0x4e2800 virq 94 -> SPI 62  bus usb4
+	 *
+	 * Disabled on purpose: the UTMI PHY sequence is not in the kernel
+	 * yet, and the port never leaves reset without it.
+	 */
+	ehci1: usb@1f204800 {
+		compatible = "mstar,m7642-ehci", "generic-ehci";
+		reg = <0x0 0x1f204800 0x0 0x200>;
+		interrupts = <GIC_SPI 7 IRQ_TYPE_LEVEL_HIGH>;
+		split-registers;
+		status = "disabled";
+	};
+
+	ehci2: usb@1f201a00 {
+		compatible = "mstar,m7642-ehci", "generic-ehci";
+		reg = <0x0 0x1f201a00 0x0 0x200>;
+		interrupts = <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
+		split-registers;
+		status = "disabled";
+	};
+
+	ehci3: usb@1f202600 {
+		compatible = "mstar,m7642-ehci", "generic-ehci";
+		reg = <0x0 0x1f202600 0x0 0x200>;
+		interrupts = <GIC_SPI 36 IRQ_TYPE_LEVEL_HIGH>;
+		split-registers;
+		status = "disabled";
+	};
+
+	ehci4: usb@1f6e2800 {
+		compatible = "mstar,m7642-ehci", "generic-ehci";
+		reg = <0x0 0x1f6e2800 0x0 0x200>;
+		interrupts = <GIC_SPI 62 IRQ_TYPE_LEVEL_HIGH>;
+		split-registers;
+		status = "disabled";
+	};
 };
