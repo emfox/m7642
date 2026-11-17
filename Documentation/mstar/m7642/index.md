@@ -21,6 +21,7 @@
 | [ir-and-recovery.md](ir-and-recovery.md) | 红外救不了砖（解码在内核里）、mboot 的启动模式与远程恢复边界 |
 | [mboot-bootmode.md](mboot-bootmode.md) | mboot 镜像结构、内置 env、`update_mode` 命令，以及为什么没有纯软件救砖路径 |
 | [recovery-stick.md](recovery-stick.md) | 自建 U 盘升级 BIN：格式实测、`mmc write.p`、救援盘与测试盘的脚本路线 |
+| [flash-and-recovery.md](flash-and-recovery.md) | 怎么刷、怎么退：官方 32 字节容器版式、五张盘的分工、框架缓冲信标 |
 | [pm51-standby.md](pm51-standby.md) | 待机是 PM51 硬件状态机：关机=交权给 MCU、红外电源键由 MCU 解码 |
 | [online-test-ladder.md](online-test-ladder.md) | 在线验证的阶梯：从空模块到真探针 |
 

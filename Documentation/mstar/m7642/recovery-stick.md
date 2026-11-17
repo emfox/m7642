@@ -7,6 +7,11 @@
 
 ## 一、BIN 的结构（`fw/mstar-bin-tool-master` 源码 + 实测互证）
 
+> **2026-11-17 补正**：官方包实测是 **32 字节**尾部，不是这里描述的 40 字节
+> （`magic` + `u32 crc32(header)` + `u32 0xb74aabba` + `header[0:16]`）。本节记录的是
+> 社区 `pack.py` 的版式，没有在这台机器的真机上验证过；当前一律按官方版式生成，
+> 见 [flash-and-recovery.md](flash-and-recovery.md) §二 与 `tools/host/rescue/mkbin.py`。
+
 ```
 +0x0000  16 KB header = 纯文本 MBOOT 脚本，以单独一行 '%' 结束，其余填 0xFF
 +0x4000  part 1     \  依次拼接，每个 part 4 字节对齐，空隙填 0xFF

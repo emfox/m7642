@@ -59,9 +59,14 @@
 		#size-cells = <2>;
 		ranges;
 
+		/*
+		 * No "no-map": the bring-up beacons (arch/arm64/kernel/
+		 * m7642-dtb.S) poke this buffer through the linear map before
+		 * any driver exists, so it has to be mapped.  It stays reserved,
+		 * so the allocator never hands it out.
+		 */
 		framebuffer: framebuffer@2d100000 {
 			reg = <0x0 0x2d100000 0x0 0x7e9000>;
-			no-map;
 		};
 	};
 
