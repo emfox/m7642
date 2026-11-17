@@ -43,6 +43,23 @@ header[0:16]        16   "#-------------US"
 
 脚本里 `filepartload` 的偏移是**文件绝对偏移**，所以第一块载荷固定在 `0x4000`。
 
+### 为什么 v3/v4 会被拒（推翻了"脚本区不能改"的结论）
+
+`2026-11-15` 改脚本的两版（v3 改 bootargs + 删 userdata 段，v4 只改 bootargs 一行）都被拒，
+当时的结论是"脚本区一个字节都不能改"。今天把三个包的尾部位段比了一遍：
+
+| 包 | 脚本 | `crc32(header)` | footer 里存的 | 结果 |
+|---|---|---|---|---|
+| 原厂 | 原样 | `0xedd2f756` | `0xedd2f756` | 能刷 |
+| v3 | 改过 | `0x48ccd168` | `0xedd2f756` | 被拒 |
+| v4 | 改过 | `0x41f1ec06` | `0xedd2f756` | 被拒 |
+| v5 | 原样 | `0xedd2f756` | `0xedd2f756` | 能刷 |
+
+⟹ **真正的闸门是 footer 里的 `crc32(header)`，不是"脚本不能改"**。v3/v4 改了脚本却忘了
+重算这个字段（`tools/host/rescue/mkbin.py` 与 `fw/fix_footer_crc.py` 都会算）。
+推论：改 bootargs、删掉 `userdata` 段（保住 `/data`）在原理上是可行的，只要 CRC 跟着更新。
+`0xb74aabba` 在新脚本下是否也要变，仍未验证 —— 见 §八。
+
 ## 三、五张盘（都是 `mkbin.py` 生成，`md5` 见生成目录 `MANIFEST.bins`）
 
 | BIN | 大小 | 脚本做什么 | 用途 | 风险 |
@@ -125,11 +142,12 @@ setenv recoverycmd mmc read.p 0x23000000 dtb 0x00100000; mmc read.p 0x25000000 r
 
 ## 八、待验证清单
 
-1. `m7642-misc-stock.bin` 能否被接受（决定后面一切）；
+1. `m7642-misc-stock.bin` 能否被接受（决定后面一切；同时验证 `0xb74aabba` 在新脚本下是否要变）；
 2. 官方包 `mmc write.p ... 1` 末尾那个 `1` 是什么（保留原样写的，未验证含义）；
 3. `setenv MstarUpgrade_complete 1` 是否必须（我们的部分升级盘没有写它，未验证影响）；
 4. 品红/绿/蓝三级信标实际能否落到屏幕上（取决于 `simple-framebuffer` 之前 DRAM 是否可写）；
-5. 若信标一直是 logo，下一步是把镜像写进 `boot` 槽对比（风险同样可控，解卡盘在手）。
+5. 若信标一直是 logo，下一步是把镜像写进 `boot` 槽对比（风险同样可控，解卡盘在手）；
+6. CRC 结论成立后，做一版**保留 `/data` 的全量包**（删 `userdata` 段 + 重算 CRC）。
 
 ## 九、物料
 
