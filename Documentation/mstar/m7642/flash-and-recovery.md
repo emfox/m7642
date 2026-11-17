@@ -145,27 +145,50 @@ setenv recoverycmd mmc read.p 0x23000000 dtb 0x00100000; mmc read.p 0x25000000 r
 ### 第一次实测（2026-11-17 21:33）：只写 `misc` 的 20 KB 盘**被拒**
 
 按键强制升级、盘里是 `m7642-misc-stock.bin`（20 512 字节），屏幕**没有任何进度界面**，
-直接正常开机。这与 v3/v4 的症状一致 ⟹ mboot 在执行脚本之前就拒了这个包。
+直接正常开机。
 
-可能的原因（按可疑度排序）：
+### 第二次实测（2026-11-17 22:01）：只写 `recovery` 的 32 MB 盘**也被拒**
 
-| # | 猜测 | 反证/验证方法 |
-|---|---|---|
-| 1 | mboot 在升级期间自己管 `misc`（写 BCB），脚本里出现写 `misc` 就拒 | 换成只写 `recovery` 的盘（`m7642-recovery-only.bin`） |
-| 2 | 脚本区必须有与 `0xb74aabba` 匹配的签名，换个脚本就对不上 | 同上：只要"只写 recovery"也被拒，且 CRC 已正确，就基本坐实 |
-| 3 | 包太小 / 没有 `mboot`、`tvconfig` 这些"必备分区" | 同上（32 MB 的盘会排除大小因素） |
+`m7642-recovery-only.bin`（33 570 848 字节，写原厂 recovery，命令形状与官方逐字同形）。
+这一次按住机身键到第 5 秒时**指示灯闪了几下**（按键被识别、mboot 动了），第十几秒正常开机，
+仍然没有进度界面。
 
-下一步实验：`m7642-recovery-only.bin`（33 570 848 字节，只写 `recovery`，内容 = 原厂备份，
-命令形状与官方脚本完全一致）。它同时能排除「包太小」和「多分区」两个因素，
-结果只剩两种解释：脚本可改（那 `misc` 就是禁区），或脚本不可改（自制包路线终结）。
+### 于是从 mboot 里找闸门：校验有两个，不是一个
 
-其余待验证：
+`strings mboot.bin` 里有这些符号与格式串：
 
-1. 官方包 `mmc write.p ... 1` 末尾那个 `1` 是什么（保留原样写的，未验证含义）；
-2. `setenv MstarUpgrade_complete 1` 是否必须（我们的部分升级盘没有写它，未验证影响）；
-3. 品红/绿/蓝三级信标实际能否落到屏幕上（取决于 `simple-framebuffer` 之前 DRAM 是否可写）；
-4. 若信标一直是 logo，下一步是把镜像写进 `boot` 槽对比（风险同样可控，解卡盘在手）；
-5. 若脚本可改，做一版**保留 `/data` 的全量包**（删 `userdata` 段 + 重算 CRC）。
+```
+check_script_crc                 Calculate HeaderCRC = 0x%x    Binary HeaderCRC = 0x%x
+check_full_usb_crc               Calculate AllBinCRC = 0x%x    Binary AllBinCRC = 0x%x
+                                 Bad header crc   !bad CRC   BIN_CRC = 0x%x, crc = 0x%x
+```
+
+⟹ footer 里那两个 32 位字段不是「header CRC + 常量」，而是 **header CRC + AllBinCRC（整包
+payload 的 CRC）**。我们自制包时把官方那个 `0xb74aabba` 原样抄了过来，那是**官方 payload**
+的 CRC，对我们自己的 payload 当然对不上 —— 这解释了两次被拒，且说明**脚本本身不是禁区**。
+
+`0xb74aabba` 的算法还没对上：拿官方包试了 8 种 CRC-32 变体（反射/非反射 × init 0/0xFFFFFFFF ×
+xorout 0/0xFFFFFFFF）与 3 种覆盖范围（`[0x4000,EOF-32)`、`[0,EOF-32)`、`[0x4000,EOF)`），
+最接近的是标准 CRC-32 的 `0x164cb165`，全不匹配。mboot 里另有 `hw_crc32_04C11DB7`，
+可能是硬件 CRC 单元的分块口径。
+
+### 由此得到的可行做法：**只改脚本、不动 payload**
+
+AllBinCRC 只覆盖 payload，所以「payload 一字节不改」的修改仍然合法，只要重算 header CRC。
+具体用法：拿官方全量包，把 `# File Partition: userdata` 那一段（`filepartload` + `mmc erase.p`
++ `sparse_write`）整段删掉，重算 header CRC 并写回 footer，**文件其余部分一个字节不动**。
+这样刷机就不会 `mmc erase.p userdata`，`/data`（应用、登录态、答题闸门的 state）都能保住。
+
+这条还没实测，见下面的清单。
+
+### 剩余待验证
+
+1. 「只改脚本的全量包」能否被接受（保 `/data` 的全量刷机，一次 10 分钟）；
+2. `AllBinCRC` 的真实算法（对上之后，任意自制 payload 都能用，包括 20 KB 的解卡盘）；
+3. 官方包 `mmc write.p ... 1` 末尾那个 `1` 是什么（保留原样写的，未验证含义）；
+4. `setenv MstarUpgrade_complete 1` 是否必须；
+5. 品红/绿/蓝三级信标实际能否落到屏幕上（取决于 `simple-framebuffer` 之前 DRAM 是否可写）；
+6. 若信标一直是 logo，下一步是把镜像写进 `boot` 槽对比（风险同样可控，解卡盘在手）。
 
 ## 九、物料
 

@@ -10,12 +10,15 @@ V8-T652T03-LF1V147.bin:
 
 Footer (32 bytes):
 
-    "12345678" | u32 crc32(header) | u32 product tag | header[0:16]
+    "12345678" | u32 crc32(header) | u32 AllBinCRC | header[0:16]
 
 Offsets in the script are absolute file offsets, so the first payload block
-starts at 0x4000.  The product tag is a constant the vendor puts in every
-package of this model; it is not a checksum of the payload (two packages with
-different system images share it).
+starts at 0x4000.
+
+Two open points, both recorded in Documentation/mstar/m7642/flash-and-recovery.md:
+the AllBinCRC algorithm is not reproduced (packages built here carry the vendor's
+value), and mboot looks like it compares the "# Build TIME :" line against the
+running version, so --build-time should be set to a date in the future.
 """
 
 import argparse
@@ -29,12 +32,14 @@ MAGIC = b"12345678"
 PRODUCT_TAG = 0xB74AABBA
 
 
-def script_for(parts):
+def script_for(parts, build_time=None):
     """parts: [(partition, path, keep_flag)] -> script lines."""
     lines = ["#-------------USB Upgrade Bin Info----------------",
              "# Device : tcl_m7642",
-             "# Build PATH : local rescue image",
-             ""]
+             "# Build PATH : local rescue image"]
+    if build_time:
+        lines.append("# Build TIME : %s" % build_time)
+    lines.append("")
     off = HEADER_SIZE
     for name, path, flag in parts:
         size = os.path.getsize(path)
@@ -68,11 +73,14 @@ def build(lines, payload_paths, out, tag=PRODUCT_TAG):
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("-o", "--out", required=False, help="output file (not needed with --dry-run)")
+    ap.add_argument("-o", "--out", help="output file (not needed with --dry-run)")
     ap.add_argument("-p", "--part", action="append", default=[],
                     metavar="NAME=FILE[:1]",
                     help="partition to erase and write; append :1 for the vendor's trailing flag")
-    ap.add_argument("--tag", type=lambda s: int(s, 0), default=PRODUCT_TAG)
+    ap.add_argument("--tag", type=lambda s: int(s, 0), default=PRODUCT_TAG,
+                    help="value for the AllBinCRC field (we carry over the vendor's)")
+    ap.add_argument("--build-time", default=None,
+                    help='value for the "# Build TIME :" line, e.g. "2027-01-01 00:00:00"')
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -86,7 +94,7 @@ def main():
         parts.append((name, path, flag))
         paths.append(path)
 
-    lines = script_for(parts)
+    lines = script_for(parts, a.build_time)
     if a.dry_run:
         print("\n".join(lines))
         return
