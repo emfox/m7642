@@ -164,31 +164,55 @@ check_full_usb_crc               Calculate AllBinCRC = 0x%x    Binary AllBinCRC 
 ```
 
 ⟹ footer 里那两个 32 位字段不是「header CRC + 常量」，而是 **header CRC + AllBinCRC（整包
-payload 的 CRC）**。我们自制包时把官方那个 `0xb74aabba` 原样抄了过来，那是**官方 payload**
-的 CRC，对我们自己的 payload 当然对不上 —— 这解释了两次被拒，且说明**脚本本身不是禁区**。
+payload 的 CRC）**。
 
-`0xb74aabba` 的算法还没对上：拿官方包试了 8 种 CRC-32 变体（反射/非反射 × init 0/0xFFFFFFFF ×
-xorout 0/0xFFFFFFFF）与 3 种覆盖范围（`[0x4000,EOF-32)`、`[0,EOF-32)`、`[0x4000,EOF)`），
+### 但 AllBinCRC 并没有被强制（被真机证据否掉）
+
+| 包 | 脚本 | header CRC | AllBinCRC 字段 | 真机 |
+|---|---|---|---|---|
+| 官方 | 原样 | 对 | 对 | 能刷 |
+| v5 | **原样** | 对 | **错**（payload 改过，字段还是原厂的） | **能刷** |
+| v3 / v4 | 改过 | **错**（没重算） | 对 | 被拒 |
+| 自制 20 KB / 32 MB | 全新 | 对 | 错 | 被拒 |
+
+v5 是决定性反例：payload 改过、AllBinCRC 早就对不上，照样刷进去两次。⟹ 这个校验要么被
+`verify` env 关着，要么只在特定路径上跑。
+
+**也排除「版本要比机器新」**：救砖时刷的就是同版本（V147 刷 V147）的官方包，成功了。
+（这条路一度看起来最像，因为电视自带「本地升级」会报"无可升级版本"，但那是 UI 自己的判断。）
+
+⟹ 剩下的解释只有一个方向：**脚本除了 CRC 之外还有结构性要求**，而我们的包与官方包之间
+唯一的*结构*差别是——官方脚本第一个 part 是 `tvconfig`，而我们的包一个板级分区都没有。
+mboot 在升级前后要读 tvconfig 拿板级参数／升级配置，缺这一块可能直接放弃整个包。
+
+`0xb74aabba` 的算法也还没对上：官方包试了 8 种 CRC-32 变体（反射/非反射 × init 0/0xFFFFFFFF
+× xorout 0/0xFFFFFFFF）与 3 种覆盖范围（`[0x4000,EOF-32)`、`[0,EOF-32)`、`[0x4000,EOF)`），
 最接近的是标准 CRC-32 的 `0x164cb165`，全不匹配。mboot 里另有 `hw_crc32_04C11DB7`，
 可能是硬件 CRC 单元的分块口径。
 
-### 由此得到的可行做法：**只改脚本、不动 payload**
+### 下一步：先验"结构"而不是"校验"
 
-AllBinCRC 只覆盖 payload，所以「payload 一字节不改」的修改仍然合法，只要重算 header CRC。
-具体用法：拿官方全量包，把 `# File Partition: userdata` 那一段（`filepartload` + `mmc erase.p`
-+ `sparse_write`）整段删掉，重算 header CRC 并写回 footer，**文件其余部分一个字节不动**。
-这样刷机就不会 `mmc erase.p userdata`，`/data`（应用、登录态、答题闸门的 state）都能保住。
+最便宜且零风险的对照实验：做一张**只写 `tvconfig`** 的盘（内容 = 设备上现在的 tvconfig，
+原样回写，32 MB），命令形状与官方第一段逐字同形。它把"缺板级分区"这个变量单独隔离出来：
 
-这条还没实测，见下面的清单。
+- 能刷 ⟹ 结构是闸门，接着把 `misc` / `recovery` 和 `tvconfig` 拼在一张盘里；
+- 也不能刷 ⟹ 与"结构"无关，回到校验方向（那就要么抓 `hw_crc32_04C11DB7` 的口径，
+  要么放弃自制包，用 `patch-header.py` 只改官方包）。
+
+### 另一条不依赖自制的路：只改官方包的脚本
+
+AllBinCRC 不被强制这一条如果成立，那「payload 一字节不动、只删 `userdata` 段并重算 header CRC」
+的全量包就能保住 `/data`。工具：`tools/host/rescue/patch-header.py`。没实测。
 
 ### 剩余待验证
 
-1. 「只改脚本的全量包」能否被接受（保 `/data` 的全量刷机，一次 10 分钟）；
-2. `AllBinCRC` 的真实算法（对上之后，任意自制 payload 都能用，包括 20 KB 的解卡盘）；
-3. 官方包 `mmc write.p ... 1` 末尾那个 `1` 是什么（保留原样写的，未验证含义）；
-4. `setenv MstarUpgrade_complete 1` 是否必须；
-5. 品红/绿/蓝三级信标实际能否落到屏幕上（取决于 `simple-framebuffer` 之前 DRAM 是否可写）；
-6. 若信标一直是 logo，下一步是把镜像写进 `boot` 槽对比（风险同样可控，解卡盘在手）。
+1. 只写 `tvconfig` 的盘能否被接受（区分"结构"与"校验"，一次按键）；
+2. 「只改脚本的官方全量包」能否被接受（保 `/data` 的全量刷机，一次 10 分钟）；
+3. `AllBinCRC` 的真实算法（对上之后任意自制 payload 都能用，包括 20 KB 的解卡盘）；
+4. 官方包 `mmc write.p ... 1` 末尾那个 `1` 是什么（保留原样写的，未验证含义）；
+5. `setenv MstarUpgrade_complete 1` 是否必须；
+6. 品红/绿/蓝三级信标实际能否落到屏幕上（取决于 `simple-framebuffer` 之前 DRAM 是否可写）；
+7. 若信标一直是 logo，下一步是把镜像写进 `boot` 槽对比（风险同样可控，解卡盘在手）。
 
 ## 九、物料
 
