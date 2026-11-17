@@ -178,8 +178,12 @@ eye 参数 → 一串 ECO。
 | `mstar,otg-port` | 无（有则跳过 UHC select 那一步） |
 
 **未在硬件上跑过。** 这是本轮能给出的最强形态：所有输入都有出处，但"能不能点亮"要等
-串口通了才能回答。下一步把它接进 DT（四个 PHY 节点 + 给 EHCI 节点加 `phys`），
-再把 `status` 从 disabled 改掉。
+串口通了才能回答。
+
+已接进 DT（`m7642.dtsi`）：四个 PHY 节点（`phy@1f207500` / `1f207400` / `1f202900` / `1f6e2400`）
+用 `reg-names = "utmi","usbc","uhc"` 传三个窗口，EHCI 节点各挂 `phys = <&usb_phyN>`。
+注意 **`uhc` 窗口就是 EHCI 自己的寄存器文件**，两个节点地址重叠，所以驱动用 `devm_ioremap()`
+而不是 `devm_platform_ioremap_resource_byname()` —— 后者会 `request_mem_region` 独占，直接 -EBUSY。
 
 ## 五、对移植的意义
 主线要跑 MT7663，PHY 侧只需：
