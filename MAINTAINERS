@@ -1,0 +1,7 @@
+MSTAR M7642 (MT9652) MAINLINE PORT
+M:	Emfox Zhou <emfox@debian.org>
+S:	Maintained
+F:	Documentation/mstar/m7642/
+F:	arch/arm64/boot/dts/mstar/
+F:	drivers/usb/host/ehci-mstar*
+F:	probes/

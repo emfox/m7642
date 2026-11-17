@@ -1,0 +1,21 @@
+# kernel module build outputs
+*.o
+*.ko
+*.mod
+*.mod.c
+*.symvers
+*.order
+.*.cmd
+.tmp_versions/
+Module.symvers
+modules.order
+/probes/*.out
+
+# python
+__pycache__/
+*.pyc
+
+# local scratch
+.migrate.sh
+.fixrefs.sh
+.gitinit.sh
