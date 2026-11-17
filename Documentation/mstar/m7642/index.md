@@ -18,6 +18,7 @@
 | [smp.md](smp.md) | 多核启动协议（非标准 spin-table） |
 | [remote-testing.md](remote-testing.md) | 不插 U 盘、不按键的远程验证路径 |
 | [boot-test.md](boot-test.md) | 启动路径：实测 boot image 参数、分区、可观察性 |
+| [ir-and-recovery.md](ir-and-recovery.md) | 红外救不了砖（解码在内核里）、mboot 的启动模式与远程恢复边界 |
 | [online-test-ladder.md](online-test-ladder.md) | 在线验证的阶梯：从空模块到真探针 |
 
 ## 可背下来的几条
