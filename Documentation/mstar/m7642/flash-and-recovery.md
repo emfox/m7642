@@ -240,8 +240,13 @@ v3 有全部板级分区、v4 结构与官方完全一致，两者都被拒 ⟹ 
 
 上表那次"成功"刷完后，`/data/app` 为 0 个应用、`/data/data` 0 个包、
 `/data/system/packages.xml` 时间戳是刷机后首次启动（23:15）。即 **`/data` 被格式化了**，
-"保住 `/data`"这个目标没达成。（用户观察到 WiFi 密码还在，是因为它存在 `persist` 分区——
-升级脚本的 20 个分区里没有 `persist`/`MPOOL`/`eeprom_a`，与 `/data` 无关。）
+"保住 `/data`"这个目标没达成。
+
+关于 WiFi 密码：用户观察到刷这个包后 WiFi 还在，而**刷官方完整包后 WiFi 密码会没有**。
+这条差异说明 WiFi 配置并非存在不受影响的 `persist` 里（`persist`/`MPOOL`/`eeprom_a`
+两个包都不写，两种情况本该一样）。配置实际位于 `/data/misc/wifi/WifiConfigStore.xml`
+（里面能看到 `zzz_5G`），即位于被格式化的分区内 ⟹ **TCL 在刷机后另有一步恢复它，
+机制未查明**。这一点先记为观察，不当作结论。
 
 原因在 mboot 里：
 
@@ -283,7 +288,135 @@ mboot 里另有 `do_usb_partial_upgrade_to_emmc` / `usb_partial_upgrade_to_emmc`
 
 
 
-## 九、物料
+## 九、部分升级包：从官方包里裁出任意分区子集
+
+`tools/host/rescue/mk-partial.py`：读官方 3.3 GB 包，按 `# File Partition:` 段
+挑出指定的几个，重排 payload（只改 `filepartload` 的偏移，其余行原样），重算
+header CRC，AllBinCRC 沿用原厂值。
+
+```
+mk-partial.py --src V8-T652T03-LF1V147.bin --keep recovery,set_config -o out.bin
+mk-partial.py --src V8-T652T03-LF1V147.bin --keep recovery --dry-run   # 只打印脚本
+```
+
+已生成（`/home/emfox/kbuild/rescue/partial/`，payload 与源包逐字节一致，md5 同源段）：
+
+| 包 | 段 | 大小 | header CRC |
+|---|---|---|---|
+| `m7642-reconly-full.bin` | recovery + set_config | 27 488 288 | `0x23192646` |
+| `m7642-reconly-min.bin` | recovery | 27 488 288 | `0x56056f91` |
+
+### 为什么先刷这个（零风险）
+
+payload 就是**原厂 recovery 镜像本身**，所以刷完 recovery 分区内容与现在完全一样；
+boot/system/vendor 一字不动，唯一的副作用是 `misc` 被擦（BCB 清空，本来也该清）。
+它只回答两个问题：
+
+1. 只含 1 个分区段的包，mboot 认不认（段数/大小是不是闸门）；
+2. **不碰 system/vendor 的部分升级会不会仍然触发 `do_wipe_datacache_check`**。
+
+第 2 点是关键：过 ⟹ 保 data 刷机有了正路，以后换内核只写 recovery；不过 ⟹
+wipe 与写了什么无关，得从 `MstarUpgrade_complete` 一类环境变量上想办法。
+
+判读：插盘上电，出现进度界面 = 包被读到；刷完进系统后看应用还在不在。
+
+### 第五次实测（2026-11-17 23:30）：单段包被接受，但**仍然擦 data**
+
+刷 `m7642-reconly-full.bin`（recovery + set_config，27.5 MB）：
+
+- 出现进度条，几秒钟完成 ⟹ **段数不是闸门**，27 MB 单段包同样被接受；
+- 重启后屏幕出现「正在清除...」，几秒后再次重启进系统 ⟹ **wipe 照样发生**；
+- 刷后 `/data/local/tmp` 为空（原先有 `tvquiz/`、`tvroot.out` 等），`/data/app`、
+  `/data/data` 均空 ⟹ `/data` 确实被清。
+
+⟹ **上一节那个推论被推翻**：wipe 与「写了 system/vendor」无关。只写 recovery、
+boot/system/vendor 一个字节不动，mboot 一样清 data。
+
+剩下两种可能：
+
+1. 只要走 USB 按键升级这条路，mboot 就无条件 wipe（MStar 的「强制升级 = 恢复出厂」常规设计）；
+2. 由脚本里的某条命令触发 —— 该包里 recovery 段有 `mmc erase.p misc` +
+   `setenv recoverycmd ... ; saveenv`，set_config 段有 `setenv MstarUpgrade_complete 1` +
+   `saveenv`。
+
+第 2 条可以廉价地排除：`m7642-reconly-min.bin` 只有 recovery 段，末行是 `saveenv`，
+**没有 `MstarUpgrade_complete`**。此刻 `/data` 已经是空的，再刷一次没有额外代价，
+是这个变量最好的测试窗口。
+
+### ★ 第六次实测（2026-11-17 23:36）：**没擦 data** —— 保 data 刷机成了
+
+刷 `m7642-reconly-min.bin`（只 recovery 一段，27.5 MB）。刷前在 `/data/local/tmp/`
+放了个标记文件 `marker-2332.txt`（内容带时间戳 `23:33:15`），因为 `/data` 已经是空的，
+没有参照物就看不出 wipe 有没有发生。
+
+- 进度条照走，几秒钟完成 ⟹ 包被接受；
+- 刷完**没有出现「正在清除...」**，直接停在待机，用红外遥控开机进系统；
+- **标记文件还在**，内容时间戳未变 ⟹ `/data` 一个字节没动。
+
+⟹ **wipe 不是 USB 升级路径的固定行为，是脚本里的命令触发的。**
+两个包只差 `set_config` 段，最可能是 `setenv MstarUpgrade_complete 1`：mboot 升级收尾时
+看这个标记，是 1 就当成"官方完整升级完成"，顺手把 data/cache 清掉。
+
+同一个原因也解释了「刷完停在待机、不自动重启」：不设这个标记，mboot 认为升级没收尾，
+就不往下走重启。补一条 `reset` 即可，或者在包里保留其余 setenv 只去掉这一条。
+
+**保 data 刷机的配方**（已验证）：
+
+1. 用 `mk-partial.py` 从官方包裁出要写的分区（换内核就只要 `recovery`）；
+2. 脚本里**不要**出现 `setenv MstarUpgrade_complete 1`；
+3. 头部 CRC 重算，`V8-*.bin` 文件名，双文件名布局。
+
+代价是刷完要手动开机。收益是 data、应用、WiFi 配置全在，27 MB 的包几秒钟刷完。
+
+## 十、不用 U 盘：adb + root `dd` 直接写分区
+
+U 盘那条路每刷一次都要断电、按键、等启动，而且（除非用上面的保 data 配方）会擦 data。
+系统正常起来的时候有更快的一条：`/factory/su` 提权后直接 `dd` 写块设备。
+
+### root 从哪来
+
+固件里有 `tvroot` 这个 init 服务，由 `/vendor/etc/init/tvgate.rc`（vendor 分区，刷机不会动）
+拉起 `/data/local/tmp/tvquiz/gate.sh`，以 root 跑。**data 被清空后这个服务只是少了脚本，
+`/vendor/etc/init/tvgate.rc` 还在** —— 把 `tv-quiz` 的文件推回去（`tools/install.sh`），
+服务立刻恢复，**不需要重启电视**：
+
+```
+cd ~/Debian/tv-quiz && ADB=~/Debian/tv/adb/platform-tools/adb tools/install.sh
+ADB=~/Debian/tv/adb/platform-tools/adb tools/tvroot.sh 'id'
+```
+```
+uid=0(root) gid=0(root) groups=0(root),1000(system) context=u:r:shell:s0
+```
+
+`tvroot.sh` 的做法：命令写到 `/data/local/tmp/tvroot.cmd`，由服务执行、结果写回
+`tvroot.out`，主机侧轮询回读（上限 15 秒，命令里不要放长 sleep）。
+
+### 分区映射（实测）
+
+```
+/dev/block/by-name/recovery -> /dev/block/mmcblk0p7   32768 KB = 32 MB
+```
+
+校验方式（零风险，纯读）：按官方镜像长度取分区前缀算 md5，与官方包的 recovery 段比对：
+
+```
+dd if=/dev/block/by-name/recovery bs=4096 count=6707 | md5sum     # 4096*6707 = 0x1a33000
+```
+
+实测得到 `0d6e895a090442fdcb8699e1b583c3d6`，**与官方包 recovery 段的 md5 完全一致**，
+既证明前面那次 U 盘刷机确实写进去了，也证明这条读取通道可信。
+
+### 写
+
+```
+adb push <镜像> /data/local/tmp/new.img
+tools/tvroot.sh "dd if=/data/local/tmp/new.img of=/dev/block/by-name/recovery bs=4096; sync"
+```
+
+不清 data、不断电、几秒完成。注意镜像长度要 ≤ 分区容量，`dd` 不会替你截断分区；
+写错了还能用 U 盘那条路救回来。
+
+## 十一、物料
 
 | 东西 | 状态 |
 |---|---|
@@ -291,3 +424,41 @@ mboot 里另有 `do_usb_partial_upgrade_to_emmc` / `usb_partial_upgrade_to_emmc`
 | 机身实体电源键 | 有 |
 | 红外遥控 | 有（只用于开机，不能当输入） |
 | USB-TTL 串口线 | **没有**；有它就能直接读 mboot/内核日志，本文档一半的推断可以变成读数 |
+
+## 十一、陷阱：`adb reboot recovery` 会把设备锁在 recovery 循环里
+
+2026-11-18 00:0x 踩到的。用 `adb reboot recovery` 试内核，内核起不来（卡 logo），
+屏幕一直停着。以为断电重上电就能回系统，**结果还是卡 logo**。
+
+原因在 BCB（`misc` 分区）：`adb reboot recovery` 往里写了 `boot-recovery`。
+正常情况下 recovery 启动后会自己清掉这个标记，可这次内核压根没跑起来，
+recovery 的 init 一行都没执行 ⟹ 标记一直留着 ⟹ **每次上电 mboot 都往 recovery 走**。
+`boot` 分区完好无损，只是永远轮不到它。
+
+这不是砖，是死循环。解开只需要擦 `misc`。最省事的办法是刷一个含
+`mmc erase.p misc` 且不设 `MstarUpgrade_complete` 的包 —— 例如
+`m7642-reconly-min.bin`（官方 recovery + 擦 misc，且不擦 data）：
+
+```
+拔电 → 按住机身电源键 → 插电 → 进度条 → 刷完停待机 → 红外开机
+```
+
+教训：**凡是 `adb reboot recovery` 去试一个没验证过的镜像，都要先确认自己有一个
+「能擦 misc」的 U 盘包在手边**。否则一次失败就得多绕一圈物理操作。
+
+（`mmc erase.p misc` 在官方脚本的 recovery 段里本来就有，所以任何裁自官方包的
+recovery 子集包天然带这条命令。）
+
+### 实测（2026-11-18 00:01）：min 包成功解锁，而且保住了 data
+
+按上面的办法刷 `m7642-reconly-min.bin`，设备恢复。三项验证全过：
+
+```
+misc(mmclk0p6, 8MB) 前 32 字节  00 00 00 00 ...（全 0）   ⟹ BCB 已清
+recovery 前 0x1a33000 md5       0d6e895a090442fdcb8699e1b583c3d6  ⟹ 官方镜像已写回
+/data/local/tmp/marker-2332.txt 时间戳仍是 23:33          ⟹ data 没被动过
+pm list packages                 projengmenu + fdroid 都在
+```
+
+⟹ **「保 data 配方」在救砖场景下同样成立**：擦 BCB、写回官方 recovery、data 一个字不动。
+这是目前最理想的救援动作，比 3.3 GB 官方全量包（会擦 data）好得多。

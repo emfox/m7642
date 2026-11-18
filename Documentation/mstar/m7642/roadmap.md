@@ -18,7 +18,7 @@
 | 串口 | ✅ 8250 通用 | ✅ 基址 `0x1F201300`、123 MHz | **已解决**：8 字节步距 = `reg-shift = <3>` + `reg-io-width = <4>`；细节见 `uart.md` | **0**（只需 DT 节点） | 低 |
 | **WiFi** | ✅ `mt76` 认 `0e8d:7663` | 闭源 .ko | 访问器补丁已写好（`patches/0001`，40 行）；还缺 PHY 驱动与硬件验证 | 1–2 周 | 低 |
 | **蓝牙** | ✅ `btusb` + `btmtk`（v6.6 有 `FIRMWARE_MT7663`） | 闭源 | 新内核对 MT7663 的路径要实测 | 1–2 周 | 中 |
-| 存储 eMMC | ❌ 私有 `mstar_mci` | ✅ `mstar_mci_v5.c` 源码 | 移植进 mmc 框架 | 3–6 周 | 中 |
+| 存储 eMMC | ❌ 私有 `mstar_mci` | ✅ `mstar_mci_v5.c` 源码 | **已搬进 7.3 并链接通过**（改动 94 行，见 `emmc.md`）；剩运行时验证 | **1–2 周**（原估 3–6 周） | 中 |
 | I2C | ❌ 私有 `Mstar-iic` | ✅ | 移植，或 `i2c-gpio` 绕过 | 1 周 | 低 |
 | GPIO / pinctrl | ❌ `mstar,gpio` | ✅ | gpio-mmio + pinctrl | 1–3 周 | 中 |
 | 时钟 | ❌ 私有 `clkm` | ✅ | clk 框架驱动 | 3–6 周 | **高**（一切的前提） |

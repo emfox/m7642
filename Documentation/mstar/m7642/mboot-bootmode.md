@@ -263,15 +263,31 @@ init.recovery.m7642.rc:
 ⟹ **厂商专门为 recovery 场景启用了红外输入**。也就是说"进 recovery 后用遥控器出来"是厂商
 设计好的路径——但它要求有人在电视前。
 
-### 没有看门狗
+### 内核没有暴露看门狗设备（但 SoC 有看门狗）
 
 ```
 /dev/watchdog*          不存在
 /sys/class/watchdog/    不存在
 ```
 
-⟹ 内核挂死不会自动重启。（之前盲扫 MMIO 导致的自动重启是 SoC 的 external abort 硬件复位，
-不是看门狗。）
+⟹ **内核侧**没有看门狗驱动，所以内核挂死不会自动重启。（之前盲扫 MMIO 导致的自动重启是
+SoC 的 external abort 硬件复位，不是看门狗。）
+
+**但不要把这条读成「SoC 没有看门狗」。** 静态分析 `mboot_full.bin` 已经查通：
+MStar WDT 在 `0x1F000000 + 0x3000..0x3008`（喂狗 / 复位标志 / 计数值，时钟 12 MHz），
+mboot 在**第一次写 eMMC（CMD25）时布防 205 秒**，函数在 `0x60e9c`。
+详见 `boot-test.md` 第五十七节。
+
+也就是说：
+
+| 场景 | 会不会被狗咬 |
+|---|---|
+| mboot 正在写 eMMC（刷机、写 BCB）时卡住 | **会**，205 秒后复位 |
+| 纯 `mmc read.p` + `bootm`，不写 eMMC | **不会**（WDT 没布防） |
+| 内核已经跑起来之后挂死 | 取决于内核自己有没有布防，mboot 的那次布防早已完成 |
+
+另外，即便被狗咬，**也没有失败回退**：两个消费复位标志的函数
+（`do_bootcheck`、`If_Boot_To_PM`）都只打印一行日志，不改变启动哪个内核。
 
 ### 顺带确认：fastboot 支持非 USB 传输
 
@@ -290,8 +306,8 @@ Listening for fastboot transfer on %s
 
 | 约束 | 证据 |
 |---|---|
-| 无启动失败回退 | 静态：无 `bootcount` / `altbootcmd` |
-| 无看门狗 | 实测：`/dev/watchdog` 不存在 |
+| 无启动失败回退 | 静态：无 `bootcount` / `altbootcmd` / A-B slot；WDT 复位标志只打印不决策 |
+| 内核无看门狗驱动 | 实测：`/dev/watchdog` 不存在（SoC 有 WDT，但只在 mboot 写 eMMC 时布防，且不用于回退） |
 | BCB 非消费式 | 实测：重启后原样保留 |
 | recovery 无远程入口 | 实测：`ro.debuggable=0`，adbd USB-only |
 

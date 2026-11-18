@@ -20,6 +20,8 @@
 | [boot-test.md](boot-test.md) | 启动路径：实测 boot image 参数、分区、可观察性 |
 | [ir-and-recovery.md](ir-and-recovery.md) | 红外救不了砖（解码在内核里）、mboot 的启动模式与远程恢复边界 |
 | [mboot-bootmode.md](mboot-bootmode.md) | mboot 镜像结构、内置 env、`update_mode` 命令，以及为什么没有纯软件救砖路径 |
+| [emmc.md](emmc.md) | eMMC 移植：FCIE 寄存器全表、五个依赖的解法、`while(1)` 版本门槛、P1 已编译通过 |
+| [ramoops.md](ramoops.md) | 跨崩溃日志通道：地址落在内存洞反而不用改 DTB、`CON_PRINTBUFFER` 回灌、覆盖范围与盲区 |
 | [recovery-stick.md](recovery-stick.md) | 自建 U 盘升级 BIN：格式实测、`mmc write.p`、救援盘与测试盘的脚本路线 |
 | [flash-and-recovery.md](flash-and-recovery.md) | 怎么刷、怎么退：官方 32 字节容器版式、五张盘的分工、框架缓冲信标 |
 | [pm51-standby.md](pm51-standby.md) | 待机是 PM51 硬件状态机：关机=交权给 MCU、红外电源键由 MCU 解码 |
@@ -38,6 +40,14 @@
 5. **HDMI 零源码**：GPL 包里 `drv/hdmitx4vx1/` 只剩一个 Kconfig；HDCP 是硬件引擎 + OTP 密钥。
 6. **串口不用写驱动**：`0x1F201300`，寄存器步距 8 字节（`reg-shift = <3>`），SPI 0，123 MHz。
    厂商把 8250 偏移翻倍再 `<<2`，净值就是标准 8250 —— 见 `uart.md`。
+7. **eMMC 不用重写驱动**：`mstar_mci_v5.c` 本来就是 `mmc_host` 框架驱动，只实现 5 个回调。
+   中断/时钟/异步 IO 三个私有依赖**在源码里都有「关掉」的编译开关**，关掉就退化成纯寄存器轮询。
+   已搬进 7.3 并全内核链接通过，**改动约 94 行** —— 见 `emmc.md`。
+8. **ramoops 能抓到早期日志，但抓不到"没进内核"**：`0x42300000` 落在内存洞里，
+   没有 `struct page`，于是自动走 `request_mem_region()` + `ioremap_wc()` ——
+   **不用改 memory 节点、不用 reserved-memory**。`CON_PRINTBUFFER` 会在
+   `postcore_initcall` 时把 128 KB `log_buf` 整体回灌，所以 `setup_arch` 阶段的
+   日志也能捞回来。盲区只有"连第 2 级 initcall 都没跑到" —— 见 `ramoops.md`。
 
 ## 在线实验纪律（代价换来的）
 

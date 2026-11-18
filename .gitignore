@@ -19,3 +19,4 @@ __pycache__/
 .migrate.sh
 .fixrefs.sh
 .gitinit.sh
+ref/mstar-mboot/

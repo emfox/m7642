@@ -28,7 +28,7 @@
 | 2 | GIC-400 | `interrupt-controller@16001000`，`reg=0x16001000+0x16002000` | — | ✓ `arm,gic-400`（地址已拿到） |
 | 3 | 架构定时器 | `armv8-timer` | — | ✓ |
 | 4 | 串口 | `serial8250` + `CONFIG_SERIAL_8250_CONSOLE=y`，`console=ttyS0,115200` | 8250 通用，8 字节步距 | ✓ `8250_of` 直接可用：`0x1F201300` + `reg-shift=<3>`，见 `uart.md` |
-| 5 | eMMC (BJTD4R) | `mmc0:0001 MMC_NAME=BJTD4R` | `mstar_mci` / `mstar_mci_v5.c`，`CONFIG_MMC_MSTAR_MMC_EMMC=y` | ✗ **非 sdhci、非 dw_mmc**，私有寄存器 |
+| 5 | eMMC (BJTD4R) | `mmc0:0001 MMC_NAME=BJTD4R` | `mstar_mci` / `mstar_mci_v5.c`，`CONFIG_MMC_MSTAR_MMC_EMMC=y` | ⚠ **非 sdhci、非 dw_mmc**，私有寄存器；但厂商驱动已是 `mmc_host` 框架驱动，**已搬进 7.3 并编译链接通过**，见 `emmc.md` |
 | 6 | I2C ×3 | `i2c-0/1/2` → "Mstar I2C adapter" | `Mstar-iic` | ✗ 私有；但 `CONFIG_I2C_ALGOBIT=y`，可用 `i2c-gpio` 绕 |
 | 7 | 以太网 | `eth0`，platform driver `Mstar-emac` | `mdrv_emac_v3.c` | ✗ 非 stmmac/dwmac |
 | 8 | USB | 4×EHCI，无 xHCI（只有 USB2.0） | `Mstar-ehci-1..4` | ⚠ 逻辑是标准 EHCI，但**寄存器 16 位拼接**（`ehci_readl` 被改），`ehci-platform` 不能直接用；基址/中断已实测（见 `usb.md`） |
