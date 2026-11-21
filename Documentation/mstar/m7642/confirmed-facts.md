@@ -970,3 +970,300 @@ stash `0x23080000`）。这在 MMU 关时成立；**MMU 打开后这些地址是
 已生成 `start_kernel`（`Image+0x46091C`）检查点镜像 `m7642-rec-73-skmain.img`
 （`md5 b7970b310cb472f6374c94ac9d793aa8`）。**若这一发能回来，仪器就对 MMU 前后都可用，
 且不再需要人工拔插电源。**
+
+### 32. FCIE 寄存器映射逆向（2026-11-22）
+
+**一句话**：上一轮缺的那一环**不存在**——`[0xffffff8009358048]` 就是 `mstar_pm_base`，
+真值是 **`0xffffff800a000000`**（= `ioremap(0x1F000000, 0xA00000)`）。上一轮读到的
+`0xffffff800000000a` 是**把 8 字节当成两个 32 位字、按大端拼回去**造成的读数字节序错误。
+FCIE0 = `mstar_pm_base + 0x222600` = **物理 `0x1F222600` / 内核 VA `0xffffff800a222600`**。
+
+| 结论 | 标记 | 证据 |
+|---|---|---|
+| `mstar_pm_base` = `0xffffff800a000000`，ioremap 了物理 `0x1F000000`、长 `0xA01000` | 实测 | §32.1 的四条证据，含 4 组 VA/PA 对拍 |
+| FCIE0 = 物理 `0x1F222600` = VA `0xffffff800a222600` | 实测 | 同上；VA 读出值与 `mioreg` 物理读值 4/4 相同 |
+| EMMC_PLL = 物理 `0x1F247E00`；`reg_emmc_test` = +0x68 | 实测 | `0x1F247E68` 与 VA 对拍相等 |
+| FCIE0 有**空洞**：idx `0x19–0x28`、`0x2A–0x33`、`0x3A–0x3E`、`0x40–0x62` 未实现 | 对照 | 源码寄存器表跳号 + 厂商 `DumpRegisters` 只逐字读 0x00–0x7F 的注释；**不要连读** |
+| 厂商 `eMMC_PlatformInit` 的 1.8V 分支与源码逐条一致 ⟹ 跑着的二进制 = `kernel_mstar-main` 这一版源码 | 实测 | §32.1 第 1 条 |
+| CMD17 = 一次 512 B DMA，数据落在 MIU 地址（不是 ARM 物理地址） | 实测 | §32.4，`DMA_ADDR` 静止值 `0x01639680` |
+| 只读探针（我们自己写的 C）能覆盖 CMD17 全部寄存器动作 | 未验证 | 代码在 `probes/fcie/`，**没有在设备上执行过** |
+
+---
+
+#### 32.1 基址链：四条证据
+
+**① 反汇编（实锤这条链就是 FCIE）** `eMMC_PlatformInit` @ `0xffffff8008ca6264`
+（`probes/fcie/dumps/` 里有原始字节）：
+
+```
+d0003581  adrp x1, 0xffffff8009358000
+f9402420  ldr  x0, [x1, #72]          ; x0 = 全局
+91491c00  add  x0, x0, #0x247, lsl #12 ; +0x247000
+795cd002  ldrh w2, [x0, #3688]         ; +0xE68  → 0x247E68 = EMMC_PLL+0x1a = reg_emmc_test
+...
+795e2802  ldrh w2, [x0, #3860]         ; +0xF14  → 0x247F14 = EMMC_PLL+0x45
+```
+
+`0x1F000000 + 0x247E68 = 0x1F247E68`，正是 `reg_emmc_test`；`+0xF14 = 0x1F247F14` 正是
+`reg_emmcpll_0x45`（`eMMC_linux.h`: `EMMC_PLL_BASE = RIU_BASE + (0x11F80<<2) = 0x1F247E00`）。
+**偏移只对得上的前提是：这个全局的物理含义 = `0x1F000000` 的映射基址。**
+同一段还逐条复现了源码 `eMMC_PlatformInit` 的 1.8V 分支（读 bit0 → 置 bit0/bit2 →
+`0x0fff` 清 → `0x0f` 置），所以「跑着的二进制 = `kernel_mstar-main` 源码」也一起成立。
+
+**② 直接读这 8 个字节（读数本身）** `0xffffff8009358040` 起 16 字节，`od -t x1`：
+
+```
+000000 80 0c 60 aa c0 ff ff ff  00 00 00 0a 80 ff ff ff
+```
+
+按小端 64 位读 `0x48` 处 = **`0xffffff800a000000`**。上一轮的 `0xffffff800000000a`
+与「把 `od -t x4` 打印的 `0a000000 ffffff80` 按大端拼装」完全吻合（推测是拼装错误，
+不是硬件/工具读错）。
+
+**③ 谁写进去的（源码 + 活体 vmallocinfo）** `init/main.c:547`：
+
+```c
+mstar_pm_base = (ptrdiff_t)ioremap(IO_PHYS, 0xA00000);   /* IO_PHYS = 0x1F000000 */
+```
+
+设备上 `/proc/vmallocinfo`（地址列被 kptr_restrict 抹成 0，但 phys 与长度还在）：
+
+```
+10489856 start_kernel+0x248/0x2200 phys=1f000000 ioremap
+```
+
+`10489856 = 0xA01000 > 0xA00000`，是 `ioremap(0x1F000000, 0xA00000)` 的取整结果，
+调用者正是 `start_kernel`。**全内核只有这一条 `phys=1f000000` 的 ioremap。**
+
+**④ VA/PA 对拍（决定性）** 同一寄存器，一次用 `mioreg` 读物理地址（32 位，P0 已验证安全），
+一次用 `wdtdump vaddr=` 读内核 VA（**len=2，正好是 `ldrh`，和驱动同宽**）：
+
+| 寄存器 | 物理地址 | `mioreg`（PA） | `wdtdump`（VA） |
+|---|---|---|---|
+| `RESERVED_FOR_SW` | `0x1F222640` | `0x00000003` | `03 00` |
+| `SD_MODE` | `0x1F22262C` | `0x00000004` | `04 00` |
+| `SD_STATUS` | `0x1F222634` | `0x0000ff00` | `00 ff` |
+| `reg_emmc_test` | `0x1F247E68` | `0x00000035` | `35 00` |
+
+四对全部相等 ⟹ `mstar_pm_base + 0x222640 ≡ 0x1F222640`，即
+**`mstar_pm_base = 0xffffff800a000000` 映射 `0x1F000000`**。
+
+> 方法学备注：这四对是本轮唯一「VA 与 PA 两路独立读数」的验证。VA 侧必须用 **2 字节**
+> 读（`wdtdump len=2`）——FCIE 是 16 位寄存器、4 字节步进，用 `kernel_write` 一次搬
+> 8/16 字节会变成设备不支持的宽访问。`mioreg` 是 32 位读，P0 已证明安全。
+
+---
+
+#### 32.2 寄存器表（FCIE0，基址 `0x1F222600`）
+
+「实测值」是 2026-11-22 00:30（uptime ≈ 1300 s，Android 正常、eMMC 空闲）用
+`probes/fcie/fcie.c` 这个**只读模块**读的（16 位、4 字节步进）。
+「作用」一栏里带「源码」的是从 `eMMC_reg_v5.h` / `eMMC_hal_v5.c` 读出来的语义，
+带「推测」的是没有独立验证的。
+
+| idx | 名称 | 物理地址 | 实测值 | 作用 / 证据 |
+|---|---|---|---|---|
+| 0x00 | `MIE_EVENT` | `0x1F222600` | `0x0000` | 事件标志，写 1 清除。bit0 DMA_END / bit1 CMD_END / bit2 ERR_STS。源码 |
+| 0x01 | `MIE_INT_EN` | `0x1F222604` | `0x0000` | 中断使能；探针全程保持 0（轮询）。实测：驱动空闲时也是 0 |
+| 0x02 | `MMA_PRI_REG` | `0x1F222608` | `0x0000` | bit[3:2] 选 MIU（0=MIU0）；bit0/1 读写优先级、bit[5:4] 突发长度。源码 |
+| 0x03 | `MIU_DMA_ADDR_15_0` | `0x1F22260C` | `0x9680` | DMA 地址低 16 位（**MIU 地址**，见 §32.4） |
+| 0x04 | `MIU_DMA_ADDR_31_16` | `0x1F222610` | `0x0163` | DMA 地址 [31:16] |
+| 0x05 | `MIU_DMA_LEN_15_0` | `0x1F222614` | `0x0010` | DMA 字节数低 16 位 |
+| 0x06 | `MIU_DMA_LEN_31_16` | `0x1F222618` | `0x0000` | DMA 字节数 [31:16] |
+| 0x07 | `MIE_FUNC_CTL` | `0x1F22261C` | `0x0002` | bit1 SD_EN、bit12 EMMC_ACTIVE。实测空闲 = `0x0002`（ACTIVE 由 `eMMC_LockFCIE` 每次置/清） |
+| 0x08 | `JOB_BL_CNT` | `0x1F222620` | `0x0001` | 本次 job 的块数；CMD17 写 1 |
+| 0x09 | `BLK_SIZE` | `0x1F222624` | `0x0200` | 块大小 = 512 |
+| 0x0A | `CMD_RSP_SIZE` | `0x1F222628` | `0x0505` | bits[5:0] 响应字节数 = 5；bits[13:8] 命令字节数 = 5（mboot 已设） |
+| 0x0B | `SD_MODE` | `0x1F22262C` | `0x0004` | bit0 时钟输出（空闲时驱动清零）、bit[2:1] 位宽（4=8 bit）、bit4 CIFD/R2N。实测停止态 = 8 bit、时钟关 |
+| 0x0C | `SD_CTRL` | `0x1F222630` | `0x0006` | bit1 RSP_EN、bit2 CMD_EN、bit3 DAT_EN、bit4 写方向、bit6 JOB_START、bit9 ERR_DET_ON。实测是上一条命令的残留 |
+| 0x0D | `SD_STATUS` | `0x1F222634` | `0xff00` | bits[5:0] 错误（W1C：CRC/超时/无响应/busy/数据错）、bit6 卡 busy、bits[15:8] DAT0–7 电平。`0xff00` = 8 条数据线全高、无错误 |
+| 0x0E | `BOOT_CONFIG` | `0x1F222638` | `0x0003` | eMMC RSTZ 控制（bit0 RSTZ、bit1 RSTZ_EN、bit2 boot mode） |
+| 0x0F | `DDR_MODE` | `0x1F22263C` | `0x1100` | bit7 8bit macro、bit8 DDR_EN、bit12 32bit macro、bit13 pad_in_sel。**实测 `0x1100`：当前总线上 DDR 是开的**——探针必须继承、不能假设 SDR |
+| 0x10 | `RESERVED_FOR_SW` | `0x1F222640` | `0x0003` | mboot↔驱动版本号握手（`eMMC_DRIVER_VERSION == 3`）。P0 已实测 |
+| 0x11 | `SDIO_MOD` | `0x1F222644` | `0x0000` | SDIO 模式，eMMC 不用 |
+| 0x12 | `RSP_SHIFT_CNT` | `0x1F222648` | `0x0000` | 响应采样移位，`FCIE_Init` 清零 |
+| 0x13 | `RX_SHIFT_CNT` | `0x1F22264C` | `0x0000` | 接收采样移位 |
+| 0x14 | `ZDEC_CTL0` | `0x1F222650` | `0x0000` | 未用（NAND 旁路） |
+| 0x15 | `TEST_MODE` | `0x1F222654` | `0x0000` | 调试模式选择 |
+| 0x16 | `MMA_BANK_SIZE` | `0x1F222658` | `0x03ff` | MMA 窗口大小，未改 |
+| 0x17 | `WR_SBIT_TIMER` | `0x1F22265C` | `0x82fb` | 写超时计数，未改 |
+| 0x18 | `RD_SBIT_TIMER` | `0x1F222660` | `0x82fb` | 读超时计数，未改 |
+| 0x29 | `MIU_DMA_ADDR_47_32` | `0x1F2226A4` | `0x0000` | DMA 地址 [47:32]；MIU0 恒 0 |
+| 0x34 | `PWR_RD_MASK` | `0x1F2226D0` | `0xffff` | 省电模式，未改 |
+| 0x35 | `PWR_SAVE_CTL` | `0x1F2226D4` | `0x020d` | 省电模式，未改 |
+| 0x36 | `BIST` | `0x1F2226D8` | `0x0000` | 内建自测 |
+| 0x37 | `BOOT` | `0x1F2226DC` | `0x8a00` | 作用未确认（名字像 boot 分区控制，但 eMMC 不通过它） |
+| 0x38 | `EMMC_DEBUG_BUS0` | `0x1F2226E0` | `0x0000` | 调试总线 |
+| 0x39 | `EMMC_DEBUG_BUS1` | `0x1F2226E4` | `0x3000` | 调试总线选择 |
+| 0x3F | `RST` | `0x1F2226FC` | `0x0001` | bit0 `SOFT_RST_n`（低有效），bit[3:1] 复位完成状态。**探针绝不碰它** |
+| 0x63 | `NC_FUN_CTL` | `0x1F22278C` | `0x0000` | bit0 `nc_en`：为 1 时 FCIE 归 NAND 路径，驱动的 `init` 会静默 `return 0`。探针的第一道检查 |
+
+EMMC_PLL（`0x1F247E00`）只碰两个：
+
+| idx | 名称 | 物理地址 | 实测值 | 作用 |
+|---|---|---|---|---|
+| 0x1A | `reg_emmc_test` | `0x1F247E68` | `0x0035` | bit0 = 1.8 V IO 已使能（`eMMC_PlatformInit` 只读 bit0）；bit2 = atop patch |
+| 0x45 | `reg_emmcpll_0x45` | `0x1F247F14` | `0x00ff` | 1.8 V 必须置 `0x0f` / 清 `0x0fff` |
+
+**命令 FIFO**：`0x1F222680` 起 9 个 16 位字（`0x20<<2`），一条命令 3 个字、一条 R1 响应 3 个字。
+**CIFD（NAND/R2N 数据 FIFO）**：`0x1F222800`（FCIE1）。本轮探针**不用**它
+（`ENABLE_eMMC_RIU_MODE = 0`，跑着的驱动只走 MIU/DMA）。
+
+---
+
+#### 32.3 CMD17 的寄存器级序列
+
+下表的「反汇编证据」是最关键的：它证明**这些写操作在跑着的二进制里就是这个顺序和这个值**
+（`eMMC_CMD17_MIU` @ `0xffffff8008c993fc`、`eMMC_FCIE_SendCmd` @ `0xffffff8008c95c00`）。
+寄存器地址一律写成 `FCIE0 + idx`，实际指令里是 `mstar_pm_base + 0x222000 + 0x600 + idx*4`。
+
+| # | 动作 | 寄存器 | 值 | 反汇编证据 |
+|---|---|---|---|---|
+| 1 | 打开 EMMC_ACTIVE / SD_EN | `MIE_FUNC_CTL` (0x07) | `|= 0x1002` | `eMMC_LockFCIE` 置 BIT_EMMC_ACTIVE；`FCIE_Init` 写 `0x1002` |
+| 2 | 输出时钟 | `SD_MODE` (0x0B) | `|= 0x1` | `SendCmd`: `strh w22,[x1,#1580]`（0x62C） |
+| 3 | 开时钟后等 DAT0 高 | `SD_STATUS` (0x0D) | 轮询 bit6 == 0，超时 10 s | `WaitD0High` 先置 bit0，再两次 ldrh 比对 bit6。驱动是在写完 FIFO 之后才等；探针在写 FIFO 前也等一次——FIFO 写入本身不启动传输，两者等价 |
+| 4 | 清事件 | `MIE_EVENT` (0x00) | 写 `0x3F` 直到读回 0 | `ClearEvents` @ `0xffffff8008c95950` |
+| 5 | 清错误 | `SD_STATUS` (0x0D) | 写 `0x3F`（W1C） | 同上，`W1C BIT_SD_FCIE_ERR_FLAGS` |
+| 6 | 1 块 | `JOB_BL_CNT` (0x08) | `1` | `c99498: strh w4,[x3,#1568]`（w4=1） |
+| 7 | DMA 目的地址 | `MIU_DMA_ADDR_15_0/31_16/47_32` (0x03/0x04/0x29) | MIU 地址（§32.4） | `c994d4..c994f0` |
+| 8 | DMA 长度 / 块大小 | `MIU_DMA_LEN_*` (0x05/0x06)、`BLK_SIZE` (0x09) | 512 / 0 | `c994fc`、`c99514` |
+| 9 | 响应 5 字节 | `CMD_RSP_SIZE` (0x0A) | `(x & ~0x3F) \| 5` | `c95c58..c95c88` |
+| 10 | 写 SD_MODE | `SD_MODE` (0x0B) | `mode`（测到 `0x0005`：8 bit + CLK_EN） | `c95c94: strh w22,[x1,#1580]` |
+| 11 | 写命令 FIFO | `CMDFIFO[0..2]` (0x20/0x21/0x22) | 见下 | `c95ca0/c95cac/c95cb8` |
+| 12 | 再等 DAT0 高 | `SD_STATUS` | bit6 == 0 | `c95cc8: bl WaitD0High`（w0 = 0x989680 = 10 s） |
+| 13 | 启动 | `SD_CTRL` (0x0C) | 先 `0x020E`，再 `\|= 0x40` | `c95d18` / `c95d2c-d30` |
+| 14 | 等 CMD_END | `MIE_EVENT` | bit1 或 bit2，1 s | `c95d40: blr` → `WaitEvents(EVENT, 2, 1000000)` |
+| 15 | 读 R1 | `CMDFIFO[0..2]` | 3 个字 | `CheckR1Error` @ `0xffffff8008c964d8` |
+| 16 | 等 DMA_END | `MIE_EVENT` | bit0 或 bit2，5 s | `c994a0` 之后 `WaitEvents(EVENT, 5, TIME_WAIT_1_BLK_END)` |
+| 17 | 查错误 | `SD_STATUS` | `& 0x3F == 0` | 同上 |
+| 18 | 收尾 | `MIE_EVENT`、`SD_MODE` | 清事件、`&= ~1`（关时钟） | `eMMC_FCIE_CLK_DIS()` |
+
+命令 FIFO 的打包（源码 `eMMC_FCIE_SendCmd`，反汇编逐条对上）：
+
+```
+FIFO0 = ((arg >> 24) << 8) | (0x40 | cmd)      ; 0x51 for CMD17
+FIFO1 = (arg & 0xFF00) | ((arg >> 16) & 0xFF)
+FIFO2 =  arg & 0xFF
+```
+
+R1 的取法（`eMMC_CheckR1Error`）：`GetCMDFIFO(0,3)` 读 6 字节到 `au8_Rsp[0..5]`，
+**`R1 = Rsp[1..4]`（大端）**，`Rsp[0]` 是 `0x40|cmd`、`Rsp[5]` 是 CRC7/end bit。
+
+**LBA 要不要左移 9？不用。** 实测 `g_eMMCDrv.u8_IfSectorMode = 1`
+（`0xffffff800943db19`，由 `eMMC_CMD17_MIU` 的 `c99458/c9946c` 两条指令读出：
+`csel w19, wzr, 9, ne` 后 `lsl w19, w26, w19`），所以 `arg = LBA`。
+
+> 顺带实测到的驱动上下文（`g_eMMCDrv` = `0xffffff800943d000`，
+> `u16_Reg10_Mode` @ +0x8C6 = **`0x0005`**、`u8_BUS_WIDTH` @ +0xB2C = **`4`**、
+> `u8_IfSectorMode` @ +0xB19 = **`1`**）。`0x0005` 与寄存器里静止态的 `0x0004`
+> 恰好差 bit0（时钟），互相印证。
+
+---
+
+#### 32.4 DMA 地址规则：寄存器里装的是 **MIU 地址**
+
+`eMMC_DMA_MAP_address` 在跑着的内核里就是 `dma_map_single` 被内联后的完整
+swiotlb/dma-direct 路径（`0xffffff8008ca22e0`），返回 ARM 侧物理地址；紧接着
+`eMMC_translate_DMA_address_Ex`（`0xffffff8008ca2254`）把 `MIU_SELECT` 清成 MIU0，然后：
+
+```
+0x22a0:  mov x0, #0xffffffffe0000000   ; = -0x20000000
+0x22a4:  add x0, x19, x0              ; return dma_addr - 0x20000000
+```
+
+阈值判断用的常数是 `0xFFFFFFFE` / `0xFFFFFFFF`（`0x22ec`/`0x2314`），**不是**源码里的
+`MSTAR_MIU1_BUS_BASE_H = 0x300000000` —— 这一点见 §32.6 未解决。对我们的用途
+（目标地址 `0x23080000` < 4 GB）走的就是上面这一支：
+
+```
+MIU 地址 = ARM 物理地址 − 0x20000000        (MSTAR_MIU0_BUS_BASE)
+0x23080000 → 0x03080000
+```
+
+**活体证据（实测）**：eMMC 空闲时 `MIU_DMA_ADDR_15_0/31_16/47_32 = 0x9680/0x0163/0x0000`
+⟹ 寄存器里是 `0x01639680`。这个值**不可能是 ARM 物理地址**——`/proc/iomem` 里所有
+System RAM 都 ≥ `0x20200000`；而 `0x01639680 + 0x20000000 = 0x21639680` 正好落在
+内核 RAM 里。所以「DMA 寄存器装 MIU 地址」是**实测**，不是推测。
+
+不用 DMA 的 `ENABLE_eMMC_RIU_MODE`（CIFD/PIO）路径在源码里存在，但
+`ENABLE_eMMC_RIU_MODE = 0`，**没被这版内核使用，本轮也未考察**。
+
+---
+
+#### 32.5 只读探针设计（`probes/fcie/`）
+
+**目标**：从 mboot 已初始化好的状态出发，把任意一个 LBA 的 512 字节读进物理
+`0x23080000`，全程不写 eMMC。
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| 代码体积 | `fcie_read.o` **848 B** text，0 data / 0 bss / **0 重定位**、0 未定义符号 | `-O2 -march=armv8-a -mgeneral-regs-only -ffreestanding -fno-pic` |
+| 入口 | `unsigned long fcie_probe_once(unsigned int lba)` | 88 B；内部调 `fcie_read_block(0x1F222600, lba, 0x23080000, diag)` |
+| 心跳 | `0x23080FE0`: `"FCIE1"`, 返回码, R1, `SD_STATUS` | 512 B 数据之后、同一页内 |
+| 超时 | `CNTPCT_EL0` + `CNTFRQ_EL0`（12 MHz） | 不用空转常数，避免 discipline §2 那种「量级算错就变砖」 |
+| 缓存 | 不需要维护 | 探针在 MMU/Cache 关掉的上下文里跑（交接桩已经负责关） |
+| 失败码 | `0xE1` 目标不在 MIU0 / `0xE2` FCIE 归 NAND / `0xE3` DAT0 超时 / `0xE4` CMD_END 超时 / `0xE5` 命令后状态错 / `0xE6` DMA_END 超时 / `0xE7` DMA 后状态错 / `0xE8` R1 报错 | |
+
+**它假设/继承的东西**（很重要，别当成已验证）：
+
+1. 卡已被 mboot 识别完、处在 TRAN 状态（CMD17 的 R1 里 CURRENT_STATE 应 ≥ 4）。
+2. 时钟源、分频、pad、DDR/位宽、时序表**全部继承**，探针一个都不重配。实测该机
+   `DDR_MODE = 0x1100`（DDR 使能）、`SD_MODE` 停止态 `0x0004`（8 bit、时钟关），
+   所以探针只做 `SD_MODE |= 1`。
+3. 不碰 `RST`、不碰 `EMMC_PLL`、不碰 `PAD_CHIPTOP`——这些是全芯片级配置。
+4. 第一道检查是 `NC_FUN_CTL.bit0 == 0`；为 1 说明 FCIE 归 NAND 路径，直接返回 `0xE2`。
+
+**接线方式**：把 `fcie_read.o` 的 `.text` 拷到一个可执行的物理页（同
+`abort-postmmu.S` 的做法），设 `x0 = FCIE0 物理基址 0x1F222600`、`x1 = LBA`、
+`x2 = 0x23080000`、`x3 = 0`（diag 可空），`blr` 进去；返回后把 `x0` 存进 stash。
+**不要**传 VA：这套代码按「MMU 关、物理寻址」写。
+
+**安全边界（必须遵守）**：
+
+- `probes/fcie/fcie.c` 这个内核模块是**只读**的（只做 16 位寄存器读），
+  已在设备上跑过，安全；它是本轮所有实测值的来源。
+- **`fcie_read_block` 从未在设备上执行过。** 在 Android 运行中直接跑它，等于绕过
+  mmc 块层去动一个正在被挂载的控制器；一次读通常没事，但**没有证据**，所以不做。
+  要真跑，顺序应该是：先在 recovery/停掉 `/data` 的场合试 → 再在运行中的 Android 试，
+  并且只读 LBA 0（user 区第一个扇区，读它不会改变任何东西）。
+- **写路径（CMD24/CMD25）本轮完全没做**，代码里也没有。
+
+**构建/运行**：
+
+```sh
+cd ~/Debian/m7642/probes/fcie
+./build.sh bare     # 交叉编译两个 freestanding 目标文件，打印 size
+./build.sh ko       # 走 ~/kbuild/build-probe.sh（厂商树不能正常 make modules）
+adb push ~/kbuild/fcie-build/fcie.ko /data/local/tmp/
+adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie; cat /data/local/tmp/fcie.out'
+```
+
+---
+
+#### 32.6 未解决 / 未验证
+
+1. **CMD17 没有真正执行过。** 寄存器序列是从「跑着的二进制」逐条抄的，但没有一次
+   上机跑通记录。这是下一步唯一还缺的证据。
+2. `eMMC_translate_DMA_address_Ex` 的 >4 GB 分支：反汇编里的阈值常数是 `0xFFFFFFFE`，
+   而源码是 `dma > MSTAR_MIU1_BUS_BASE_H`（`0x300000000`），两者对不上；那一支的加法
+   常数也看不出自洽的物理含义。说明**跑着的二进制与本地源码在这一段不一致**（其余函数
+   逐条一致）。MIU1/高地址怎么映射：**未确认**，本轮只覆盖 MIU0。
+3. `dma_map_single` 返回的到底是纯物理地址还是有 `dma-ranges` 偏移：**对照**（驱动减去
+   `0x20000000` 后能正常工作 + 静止值 `0x01639680`），没有单独测量。
+4. `BOOT` (0x37) = `0x8a00`、`PWR_SAVE_CTL` = `0x020d` 的语义未确认。
+5. `eMMC_FCIE_ErrHandler_RestoreClk` 在什么情况下会重配时钟/pad（探针跳过了它）——
+   如果探针跑在一个刚出过错的控制器上，可能不成立。
+6. CIFD/PIO 路径（不碰 DMA 的读法）在 m7642 上是否可用：未考察。它对「探针」其实
+   更友好（不用管 MIU 地址、不用管 cache），值得以后试。
+7. `SD_MODE` 的 bit5 `DATA_SYNC`、bit7 `DMA_R_CLK_STOP`、bit8 `DIS_WR_BUSY_CHK`
+   在 CMD17 里是否必须——实测值 0，没验证过置 1 的后果。
+
+#### 32.7 本轮作废的假设（留原文，别重走）
+
+- ~~「`[0xffffff8009358048]` 读出的值不像上下文指针，这条链还要再追一层」~~
+  **作废**：环不存在，是读数的字节序错。真值 `0xffffff800a000000`。
+- ~~「`eMMC_Init_Device` 的 callees 里还有一层设置基址」~~ **作废**：不需要再追，
+  `eMMC_PlatformInit` 的第一条 `ldr` 就是最终基址。
+- 顺带记一条**别踩的坑**：`mstar_pm_base + 0x22600`（= `0xffffff800a022600`）**不是**
+  FCIE。FCIE 是 `+0x222600`，中间的 `0x200000` 是 `RIU_BASE`。这类「少一位/少一个 2」
+  正是 `discipline.md` 说的「地址算术错一位不会报错，只会读到平静的一整片 0」。

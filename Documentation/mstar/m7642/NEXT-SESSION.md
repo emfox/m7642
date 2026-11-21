@@ -29,18 +29,33 @@ primary_entry ✓ → __pi_create_init_idmap 入口 ✓ → 0x465E78 ✓ → 颗
 
 ## C. eMMC 持久化（长线，收益最大，风险最高）
 
-已确认：
+**基址链已结案（2026-11-22，见 confirmed-facts §32）**：
 
-- 控制器 = **MStar FCIE**，每条命令一个函数：`eMMC_CMD17`/`eMMC_CMD24` + `*_MIU`（DMA 走物理地址）
-- `eMMC_PlatformInit`（`0xffffff8008ca6264`）：`[0xffffff8009358048] + 0x247000` → 寄存器基址
-- **但该全局读出的值是 `0xffffff800000000a`，不像上下文指针** ⟹ 还要再追一层；
-  下次从 `eMMC_Init_Device`（`0xffffff8008c925ec`）往下追它的 callees
+- `mstar_pm_base = [0xffffff8009358048] = 0xffffff800a000000` = `ioremap(0x1F000000, 0xA00000)`
+  （上一轮读到的 `0xffffff800000000a` 是 8 字节当两个 32 位字、按大端拼错；**这条链没有缺环**）
+- FCIE0 = `mstar_pm_base + 0x222600` = PA `0x1F222600` / VA `0xffffff800a222600`；
+  EMMC_PLL = `+0x247E00`。DMA 寄存器里是 **MIU 地址 = ARM 物理地址 − 0x20000000**
+  （实测：静止值 `0x01639680`，不可能是物理地址）
+- §32 有 34 个寄存器的实测值、CMD17 的 18 步序列（每条带反汇编地址）、以及空洞表
+  （idx `0x19–0x28`/`0x2A–0x33`/`0x3A–0x3E`/`0x40–0x62` 不要连读）
 
-工具：`tools/host/dump2.sh <sym> <len>`（转储符号机器码 + 打印运行时地址）、
-`tools/host/readglobal.sh <va> <len>`（读任意 VA）。**全部在 Android 里做，不需要断电。**
+`probes/fcie/`：
 
-安全目标（写路径）：`dtb` 分区 +512 KB 之后的死区（mboot 读 1 MB 进内存，内核只解析前 23 KB），
-**写前必须硬编码并校验目标 LBA**。
+- `fcie.c` —— **只读**寄存器 dump 模块，已在设备上跑过（零风险），本轮所有实测值的来源
+- `fcie_read.c` / `fcie_probe.c` —— freestanding CMD17，848 B、0 重定位、数据落
+  `0x23080000`、心跳在 `0x23080FE0`。**从未执行过**
+
+下一步（按顺序）：
+
+1. 先跑只读模块确认 34 个读数可复现（`./build.sh ko` → push → insmod/rmmod）
+2. **CMD17 仍未上机。** 要跑必须同时满足：只读 `lba=0`、R1 的 CURRENT_STATE ≥ 4、
+   控制器空闲（停 `/data` 或进 recovery）。**绝不能在 Android 正常读写时跑。**
+3. 写路径（CMD24/CMD25）继续冻结。安全目标不变：`dtb` 分区 +512 KB 之后的死区，
+   写前硬编码并校验目标 LBA。
+
+工具：`tools/host/dump2.sh <sym> <len>`（转储 + 打印运行时地址）、
+`tools/host/readglobal.sh <va> <len>`、`~/kbuild/build-probe.sh fcie`。
+**全部在 Android 里做，不需要断电。**
 
 ## D. 今天（11/21–22）的账
 
