@@ -763,3 +763,20 @@ str  x0, [x22]      ; 写入表描述符
 4. 关 `CONFIG_ARM64_PAN/UAO` 等影响早期访问的选项做对照
 
 判据：哪一步之后 `init_kernel_el` 检查点能**稳定**到达（连续 2 次），那一步就是真修复。
+
+### 24. 仪器重大缺陷：多数「到达」未经验证（2026-11-21 20:1x）
+
+复盘中发现的**方法论错误**（比任何技术结论都重要）：
+
+- 今天大部分 rung 判定只等 `sys.boot_completed=1` 就宣布"检查点到达"，
+  **没有核对 stash**。
+- 若 `adb reboot recovery` 未生效、mboot 改走 `bootcmd` 直接起 Android，设备同样"回来"
+  ⟹ **假阳性**。这能一次解释 `0x465E80` 一会儿过一会儿不过的矛盾。
+- 因此**「卡点二 = create_init_idmap」这条链上的多数数据点（Q1/Q2/N1 等）都不牢**。
+  真正**有 stash 验证**的只有：`A (code1)`、`B (primary_entry)`、`fixcacheK (0x455048)`。
+
+**新工具**：`tools/host/run-verified.sh` —— 判定必须满足
+`stash.magic == "M764"` 且 `stash.x30 == 0x20280000 + off + 4`，否则记 `INCONCLUSIVE`。
+
+⟹ **下一步就是用它把整条阶梯重跑一遍**（先 A/B 校准，再从早到晚），
+在拿到**已验证**的边界之前，所有「卡点」结论都应视为待复核。

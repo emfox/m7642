@@ -122,6 +122,13 @@
 2. `/data/local/tmp/rec.head.bin` 的 md5 是厂值（见 confirmed-facts §D）。若不是 ⟹ 厂值回滚已失效。
 3. `misc` 的 BCB 不是 `boot-recovery`。
 
+**任何「到达」必须由 stash 证明，不能只看「设备回来了」。** 2026-11-21 20:1x：
+多数 rung 判定只等了 `sys.boot_completed=1` 就宣布"到了"。但若 `adb reboot recovery` 没生效、
+mboot 走了 `bootcmd` 直接进 Android，设备同样会"回来"，于是给出**假阳性**——这能一次解释
+`0x465E80` 一会儿"过"一会儿"不过"的全部矛盾。
+规则：`到达` 必须验证 stash 的 `magic == "M764"` **且** `x30 == image_base + off + 4`；
+不满足就记 `INCONCLUSIVE`，不参与二分。
+
 **「没回来」这种判定，先确认不是等太短。** 2026-11-21 19:0x：判定脚本只等 120 s，
 非正常掉电后 Android 修 `/data` 会让启动变慢 ⟹ 慢启动被误判成「检查点没到」，导致同一镜像
 一会儿"过"一会儿"不过"。规则：等待 ≥ 300 s、记录到达时的 uptime、关键结论重复 2 次。
