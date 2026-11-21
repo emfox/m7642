@@ -414,3 +414,19 @@ DDR 则已被 §B 的 `m7642-boot-s1.img` 证明能返回。
 **但按这个序列从 Android 写过去没有复位**（uptime 313→379 连续）。⟹ 要么还缺前置条件（例如先交给 PM51，相邻函数里有一句 `strb 0 → 0xA01FE000`），要么 `MDrv_SYS_ResetAeon` 不是 `machine_restart` 实际走的那条。
 
 **这条暂时不影响主线实验**：现在「挂住 → 红外按电源 → 起来读」已经能自动跑（见 `paths.md` §6），只是挂死时按电源**会切电丢 DRAM**，所以「跨复位的检查点读数」仍然需要这条寄存器路径或主线内核自己的 restart。
+
+### 9. ★★ 复位方式定型（2026-11-21 14:53，实测）
+
+**结论：`panic` 是 warm reset，`machine_restart(cmd)` 是待机（切电）。两者不同，厂商 handler 按原因分派。**
+
+| 触发 | 现象 | DRAM |
+|---|---|---|
+| 模块里 `panic("…")`（无任何 WDT、无其他动作） | **5 s 内自己复位**，Android 25 s 后可用 | **保留**：pmsg 记录 `M7642PANC` 出现在 `pmsg-ramoops-0` |
+| 模块里 `machine_restart("m7642test")` | 4 s 内失联，40 s 仍 ping 不通，**要按电源** | 丢（PM51 切电） |
+| `MDrv_WDT_Init/SetTimer`（ch0，20 s） | 120 s 内无复位 | — |
+| 写 `0x1F201FCC` + `0x1F20210C`（`MDrv_SYS_ResetAeon` 的序列） | 无复位 | — |
+
+⟹ **Android 侧已经有可靠的「写记录 → 复位 → 起来读」闭环**：写 `/dev/pmsg0`（或任意预留内存）→ 主动 `panic()` → 复位后读 `/sys/fs/pstore/pmsg-ramoops-0` 与 `dmesg-ramoops-*`（复位前的完整内核日志）。
+模块：`probes/panicmod`（故意 panic）、`probes/rstcall`（调 machine_restart 做对照）。
+
+⟹ **对主线内核的影响**：4.19/7.3 只要能跑到 `panic()`，理论上就能自己复位；但主线树里的 `machine_restart` 是 arm64 通用实现（PSCI，这颗 ATF 不实现），所以要么把厂内核这套按原因分派的 restart 移植进主线（bring-up 本来就要做的事），要么靠外部手段。

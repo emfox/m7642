@@ -110,6 +110,7 @@ bring-up beacon 要经线性映射写），不要拿它们当构建源。
 | `~/Debian/m7642/tools/host/{mbdis,mboot-an}.py` | mboot 反汇编 / 分析 |
 | `~/Debian/m7642/tools/host/{mk-ladder,mk-entry,mk-tramp,mk-pstub}.py` | 各种注入器（历史） |
 | `~/kbuild/scan5555.sh` | 扫本网段哪台机器开着 adb 端口 |
+| `probes/panicmod` / `probes/rstcall` | 故意 panic（= warm reset，DRAM 保留）/ 调 `machine_restart`（= 待机）做对照 |
 | `tools/host/tvpower.sh` | **红外按电源**（走米家云 → 小爱音箱）：`status` / `on` / `off`。默认拒绝在 Android 运行态按（那是硬断电） |
 
 **刷机包**
