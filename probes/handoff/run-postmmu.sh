@@ -29,7 +29,7 @@ echo "  android_up=${ok:-no} ($(( $(date +%s) - t0 ))s)"
 [ -n "$ok" ] || { echo "  NO_RETURN: checkpoint not reached, or the handover failed"; exit 8; }
 
 page(){  # $1 addr, $2 outfile
-	root "/vendor/bin/busybox rmmod probeRW 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/probeRW.ko addr=$1 len=64 op=r; rmmod probeRW; /vendor/bin/busybox cat /data/local/tmp/probeRW.out" | tr -d '\r' > "$2"
+	root "/vendor/bin/busybox rmmod probeRW 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/probeRW.ko addr=$1 len=128 op=r; rmmod probeRW; /vendor/bin/busybox cat /data/local/tmp/probeRW.out" | tr -d '\r' > "$2"
 }
 
 page 0x23090000 "/tmp/stf-$TAG.txt"
@@ -45,8 +45,8 @@ def rec(path):
                 out.append(b.replace(" ", "").strip())
     return bytes.fromhex("".join(out)) if out else b""
 def show(title, h):
-    u = lambda o: struct.unpack("<Q", h[o:o+8])[0]
-    if len(h) < 0x48:
+    u = lambda o: struct.unpack("<Q", h[o:o+8])[0] if len(h) >= o + 8 else 0
+    if len(h) < 0x40:
         print("  %s: no record" % title); return
     print("  %s: magic=%r tag=%r size=%#x x30=%#x" %
           (title, h[0:4], h[4:8], struct.unpack("<I", h[8:12])[0], u(0x10)))
