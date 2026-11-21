@@ -537,3 +537,36 @@ boot 时刻的 GOP dump（探针 `gopstash` 读寄存器 → 写 stash → 返�
 1. warm reset 只能由厂内核的喂狗线程提供（§I.10），挂住的主线内核拿不到；
 2. 屏幕在 boot 阶段不扫描 DRAM（本节实测）；
 3. 预内核阶段没有可写的持久介质（eMMC 驱动不在）。
+
+### 15. ★★★ 单步追踪通道打通（2026-11-21 16:18，四档全实测）
+
+**结论：主线内核的检查点现在有可用的读出通道了——不需要复位、不需要 WDT、不需要屏幕、不需要人。**
+机制是「检查点 → 把预读的厂内核拷回运行地址 → 跳进厂入口」，厂内核照常起 Android，
+**记录在同一次启动里读回**。
+
+四档实测（每档都验证了 Android 能否起来 + stash 内容）：
+
+| 档 | stub 做的事 | 结果 |
+|---|---|---|
+| `abort1` | 写 stash + 清 x3/x4 + 跳 `0xFA0000`（recovery/boot 两个槽的内核**是同一个二进制**，md5 `6c650b9c…`） | **Android 起来**，stash = `M764/STEP/02` ✓ |
+| `abort1c` | 同上 + 读暂存区并记录 | Android 起来；stash 记录到 `"ANDR"`(ANDROID!)、`ksize=0x12d4a00`、`code0=0x91005a4d`、`code1=0x143e7fff` ⟹ **预读成功** |
+| `abort3` | 写 stash + **拷贝** `0x30000800 → 0x20280000`（19,745,280 B）+ 清 x3/x4 + 跳厂入口 | **Android 起来**，stash = `M764/STEP/03` ✓ |
+| `abort2` | 同 abort3 但暂存地址用 `0x28000000` | 失败（见下） |
+
+**两个关键坑（都付过代价）：**
+
+1. **`recoverycmd` 有命令长度上限**：原厂 117 字符正常；直接加一条 `mmc read.p … boot …` 变 157 字符 ⟹
+   **启动直接挂掉**（不是地址问题，`0x28000000`/`0x30000000` 都一样）。解法：把预读放进单独的
+   env `stagecmd`，主串里用 **`run stagecmd`** 间接执行（主串 126 字符）。
+2. **必须清 `x3/x4`（ramdisk 起/长）**：不清就会拿到 recovery 的 7.7 MB ramdisk ⟹ 厂内核起 recovery
+   而不是 Android（`abort0` 就栽在这里）。
+
+当前设备 env（已验证可用）：
+
+```
+recoverycmd = mmc erase.p misc; mmc read.p 0x23000000 dtb 0x100000; mmc read.p 0x25000000 recovery 0x2000000; run stagecmd; bootm 0x25000000
+stagecmd    = mmc read.p 0x30000000 boot 0x2000000
+```
+
+⟹ **下一步（真正的主线工作）**：把 `abort3` 的那段 stub 插进 4.19/7.3 镜像的早期代码（第 k 条检查点），
+逐档读出主线到底走到哪一步。工具链齐全（`mk-boot-beacon` 注入 + `probeRW` 读 stash）。
