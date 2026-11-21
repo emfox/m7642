@@ -110,6 +110,7 @@ bring-up beacon 要经线性映射写），不要拿它们当构建源。
 | `~/Debian/m7642/tools/host/{mbdis,mboot-an}.py` | mboot 反汇编 / 分析 |
 | `~/Debian/m7642/tools/host/{mk-ladder,mk-entry,mk-tramp,mk-pstub}.py` | 各种注入器（历史） |
 | `~/kbuild/scan5555.sh` | 扫本网段哪台机器开着 adb 端口 |
+| `tools/host/tvpower.sh` | **红外按电源**（走米家云 → 小爱音箱）：`status` / `on` / `off`。默认拒绝在 Android 运行态按（那是硬断电） |
 
 **刷机包**
 
@@ -141,3 +142,21 @@ bring-up beacon 要经线性映射写），不要拿它们当构建源。
 - 网络 adb：**`192.168.10.60:5555`**（历史值；换网络后必须先确认可达）
 - 本机换网段后怎么找：`~/kbuild/scan5555.sh` 扫当前 `/22`，或 `adb mdns services`
 - `ro.build.fingerprint` = `tcl/tcl_m7642/…:PPR2.180905.006.A1/…:user/dev-keys`
+
+## 6 红外按键通道（2026-11-21 打通）
+
+设备在米家里是一个**云红外遥控**（卡片叫「电视」），实际发射器是 **小爱音箱**。
+
+| 项 | 值 |
+|---|---|
+| 遥控 | `电视` · 型号 `miir.tv.ir01` · matchid 10982 · 58 个键 |
+| 电源键名 | **`POWER`**（另有 `VOL+/-` `CH+/-` `OK` `MENU` 等） |
+| 发射器 | `xiaomi.wifispeaker.oh2p`（另一台 `lx06`） |
+| 工具 | `mihome-ctl`（`~/.local/bin`，uv 安装）——扫码登录一次，会话存 `~/.local/state/mihome-ctl/`（0600）|
+| 命令 | `mihome-ctl ir-send --remote 电视 --key POWER [--repeat N]` |
+| 封装 | `tools/host/tvpower.sh {status|on|off}`，**必须跑在主机侧**（沙箱对状态目录只读） |
+
+实测延迟：按下 → 进待机 ≤10 s；待机中按下 → adb 可用 **24 s**。
+
+⚠️ **纪律**：Android 运行态按电源 = 待机 = PM51 切电 = 硬断电。脚本默认拒绝，必须显式 `--force`。
+救砖流程（按住机身键 + 插电 ≤15 s）IR 做不了，仍要人。

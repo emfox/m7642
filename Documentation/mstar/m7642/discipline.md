@@ -122,6 +122,11 @@
 2. `/data/local/tmp/rec.head.bin` 的 md5 是厂值（见 confirmed-facts §D）。若不是 ⟹ 厂值回滚已失效。
 3. `misc` 的 BCB 不是 `boot-recovery`。
 
+**按电源键之前先确认设备不在 Android 运行态。**
+
+- Android 运行中按电源 = 待机 = PM51 切电 = 硬断电（`/data` 风险）。工具 `tools/host/tvpower.sh` 默认拒绝，需 `--force` 才按。
+- 只能用于「待机/挂死 → 开机」这个方向；救砖（按住机身键 + 插电）IR 做不了。
+
 **「设备自己回来了」不能当「狗咬了」的证据。**
 
 - 必须另有一个**不依赖时间**的判据证明这一轮确实进过 recovery：`misc` 第 2 页标记是否被
