@@ -872,3 +872,28 @@ str  x0, [x22]      ; 写入表描述符
 - `map_range` 的递归/循环条件（`Image+0x465CB8` 起）
 - 早期代码里任何 `wfe/wfi` 或忙等
 - 静态扫描 `0x455000`–`0x466000` 区间的回边（backward branch）
+
+### 28. 空转的最强候选：**等从核的 `wfe` 循环**（2026-11-21 23:5x，静态扫描）
+
+静态扫描 `0x455000`–`0x466000`（`.idmap.text` 区）：
+
+- **没有任何回边（backward branch）** ⟹ 该区间内没有显式死循环
+- **5 处 `wfe`/`wfi`**：
+
+| 地址 | 附近符号 | 含义 |
+|---|---|---|
+| `0x4554D8` | `pen`（`secondary_holding_pen`） | 从核停泊循环 |
+| `0x455574` / `0x455578` | `__no_granule_support` | 异常兜底死等 |
+| `0x45560C` | `idmap_kpti_install_ng_mappings` | KPTI 映射切换 |
+| **`0x4557F0`** | **`wait_linear_map_split_to_ptes` / `scondary_cpu_wait`** | **等其它 CPU** |
+
+**最强假设**：7.3 在 `wait_linear_map_split_to_ptes` 里等**从核**同步；而从核是 mboot/厂商内核
+停泊的（停在厂商内核的地址上），**永远到不了 7.3 的同步点** ⟹ 主核在 `wfe` 里无限等待，
+**不产生任何异常** —— 与 §I.27「挂住但零异常」完全吻合。
+
+**验证/修复方向**（下次）：
+1. 把 `0x455574`/`0x455578` 附近（`__no_granule_support` 死等）与 `0x4557F0` 的 `wfe` 改 `nop`
+   （或直接 `b` 到返回），看内核能否走过这一带
+2. 或在入口桩里把从核**重新停泊到 7.3 的 `secondary_holding_pen`（`0x206D54A4`）**
+3. 检查 dtb 的 `enable-method`（`psci` / `spin-table`）与 `cpu-release-addr` 是否与 7.3 期望一致
+   —— 这是最可能的**真正的**根因
