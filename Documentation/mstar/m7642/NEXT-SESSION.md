@@ -60,9 +60,19 @@ cd ~/Debian/m7642/probes/handoff
 
 那说明 7.3 在 `create_init_idmap` 或更早处就挂住（**不是** MMU 之后）：
 `0x465E78` 是唯一 stash 验证过的深点，而 `0x465E80` 从未到达过（§I.25，且仪器当时不可靠）。
-此时改用**预置的 pre-MMU 单步通道**继续夹：
-`tools/host/run-verified.sh` + `mk-mainline-abort.py --at <off> --nop 0x46804C`，
-先重跑 `0x465E80`（stash 验证），再往 `map_range` 入口 `0x465CC8` 推。
+此时改用 pre-MMU 单步通道（`abort-rung.bin` 的预算交接；**MMU 关时不要用 tramp**——
+`dc civac` 在 MMU 关时是另一件事）：
+
+```bash
+cd ~/Debian/m7642
+python3 tools/host/mk-mainline-abort.py --image ~/kbuild/linux-main/arch/arm64/boot/Image \
+  --at 0x465e80 --stub probes/handoff/abort-rung.bin --nop 0x46804c \
+  --out ~/kbuild/m7642-out/m7642-rec-73-rung-0x465e80.img
+# 取输出里的 md5，然后：
+probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-rung-0x465e80.img <md5> 0x465e80
+```
+
+先重跑 `0x465E80`（**带 nop**，与已验证档一致），再往 `map_range` 入口 `0x465CC8` 推。
 
 ## 5. 不变的两条线
 
