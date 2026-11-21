@@ -329,11 +329,12 @@ DDR 则已被 §B 的 `m7642-boot-s1.img` 证明能返回。
 
 | 值 | 探针挂住时 |
 |---|---|
-| `wdt_enable 10` | **不可依赖**：4 次里 2 次自恢复（26 s / 47 s，狗咬在 mboot 等内核的窗口内 ⟹ 重走 `bootcmd`），2 次落到**待机**要人按电源。⟹ 不能把自恢复当前提 |
+| `wdt_enable 10` | **没有证据表明它会复位**。唯一有硬证据进过 recovery 的两次（`misc` 标记被 `mmc erase.p misc` 擦掉）都以「探针挂住、设备不恢复」收场。详见 §I.6 |
 | `wdt_enable 120` | mboot 先超时**进待机**，要人按电源 |
 | 无 | 停在 logo 不动（`b .` 实测 4 min+） |
 
-⟹ 10 s 比 120 s 好（至少有时能自恢复），但**都不是可依赖的兜底**。而且「回待机」是 PM51 切电，**DDR 会全丢**——所以任何「跨复位存活」的实验，碰上待机就等于没测。
+⟹ **「狗会咬回来」这条前提没有一次可复现的实验支持**，而 `wdt-beacon.md` §二 本来就写着「是否真布防仍未证明」。见 §I.6 的寄存器证据：mboot 调的那条 `HAL_WDT_Start` 在厂 HAL 里是**空桩**。
+  而且「回待机」是 PM51 切电，**DDR 会全丢**——任何「跨复位存活」的实验，碰上待机就等于没测。
 
 ### 4. 判据盲区（必须记住）
 
@@ -347,3 +348,29 @@ DDR 则已被 §B 的 `m7642-boot-s1.img` 证明能返回。
   Android，读数必须跨复位）。测法：`recovery 槽 + stash 写 + b . + wdt_enable 10`，狗咬回来读。
 - pstore/pmsg 在**同一次启动内**到底导出过没有：现在判不了，因为写 `0x419c0000` 的那一档
   可能从未成功写入。
+
+### 6. `wdt_enable` 为什么不咬：厂 HAL 反汇编（2026-11-21 下午，实测 + 反汇编）
+
+**结论：mboot `wdt_enable` 走的那条链路在这台机器上是空的。** 两条独立证据：
+
+1. `misc` 第 2 页标记被擦 ⟹ `recoverycmd` 确实执行到了（探针确实被 `bootm` 交出去）；同一轮
+   设备挂住 **130 s 不恢复**、需人按电源。11:56 那次同样的组合挂了 **4 分钟**。
+2. 把厂 HAL 的函数机器码 dump 出来反汇编（`kallsyms_lookup_name` 取址 + `kernel_write` 落盘，
+   工具 `probes/wdtdump/`）：
+
+| 符号 | 实际内容 |
+|---|---|
+| `HAL_WDT_Start` | **`mov w0,#1; ret`** —— 空桩，永远返回 1（这就是我调它时 rc=1 的原因，不是签名错） |
+| `MDrv_SYS_WDTEnable(arg)` | 只 `strb` 到一个全局字节，**不碰寄存器** |
+| `MDrv_SYS_WDTSetTime(idx,*out)` | 11..22 的**时间索引**翻译成码值，不碰寄存器 |
+| `HAL_WDT_SetTimer(secs)` | `ticks = secs × 12,000,000`（12 MHz 时基），再调 `f(0x3008, ticks)` |
+| 同族第二个实现 | `base = *(u64*)0xffffff800232d628`；`strh (ticks>>16) → [base+0x600C]` |
+
+3. 照这个布局直接布防（模块 `probes/wdtarm/wdtarm2.c`：`[base+0x600C]=ticks>>16`、
+   `[base+0x6000]=1`，`base=0xffffff800a000000`）**并没有让设备复位**（120 s 内 uptime 连续）。
+
+⟹ 完整布防序列还缺一环（`0x3008` 那一路寄存器，或使能位在别的偏移）。**「可靠的 warm reset」
+目前仍然是不可用的**，也就是说「探针记录跨复位存活」这条判据今天无法测。
+
+`/dev/watchdog` 也不存在（`/proc/devices` 无 watchdog），dmesg 只有一句
+`_MI_WDT_GetHandle: Handle is Not open`。

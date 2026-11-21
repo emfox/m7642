@@ -122,6 +122,14 @@
 2. `/data/local/tmp/rec.head.bin` 的 md5 是厂值（见 confirmed-facts §D）。若不是 ⟹ 厂值回滚已失效。
 3. `misc` 的 BCB 不是 `boot-recovery`。
 
+**「设备自己回来了」不能当「狗咬了」的证据。**
+
+- 必须另有一个**不依赖时间**的判据证明这一轮确实进过 recovery：`misc` 第 2 页标记是否被
+  `mmc erase.p misc` 擦掉。
+- 代价：2026-11-21 把几次「26 s 自己回 Android」当成 `wdt_enable` 生效，据此写下「10 s 狗是
+  有效兜底」，后来用标记法才知道那几次**根本没进 recovery**（BCB 没写进去，走了 `bootcmd`），
+  而真进了 recovery 的两次都是**挂住不恢复**。
+
 **`boottest.sh arm` 只许执行一次。**
 
 它每次都**无条件**备份"当前槽内容"。arm 两次就会把我们自己的镜像当成厂值备份，
