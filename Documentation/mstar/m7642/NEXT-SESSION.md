@@ -1,67 +1,80 @@
-# 下次开工的第一件事（2026-11-22 02:00 写于夜里）
+# 下次开工的第一件事（2026-11-22 01:5x 写）
 
-设备当前状态：**Android 正常运行，无需拔插**。以下三条命令一早就可跑（每条失败会挂死，需要一次
-物理断电；成功了就不需要人工）。
+设备当前状态：**上一发 `prsw` 没回来，设备 ping 不通，需要一次物理断电**
+（拔电源线 → 插回 → 按一下电源键）。boot 槽是厂值 `6272b10dcaf5e9efa40491d87f2c1289`，
+`misc` 的 BCB 已被 `recoverycmd` 里的 `mmc erase.p misc` 擦掉，断电后不会锁 recovery。
 
-## A. 最高优先级：post-MMU 交接桩验证（若成立，仪器从此全自动）
+## 0. 必读的上一条结论（§I.33）
+
+NEXT-SESSION 上一版 A 的三张镜像**按原样不可能回来**：桩在 `Image+0x1400000`（PA `0x21680000`），
+而 MMU 开后两套映射都止于 `_end`（Image+0x670000）；「线性映射」地址 `0xffffffc0004d5000`
+是模块区（`PAGE_OFFSET = 0xffffff8000000000`），且 `start_kernel` 时线性映射还不存在。
+
+同时查出一处**配置漂移**：11-20 的 7.3 Image 是 `CONFIG_MSTAR_M7642_BUILTIN_DTB=n`，
+而文档的前提是 `=y`；mboot 交的 `x0=0`，所以 `setup_arch` 拿不到 DT。
+已重编 Image（`=y`，DTB 在 Image+0x4C9858），并在 code1 加 shim 把 `x0` 设成 `0x23000000`、
+把 mboot 入口寄存器记到 `0x23090000`。详见 confirmed-facts §I.33。
+
+## 1. 恢复设备后先核对（只读，不需要断电磁）
 
 ```bash
-cd ~/Debian/m7642 && bash tools/host/run-fast.sh ~/kbuild/m7642-out/m7642-rec-73-skmain.img 40ef6778dab007af26e8c0cef3f4d1ff skmain
+ADB=~/Debian/tv/adb/platform-tools/adb
+$ADB connect 192.168.10.60:5555; sleep 1; $ADB devices
+$ADB -s 192.168.10.60:5555 exec-out su -c "dd if=/dev/block/by-name/boot bs=1048576 count=32 2>/dev/null" | md5sum
+#   期望 6272b10dcaf5e9efa40491d87f2c1289（厂值 boot）
+$ADB -s 192.168.10.60:5555 exec-out su -c "dd if=/dev/block/by-name/misc bs=32 count=1 2>/dev/null" | od -An -tx1
+#   期望 32 个 00
 ```
 
-- **回来** ⟹ MMU 后的检查点可读了 ⟹ 接着跑 `setuparch`(`d3a56dff…`)、`panic2`(`b48b46a5…`)
-- **不回来** ⟹ 看 stash；若 stash 有 `M764`/`MMMU` 说明记录成功但交接没成，再查 routine 第 4、5 步
-- 关键实现：`probes/handoff/abort-postmmu.S`（线性映射写 → idmap 执行 → 清 M/C/I → 跳 `0x21680200` 做物理地址交接）
-- **已修的自毁 bug**：routine 原放在 `0x206d5000`，而交接要拷贝 `0x20280000..0x21554a00`，正好把它自己盖掉；
-  现改为 routine 只做「关 MMU → 跳 `0x21680200`」，交接代码在桩的物理副本里（拷贝区之外）
+## 2. 第一发：验证仪器本身（**一定到达**的点）
 
-## B. 若 A 成立：把 7.3 的卡点继续往下压
-
-现在已验证的边界（stash 核对过）：
-
-```
-primary_entry ✓ → __pi_create_init_idmap 入口 ✓ → 0x465E78 ✓ → 颗粒度检查通过 ✓ → 【MMU 开】
-                                                                              ↓
-                                                                   start_kernel 一带（未定位）
+```bash
+cd ~/Debian/m7642/probes/handoff
+./run-postmmu.sh ~/kbuild/m7642-out/m7642-rec-73-mmuon.img 7f309a473a77abafe894a0636c91b1c2 mmuon
 ```
 
-用 A 的桩在 `start_kernel` → `setup_arch` → `early_init_dt_verify` / `parse_early_param` 之间二分。
+- 检查点 = `__enable_mmu+0x38`（`0x455548`，`msr sctlr_el1` 之后）：MMU 刚开、PC 仍是 PA，
+  **不受 `early_map_kernel` 影响**，是仪器的最小可验证点。
+- **回来** ⟹ 仪器在 MMU 后可用了 ⟹ 按 §3 的顺序往后推。
+- **不回来** ⟹ 先查 `tramp-postmmu.S`，不要继续往后打（每发都要一次人工断电）。
 
-## C. eMMC 持久化（长线，收益最大，风险最高）
+## 3. 之后按这个顺序（每档回来才算「到达」）
 
-**基址链已结案（2026-11-22，见 confirmed-facts §32）**：
+| 顺序 | 镜像 | md5 | 检查点 |
+|---|---|---|---|
+| 2 | `m7642-rec-73-emap.img` | `f0ca4aa27051e9cafff4e289adf5193f` | `__pi_early_map_kernel` 0x4659e0 |
+| 3 | `m7642-rec-73-prsw.img` | `b8651fd2121089cb69e8385234fc58a9` | `__primary_switched` 0x46805c |
+| 4 | `m7642-rec-73-skmain.img` | `2eac39d1515761d31ce65dd7a5b9b33e` | `start_kernel` 0x46091c |
 
-- `mstar_pm_base = [0xffffff8009358048] = 0xffffff800a000000` = `ioremap(0x1F000000, 0xA00000)`
-  （上一轮读到的 `0xffffff800000000a` 是 8 字节当两个 32 位字、按大端拼错；**这条链没有缺环**）
-- FCIE0 = `mstar_pm_base + 0x222600` = PA `0x1F222600` / VA `0xffffff800a222600`；
-  EMMC_PLL = `+0x247E00`。DMA 寄存器里是 **MIU 地址 = ARM 物理地址 − 0x20000000**
-  （实测：静止值 `0x01639680`，不可能是物理地址）
-- §32 有 34 个寄存器的实测值、CMD17 的 18 步序列（每条带反汇编地址）、以及空洞表
-  （idx `0x19–0x28`/`0x2A–0x33`/`0x3A–0x3E`/`0x40–0x62` 不要连读）
+四张镜像**都带**：`nop @0x46804C`（`preserve_boot_args` 的 `b dcache_inval_poc`，此前所有深检查点
+都在带它的镜像上测到）、code1 shim（x0=0x23000000 + 记录到 0x23090000）、tramp、handover。
+重建命令：`probes/handoff/build-postmmu.sh && probes/handoff/mk-postmmu-images.sh`（换内核后必须重跑，
+脚本从 System.map 复算所有常量）。
 
-`probes/fcie/`：
+`run-postmmu.sh` 会读两个 64 B 记录：
 
-- `fcie.c` —— **只读**寄存器 dump 模块，已在设备上跑过（零风险），本轮所有实测值的来源
-- `fcie_read.c` / `fcie_probe.c` —— freestanding CMD17，848 B、0 重定位、数据落
-  `0x23080000`、心跳在 `0x23080FE0`。**从未执行过**
+- `0x23090000` = `M764`/`FDT `：mboot 入口的 x0..x5/x30（**x0 是 mboot 真正给的 DTB 指针**）
+- `0x23080000` = `M764`/`MMMU`：检查点记录（x30 = 检查点返回地址：内核 VA 或 PA）
 
-下一步（按顺序）：
+## 4. 若 2/3/4 都「不回来」
 
-1. 先跑只读模块确认 34 个读数可复现（`./build.sh ko` → push → insmod/rmmod）
-2. **CMD17 仍未上机。** 要跑必须同时满足：只读 `lba=0`、R1 的 CURRENT_STATE ≥ 4、
-   控制器空闲（停 `/data` 或进 recovery）。**绝不能在 Android 正常读写时跑。**
-3. 写路径（CMD24/CMD25）继续冻结。安全目标不变：`dtb` 分区 +512 KB 之后的死区，
-   写前硬编码并校验目标 LBA。
+那说明 7.3 在 `create_init_idmap` 或更早处就挂住（**不是** MMU 之后）：
+`0x465E78` 是唯一 stash 验证过的深点，而 `0x465E80` 从未到达过（§I.25，且仪器当时不可靠）。
+此时改用**预置的 pre-MMU 单步通道**继续夹：
+`tools/host/run-verified.sh` + `mk-mainline-abort.py --at <off> --nop 0x46804C`，
+先重跑 `0x465E80`（stash 验证），再往 `map_range` 入口 `0x465CC8` 推。
 
-工具：`tools/host/dump2.sh <sym> <len>`（转储 + 打印运行时地址）、
-`tools/host/readglobal.sh <va> <len>`、`~/kbuild/build-probe.sh fcie`。
-**全部在 Android 里做，不需要断电。**
+## 5. 不变的两条线
 
-## D. 今天（11/21–22）的账
+- **eMMC(FCIE)**：§32 已结案寄存器映射，`probes/fcie/fcie_read.c` 仍未上机；
+  要跑必须：只读 LBA 0、R1 的 CURRENT_STATE ≥ 4、控制器空闲（停 `/data` 或 recovery），
+  **绝不能在 Android 正常读写时跑**。
+- **写路径（CMD24/CMD25）继续冻结。**
 
-- **32 笔提交**，末笔 `1825b8f`
-- 文档 `confirmed-facts` §I.15–§I.31；`discipline.md` 三条新纪律
-- 主要成果：**单步追踪通道**（含 stash 强制验证）、**异常向量探针**（自检通过）、
-  **post-MMU 交接桩**、FCIE 逆向第一步
-- 关键结论：7.3 **不是异常挂死，是空转/等待**；故障类假设（`dc ivac`、`ldrb`、`map_range`）全部作废
-- 我自己犯并已纠正：反汇编基址错 32 MB、code1 目标混用 4.19、判定未核对 stash、判定窗口过短
+## 6. 今天（11-22 凌晨）的账
+
+- 发现并修掉上一版 post-MMU 桩的**不可达**（映射范围 + 线性映射地址 + 时机）与
+  **BUILTIN_DTB 配置漂移**；重编带内嵌 DTB 的 Image。
+- 新仪器：tramp 注入 `.text` 尾部填充（内核 VA 与 idmap 都 ROX），两个入口；handover 仍在 0x21680200。
+- 第一发 `prsw` NO_RETURN（505 s）——但那一版漏了 `nop @0x46804C`，已重建四张镜像。
+- 机器目前挂死，等一次物理断电。

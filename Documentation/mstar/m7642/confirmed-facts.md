@@ -1272,3 +1272,54 @@ adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie;
 - 顺带记一条**别踩的坑**：`mstar_pm_base + 0x22600`（= `0xffffff800a022600`）**不是**
   FCIE。FCIE 是 `+0x222600`，中间的 `0x200000` 是 `RIU_BASE`。这类「少一位/少一个 2」
   正是 `discipline.md` 说的「地址算术错一位不会报错，只会读到平静的一整片 0」。
+
+### 33. ★★★ post-MMU 检查点仪器：原设计不可达 + DTB 配置漂移（2026-11-22 01:0x–01:4x）
+
+**结论（三档）**
+
+| 结论 | 档 | 证据 |
+|---|---|---|
+| §I.31/§I.32 的三张 post-MMU 镜像**按原样不可能回来** | 实测/静态 | 桩追加在 Image+0x1400000（PA 0x21680000），而 MMU 开后的两套映射都止于 `_end`（VA `0xffffffc080670000` / Image+0x670000）：`map_kernel()` 只映射 `_text.._end`，`create_init_idmap()` 只映射 `_stext.._end`。`bl` 落在未映射 VA 上。 |
+| 那版 routine 里的「线性映射」地址 `0xffffffc0004d5000` 是**模块区**，不是线性映射 | 实测 | VA_BITS=39 ⟹ `PAGE_OFFSET = -(1<<39) = 0xffffff8000000000`，`KIMAGE_VADDR = MODULES_VADDR + 2G = 0xffffffc080000000`（System.map `_text`）。桩里 `movk #0xffc0, lsl#32` 少了一个半字节（应为 0xff80）。 |
+| 即使地址写对，`start_kernel` 时**线性映射还不存在** | 对照 | `map_kernel()` 只建内核镜像映射；线性映射在 `paging_init()/map_mem()` 才建，而 `start_kernel/setup_arch` 早于它。所以「经线性映射写可执行页」这条路对这三个检查点都不成立。 |
+| 11-20 编出的 7.3 Image 是 **`CONFIG_MSTAR_M7642_BUILTIN_DTB=n`**，而文档的前提是 `=y` | 实测 | `.config`、`include/generated/autoconf.h`（无该符号）、Image 里搜索 `TCL 65S535D Pro` 为 -1。11-18 那份 5,834,760 B 的 Image 才有内嵌树（boot-test §二十五）。 |
+| 主线内核因此拿不到 DT：mboot 交的 `x0 = 0` | 实测 + 对照 | §I.2 handoff2 实测 `x0=0`；`setup_arch()` 无内嵌树时执行 `setup_machine_fdt(__fdt_pointer=0)` ⟹ memblock 为空、`earlycon` 之前就挂（boot-test §二十五 早已预警）。**这是「MMU 之后挂住」的必然结果，不是推测。** |
+| 已重编 Image：`BUILTIN_DTB=y`，板级 DTB 在 Image+0x4C9858 | 实测 | `System.map: __m7642_dtb = 0xffffffc0804c9858`，`__m7642_dtb_end = 0xffffffc0804ca80d`；Image 仍 6,238,720 B，`_end` 仍 0x670000，但 `__pi_early_map_kernel`/`__primary_switched` 各 **+0x10**（0x4659e0 / 0x46805c）。 |
+| code1 shim 必须在 `early_map_kernel` 之前给出有效 x0 | 对照 | `early_map_kernel()` 先 `map_fdt(x0)` + 解析 `/chosen`（CPU feature override），`setup_arch()` 才换成内嵌树。x0=0 会把 PA 0..2MB 当 DT 读，进不了 setup_arch。 |
+| 新仪器（tramp）成立 | 待验证 | tramp 注入 `.text` 尾部填充 Image+0x36C000（PA 0x205EC000），内核 VA 与 idmap **都是 ROX**；PA 入口/内核 VA 入口两种；`dc civac` 清 `_stext.._end` 的脏行（clean+invalidate 保页表写回），清 M/C/I 后跳物理交接 0x21680200。 |
+| 第一发 `prsw`（`__primary_switched`）**NO_RETURN** | 实测 | 505 s 无 Android，之后 ping 不通（需物理断电）。此时镜像**没有** `nop @0x46804C`，而此前所有「深」检查点（0x455048 / 0x465E4C / 0x465E78）都是在**带该 nop** 的镜像上测到的。 |
+| 已重建四张镜像（含 `nop @0x46804C`） | 实测 | emap `f0ca4aa2…` / prsw `b8651fd2…` / skmain `2eac39d1…` / mmuon `7f309a47…`；都已核对 `nop=0xD503201F`、code1=`bl 0x36c0c0`、检查点 `bl` 目标。 |
+
+**新仪器的结构（`probes/handoff/`）**
+
+- `tramp-postmmu.S` → 注入 Image+0x36C000（`.text` 尾部 16 KB 填充区，`_etext=0x370000` 之内）
+  - `_start`（offset 0）：PA 入口，用于 `__pi_early_map_kernel` 或更早（此时 PC 已是 PA）
+  - `_start_kva`（offset 4）：内核 VA 入口，先 `adr` 求自身 VA、减 `KIMAGE_OFFSET` 得 PA，再 `br` 过去
+  - 共同体内：x0..x2 ← `boot_args[]`（7.3 自己保存的入口寄存器），x3/x4=0；`dc civac` 扫 `_stext.._end`；`msr sctlr_el1` 清 M/C/I；`br 0x21680200`
+  - `_start_fdt`（offset 0xC0）：code1 shim，先把 mboot 入口寄存器写到 `0x23090000`（`M764`/`FDT `），再 `x0=0x23000000`、跳 `primary_entry`
+- `abort-postmmu.S` → 追加在 Image+0x1400000（handover 在 +0x200 = PA 0x21680200，**在拷贝区 0x20280000..0x21554a00 之外**）：记录 `M764`/`MMMU` + x30 + x0..x4 到 `0x23080000`，拷 `0x30000800→0x20280000`（0x12d4a00 B），清 x3/x4，跳厂入口 `0x21220000`
+- 构建：`probes/handoff/build-postmmu.sh`（从 System.map 取 boot_args/_stext/_end/primary_entry 的 PA 和 KIMAGE_OFFSET，`-D` 给汇编）、`mk-postmmu-images.sh`（含 code1 shim 与 `nop @preserve_boot_args+0x20`）
+- 运行：`probes/handoff/run-postmmu.sh <img> <md5> <tag>`（300 s 判定窗、槽 md5 校验、读 `0x23080000` 与 `0x23090000` 并解码）
+
+**四张镜像（2026-11-22 01:4x，均含 nop + shim）**
+
+| 镜像 | 检查点 | 入口 | md5 |
+|---|---|---|---|
+| `m7642-rec-73-mmuon.img` | `__enable_mmu+0x38` = 0x455548（MMU 刚开、仍在 PA） | `_start` | `7f309a473a77abafe894a0636c91b1c2` |
+| `m7642-rec-73-emap.img` | `__pi_early_map_kernel` 0x4659e0 | `_start` | `f0ca4aa27051e9cafff4e289adf5193f` |
+| `m7642-rec-73-prsw.img` | `__primary_switched` 0x46805c | `_start_kva` | `b8651fd2121089cb69e8385234fc58a9` |
+| `m7642-rec-73-skmain.img` | `start_kernel` 0x46091c | `_start_kva` | `2eac39d1515761d31ce65dd7a5b9b33e` |
+
+**对主线的意义**
+
+1. 之前「MMU 之后的检查点没有读出手段」的三轮尝试（§I.29–§I.31）里，桩从一开始就够不到；这些结论里的**否定项**（比如「__no_granule_support 未到达 ⟹ MMU 已开」）也因此不可靠——它们可能只是「内核根本没跑到那里」。
+2. 真正需要先回答的是：**7.3 到底走到哪一步**。仪器链条现在是：`mmuon`（一定到达，验证仪器）→ `emap` → `prsw` → `skmain`，每档回来才算「到达」。
+3. DTB 这一环已按 11-18 的结论补齐（`BUILTIN_DTB=y` + 入口 x0 shim），但它只影响 `early_map_kernel` 之后；若内核在 `create_init_idmap` 里就挂住，DTB 修了也看不到。
+
+**待办（下一发，按顺序）**
+
+1. 物理断电恢复设备 → 核对 boot 槽仍是厂值 `6272b10d…`、`misc` 前 32 B 全 0（`recoverycmd` 里的 `mmc erase.p misc` 已擦）。
+2. `run-postmmu.sh …/m7642-rec-73-mmuon.img 7f309a47… mmuon`：回来 ⟹ 仪器在 MMU 后可用；不回来 ⟹ 仪器本体有问题，先查 tramp（不要继续往后打）。
+3. 再跑 `emap`、`prsw`、`skmain`，把「到达」推进到 `start_kernel`；每一步失败只置信一个 bit。
+4. 若 `prsw`/`skmain` 到达而 `start_kernel` 之后仍挂，再按 `setup_arch`（0x463830）→ `early_init_dt_verify` → `parse_early_param` 二分。
+5. eMMC(FCIE) 那条线不变（§32），`probes/fcie/fcie_read.c` 仍未上机。

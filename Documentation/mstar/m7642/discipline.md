@@ -252,6 +252,25 @@ Android 的 init 会在启动时清 pstore，晚几分钟就只剩新启动的�
 
 **改 Image 之前先 `readelf -SW vmlinux`**，落点必须 `< _edata`，patch 脚本要硬断言。
 
+**★ 上机前从 `autoconf.h` / `System.map` 复算，不要相信文档里的"当前配置"。**
+
+交付代价：2026-11-20 重编的 7.3 Image 实际是 `CONFIG_MSTAR_M7642_BUILTIN_DTB=n`，
+而 boot-test §二十五/二十六 的方案依赖 `=y`；mboot 又只交 `x0=0` ⟹ `setup_arch` 拿不到设备树。
+此后 11-20→11-22 所有「MMU 之后挂住」的判定都建立在这个镜像上，而且「MMU 已开」还是靠一个
+**否定项**（`__no_granule_support` 未到达）推出来的。
+
+⟹ 每次上机前把这三样抄进日志：`grep MSTAR .config`、`grep MSTAR include/generated/autoconf.h`、
+`grep -E " (_end|boot_args|primary_entry)" System.map`；镜像 md5 与这三样写在一起。
+
+**★ 检查点镜像必须与"已验证档"保持同一组补丁。**
+
+所有带 stash 验证的深检查点（`0x455048` / `0x465E4C` / `0x465E78`）都是在
+`nop @0x46804C`（`preserve_boot_args` 的 `b dcache_inval_poc`）的镜像上测到的。
+2026-11-22 01:0x 的 post-MMU 镜像漏了这个 nop，NO_RETURN 因此**无法归因**（可能是内核没到，
+也可能是漏补丁导致的早挂）。
+
+⟹ 新镜像的补丁清单（nop、shim、tramp、handover）写进文档，构建脚本里固定下来，别靠手打。
+
 ---
 
 ## 5 本机环境纪律

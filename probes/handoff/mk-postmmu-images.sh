@@ -1,0 +1,51 @@
+#!/bin/bash
+# Build the post-MMU checkpoint images.  Usage: mk-postmmu-images.sh
+#
+# Every image also patches code1 with the pre-MMU shim (_start_fdt) that records
+# the bootloader's registers at 0x23090000 and hands the kernel a valid device
+# tree pointer (0x23000000), because mboot leaves x0 = 0 while
+# early_map_kernel() parses it before setup_arch() can use the built-in tree.
+#
+#   name                 checkpoint             entry
+#   m7642-rec-73-emap    __pi_early_map_kernel  _start      (checkpoint runs at its PA)
+#   m7642-rec-73-prsw    __primary_switched     _start_kva  (checkpoint runs at the kernel VA)
+#   m7642-rec-73-skmain  start_kernel           _start_kva
+#   m7642-rec-73-mmuon   __enable_mmu after msr  _start      (MMU just on, still at PA)
+set -eu
+cd "$(dirname "$0")"
+KERNEL=${KERNEL:-/home/emfox/kbuild/linux-main}
+IMAGE=${IMAGE:-$KERNEL/arch/arm64/boot/Image}
+SYSMAP=${SYSMAP:-$KERNEL/System.map}
+OUT=${OUT:-/home/emfox/kbuild/m7642-out}
+MK=../../tools/host/mk-mainline-abort.py
+TRAMP_AT=0x36c000
+FDT_SHIM=$((TRAMP_AT + 0xc0))
+
+eval "$(python3 - "$SYSMAP" <<'PY'
+import sys
+syms = {}
+for line in open(sys.argv[1]):
+    p = line.split()
+    if len(p) >= 3:
+        syms[p[2]] = int(p[0], 16)
+text = syms["_text"]
+print("EMAP=0x%x" % (syms["__pi_early_map_kernel"] - text))
+print("PRSW=0x%x" % (syms["__primary_switched"] - text))
+print("SKMAIN=0x%x" % (syms["start_kernel"] - text))
+print("MMUON=0x%x" % (syms["__enable_mmu"] + 0x38 - text))
+print("NOPC=0x%x" % (syms["preserve_boot_args"] + 0x20 - text))
+PY
+)"
+
+build() {   # $1 patch offset, $2 entry offset, $3 output name
+	python3 "$MK" --image "$IMAGE" \
+		--patch "0x4=$FDT_SHIM" --patch "$1=$2" \
+		--stub abort-postmmu.bin --tramp tramp-postmmu.bin --tramp-at $TRAMP_AT \
+		--nop "$NOPC" \
+		--out "$OUT/$3"
+}
+
+build "$EMAP"   $TRAMP_AT         m7642-rec-73-emap.img
+build "$PRSW"   $((TRAMP_AT + 4)) m7642-rec-73-prsw.img
+build "$SKMAIN" $((TRAMP_AT + 4)) m7642-rec-73-skmain.img
+build "$MMUON" $TRAMP_AT m7642-rec-73-mmuon.img
