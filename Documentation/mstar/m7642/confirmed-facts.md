@@ -918,3 +918,21 @@ stash `0x23080000`）。这在 MMU 关时成立；**MMU 打开后这些地址是
 
 **当前边界（全部 MMU 前、已验证）**：`primary_entry` ✓ → `create_init_idmap` ✓ → `0x465E78` ✓ →
 `__enable_mmu` 颗粒度检查通过 ✓ → 挂在 MMU 之后（`start_kernel` 一带，具体未定位）。
+
+### 30. 「关 MMU 交接」被否决；WDT 自动复位确认不可用；dtb compatible 无问题（2026-11-22 00:2x）
+
+1. **否决「先关 MMU 再交接」**：`start_kernel` 之后的代码处处依赖 MMU，关掉等于制造新故障。
+   （此路作废，不再尝试。）
+2. **WDT 自动复位确认不可用**：文档 §I.6/§七 已记录三条布防路径（mboot `wdt_enable`、
+   `HAL_WDT_Start` = 空桩、`MDrv_WDT_*` + 直接写寄存器）全部无效。挂住的主线内核**没有**自动复位。
+3. **dtb compatible 无问题**：厂 dtb 根节点
+   `compatible = "arm,foundation-aarch64", "arm,m7642"`、`model = "M7642"`；
+   arm64 的 `of_flat_dt_match_machine` 无匹配时回退默认，不 panic。
+
+**⟹ 结论：MMU 之后的检查点目前没有读出手段**（交接需 MMU 关、复位需 WDT、两者都不可得）。
+能测的边界止于 `__enable_mmu`（已验证颗粒度检查通过、MMU 已打开）。
+
+**剩余可行方向（纯静态/纯逻辑）**：
+- 静态审阅 7.3 早期 `start_kernel` 前置步骤中**会在控制台起来之前 panic** 的点
+  （`early_init_dt_verify`、`parse_early_param`、内存/时钟初始化）
+- 或在**厂内核**里复现 7.3 的那几步（用厂内核可用的观测手段），而不是在 7.3 里观测
