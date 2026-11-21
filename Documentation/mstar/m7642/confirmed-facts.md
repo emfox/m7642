@@ -1249,6 +1249,12 @@ adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie;
 
 1. **CMD17 没有真正执行过。** 寄存器序列是从「跑着的二进制」逐条抄的，但没有一次
    上机跑通记录。这是下一步唯一还缺的证据。
+   2026-11-22 早上做出了 **boot-path 探针**：`probes/fcie/emmc_read.S` 钉在 `code1`
+   （mboot 刚用完 eMMC、控制器空闲、卡在 TRAN），设栈后调 `fcie_probe_once(0)`，
+   数据落 `0x23080000`、心跳 `0x23080FE0`、记录 `0x23090000`，然后交接厂内核。
+   镜像 `m7642-rec-73-emmc.img` md5 `34de6ec5cf68799ae41f0d85b598f004`；
+   `probes/fcie/run-cmd17.sh` 会把读到的 512 B 与内核 `dd` 的 LBA 0 逐字节对比。
+   **仍未上机**（设备等一次物理断电）。
 2. `eMMC_translate_DMA_address_Ex` 的 >4 GB 分支：反汇编里的阈值常数是 `0xFFFFFFFE`，
    而源码是 `dma > MSTAR_MIU1_BUS_BASE_H`（`0x300000000`），两者对不上；那一支的加法
    常数也看不出自洽的物理含义。说明**跑着的二进制与本地源码在这一段不一致**（其余函数

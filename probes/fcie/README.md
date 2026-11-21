@@ -11,7 +11,10 @@
 | `fcie.c` | **内核模块**：只读 FCIE0 + EMMC_PLL 的 34 个寄存器，写 `/data/local/tmp/fcie.out` | ✅ 2026-11-22 在设备上跑过，安全 |
 | `fcie_read.c` | **freestanding C**：一次 CMD17 读 512 B，无 libc / 无全局 / 无重定位 | ❌ 没有在设备上执行过 |
 | `fcie_probe.c` | 裸机入口：`fcie_probe_once(lba)` → 数据到物理 `0x23080000`，心跳到 `0x23080FE0` | ❌ 同上 |
+| `emmc_read.S` | **boot-path 入口**：钉在 `code1`，设栈 → `fcie_probe_once(0)` → 记录 → 交接厂内核 | ❌ 已构建，未上机 |
 | `build.sh` | `bare` / `ko` / `all` | ✅ |
+| `build-boot.sh` | 把 `emmc_read.S` + 两个 bare 目标链接成一个 blob，并包成 recovery 槽镜像 | ✅ 离线构建通过 |
+| `run-cmd17.sh` | 上机跑 CMD17 镜像，读回 512 B / 心跳 / 记录，并和内核 `dd` 的 LBA0 对比 | ❌ 未上机 |
 | `dumps/` | 厂商函数机器码快照 + 运行时地址表 | — |
 
 ## 关键地址（实测，见 §32.1）
@@ -30,58 +33,61 @@ EMMC_PLL      = mstar_pm_base + 0x247E00  → PA 0x1F247E00 / VA 0xffffff800a247
 
 ```sh
 cd ~/Debian/m7642/probes/fcie
-./build.sh bare    # → ~/kbuild/fcie-build/fcie_read.o (848 B) + fcie_probe.o (88 B)
+./build.sh bare    # → ~/kbuild/fcie-build/fcie_read.o (896 B) + fcie_probe.o (88 B)
 ./build.sh ko      # → ~/kbuild/fcie-build/fcie.ko（走 ~/kbuild/build-probe.sh）
+./build-boot.sh    # → ~/kbuild/m7642-out/m7642-rec-73-emmc.img + fcie_boot.bin
 ```
 
 `bare` 用的编译参数是 `-O2 -march=armv8-a -mgeneral-regs-only -ffreestanding
 -fno-builtin -fno-stack-protector -fno-pic -fno-asynchronous-unwind-tables`。
 产物 **0 data / 0 bss / 0 重定位 / 0 未定义符号**，可以整段拷到任意物理页执行。
+`fcie_boot.elf` 链接后 1136 B，`_start`@0 / `fcie_probe_once`@0x90 / `fcie_read_block`@0xf0。
 
 ## 跑模块（安全，纯读）
 
 ```sh
 adb push ~/kbuild/fcie-build/fcie.ko /data/local/tmp/
-adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie; cat /data/local/tmp/fcie.out'
+adb shell su -c 'busybox rmmod fcie 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie; cat /data/local/tmp/fcie.out'
 ```
 
 这台 ROM 上 `module_init` 不会执行，所有动作在 `module_exit`（`rmmod` 触发）。
 `insmod` 必须用 `/vendor/bin/busybox` 的。
 
-## 跑 CMD17（**现在不要跑**）
+## 跑 CMD17（**boot-path 版已就绪，未上机**）
 
-`fcie_read_block()` 从 mboot 初始化完的状态出发，只做：
-
-```
-FUNC_CTL |= 0x1002 → SD_MODE |= 1 → 等 DAT0 高 → 清事件/错误
-→ JOB_BL_CNT=1, BLK_SIZE=512, DMA_LEN=512, DMA_ADDR=目标−0x20000000, MIU0
-→ CMD_RSP_SIZE |= 5 → SD_MODE=mode → CMDFIFO[0..2]=CMD17/LBA
-→ 等 DAT0 高 → SD_CTRL=0x020E|0x40 → 等 CMD_END → 读 R1 → 等 DMA_END
-→ 查 SD_STATUS → 清事件、关时钟
-```
-
-**但它在 Android 运行中等于绕过 mmc 块层直接动控制器。一次读大概率没事，
-我们没有证据，所以没跑。** 要跑请先满足：
-
-1. 目标控制器不是正在被读写（`/data` 停掉，或者在 recovery / 探针上下文里）；
-2. 只读 `lba=0`（user 区第一个扇区，读不改任何东西）；
-3. 先看 R1 里的 CURRENT_STATE（应该 ≥ 4 = TRAN/DATA），不对就当场停。
-
-裸机接线（`abort-postmmu.S` 那套：MMU/Cache 关、物理寻址）：
+上机入口不再从 Android 里跑（那等于绕过块层直接动一个正在被使用的控制器），
+而是钉在 **`code1`**：mboot 刚用 `mmc read.p` 读完 dtb / recovery / stage，
+控制器空闲、卡在 TRAN，7.3 还没碰过它 —— 这是最安静的时机。`emmc_read.S` 做的事：
 
 ```
-x0 = 0x1F222600     ; FCIE0 物理基址
-x1 = <LBA>
-x2 = 0x23080000     ; 目标物理地址（MIU 地址 0x03080000）
-x3 = 0 或 u64 diag[4] 的地址
-blr fcie_probe_once
-; 回来之后：0x23080000 起 512 B 是块数据
-;           0x23080FE0 = "FCIE1", +8 返回码, +0x10 R1, +0x18 SD_STATUS
+设 sp=0x230b0000 → x0=0 (LBA 0) → bl fcie_probe_once
+→ 数据落在 PA 0x23080000（512 B）
+→ 心跳 0x23080FE0: +0x00 0x4643494531（"FCIE1" 的 LE u64）, +0x08 返回码,
+                    +0x10 R1, +0x18 SD_STATUS
+→ 记录 0x23090000: "M764"/"EMMC" + 返回码
+→ 拷贝预读厂内核（0x30000800→0x20280000）、清 x3/x4、跳 0x21220000（Android 起来）
 ```
 
-返回码：`0` 成功；`0xE1` 目标不在 MIU0；`0xE2` FCIE 归 NAND；`0xE3` DAT0 超时；
-`0xE4` CMD_END 超时；`0xE5` 命令后状态错；`0xE6` DMA_END 超时；`0xE7` DMA 后状态错；
-`0xE8` R1 报错。超时全部用 `CNTPCT_EL0`（12 MHz），不是空转常数。
+```sh
+cd ~/Debian/m7642/probes/fcie
+./build-boot.sh
+md5sum ~/kbuild/m7642-out/m7642-rec-73-emmc.img      # 34de6ec5cf68799ae41f0d85b598f004
+./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 34de6ec5cf68799ae41f0d85b598f004
+```
+
+`run-cmd17.sh` 起 Android 后读三处，并和内核自己
+`dd if=/dev/block/mmcblk0 bs=512 count=1` **逐字节对比** —— 一致才算 CMD17 读通道成立。
+
+仍然只读：`LBA=0`，没有任何 CMD24/CMD25/CMD38。失败码在原来的 0xE1–0xE8 之外多了
+**0xE9**（事件位 1 s 内没清掉）。**探测器挂住 = 一次物理断电**（boot 槽是厂值，
+断电后正常起 Android；卡只被读过，不会坏）。
+
+成功后的判据（三档）：
+
+- 实测：心跳 `rc=0`、`R1` 的 CURRENT_STATE=4 且 READY_FOR_DATA=1、512 B 与内核 `dd` 的
+  LBA0 完全一致 ⟹ CMD17 读通道成立；
+- 对照：`rc=0` 但内容不一致 ⟹ DMA 落点/MIU 地址有问题（§32.4）；
+- 失败：看 `rc` + 心跳里的 `R1`/`SD_STATUS` 定位（0xE2 = FCIE 归 NAND、0xE3 = DAT0 超时…）。
 
 ## 不要做的事
 
@@ -90,4 +96,4 @@ blr fcie_probe_once
 - 不要连读整个 0x00–0x7F 窗口（有空洞）。
 - 不要用字节读/`kernel_write` 搬 8 字节去读 16 位寄存器；要用 `ldrh`（模块里就是
   `*(volatile u16 *)`）。
-- **没有任何写 eMMC 的代码**，也不许加。
+- **没有任何写 eMMC 的代码**，也不许加。写路径（CMD24/CMD25）继续冻结。

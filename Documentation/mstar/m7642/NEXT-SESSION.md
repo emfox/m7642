@@ -76,10 +76,21 @@ probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-rung-0x465e80.img <md
 
 ## 5. 不变的两条线
 
-- **eMMC(FCIE)**：§32 已结案寄存器映射，`probes/fcie/fcie_read.c` 仍未上机；
-  要跑必须：只读 LBA 0、R1 的 CURRENT_STATE ≥ 4、控制器空闲（停 `/data` 或 recovery），
-  **绝不能在 Android 正常读写时跑**。
-- **写路径（CMD24/CMD25）继续冻结。**
+- **eMMC(FCIE)**：§32 已结案寄存器映射；**boot-path CMD17 探针已就绪、未上机**。
+  恢复设备后按顺序：
+
+  ```bash
+  # 1) 只读模块复核 34 个寄存器（零风险）
+  adb push ~/kbuild/fcie-build/fcie.ko /data/local/tmp/
+  adb shell su -c "/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie; cat /data/local/tmp/fcie.out"
+  # 2) CMD17：code1 处读 LBA 0，与内核 dd 的同一扇区逐字节对比
+  cd ~/Debian/m7642/probes/fcie
+  ./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 34de6ec5cf68799ae41f0d85b598f004
+  ```
+
+  判据：心跳 `rc=0` + `R1` 的 CURRENT_STATE=4/READY_FOR_DATA=1 + 512 B 与 `dd` 一致。
+  只读 LBA 0；挂住 = 一次物理断电（boot 槽是厂值，卡只被读过）。
+- **写路径（CMD24/CMD25）继续冻结**：`probes/fcie` 里没有任何写 eMMC 的代码，也不加。
 
 ## 6. 今天（11-22 凌晨）的账
 

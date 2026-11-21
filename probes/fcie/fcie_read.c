@@ -81,6 +81,7 @@ typedef unsigned long long u64;
 #define E_DMA_TMO    0xE6       /* no DMA_END                                        */
 #define E_DMA_STS    0xE7       /* status error after DMA_END                        */
 #define E_R1         0xE8       /* card status reports an error / wrong state        */
+#define E_EV_CLR     0xE9       /* latched events did not clear within 1 s */
 
 /* R1 card-status error bits: 31..19 (out-of-range, misalign, len, erase,
  * WP, locked, lock/unlock, com crc, illegal cmd, ecc, cc, error), 16
@@ -172,11 +173,17 @@ int fcie_read_block(u64 fcie_base, u32 lba, u64 dst_pa, u64 *diag)
 			if (ticks() > deadline) return E_D0;
 	}
 
-	/* 2. clear latched events and error flags (driver: ClearEvents). */
-	for (;;) {
-		fwr(fcie_base, R_EVENT, EV_ALL_CARD);
-		if (!(frd(fcie_base, R_EVENT) & EV_ALL_CARD))
-			break;
+	/* 2. clear latched events and error flags (driver: ClearEvents).
+	 *    Bounded: a stuck bit must not turn this into a silent hang. */
+	{
+		u64 deadline = ticks() + tick_hz();
+		for (;;) {
+			fwr(fcie_base, R_EVENT, EV_ALL_CARD);
+			if (!(frd(fcie_base, R_EVENT) & EV_ALL_CARD))
+				break;
+			if (ticks() > deadline)
+				return E_EV_CLR;
+		}
 	}
 	fwr(fcie_base, R_EVENT, 0x0000);
 	fwr(fcie_base, R_SD_STATUS, ST_ERR_MASK);    /* W1C */
