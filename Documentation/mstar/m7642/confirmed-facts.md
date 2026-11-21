@@ -711,3 +711,32 @@ str  x0, [x22]      ; 写入表描述符
 **待验证（下一发）**：`code1` 处放一个「清零 `0x20730000` 起 32 KB 然后跳回 `primary_entry`」的桩，
 检查点仍在 `0x465E80`。若变成稳定 3/3 到达 ⟹ 假设成立，这就是 7.3 在该 SoC 上的第二个真 bug
 （缺 `.bss` 清零），修复只需一条清零循环。
+
+### 22. 修正：页表池不需要运行时清零；信标未启用（2026-11-21 19:4x）
+
+**§I.21 那个「页表池是未清零 .bss」的假设不成立，原因在 `head.S` 源码里：**
+
+```c
+	adrp	x0, __pi_init_idmap_pg_dir
+	mov	x1, xzr
+	bl	__pi_create_init_idmap
+	cbnz	x19, 0f
+	dmb sy
+	adrp    x0, __pi_init_idmap_pg_dir
+	adr_l	x2, dcache_inval_poc
+	blr	x2                  // 建完表后必须再做一次 cache 维护
+```
+
+- `__pi_init_idmap_pg_dir` 放在**会被镜像加载的段**（`.pi.data`/`.init.data`，文件内容为 0），
+  所以「不清理直接用」是**标准内核的有意设计**——早期汇编跑在 `.bss` 清零之前，凡早期要用的
+  缓冲区都必须落在已加载段里。**这也解释了「清零 0x20730000」实验为何无用：它本来就干净。**
+- 建表后的 `dcache_inval_poc` 同样是上游必需（清掉可能被投机读入的 cache line）；
+  被 `nop` 掉的 `preserve_boot_args` 那次也是上游代码。
+
+**造色信标假设也排除**：`.config` 里 `# CONFIG_MSTAR_M7642_BEACON is not set`，
+`System.map` 里没有 `m7642_beacon` ⟹ 追踪的镜像是干净的。
+
+**当前唯一未排除项**：同一份标准代码 + 同一入口寄存器状态（§I.19 实测）却行为不同
+⟹ 差异只能在**入口内存内容或时序**上。下一步应当做「入口内存快照」仪器：
+在 `code1` 记录 dtb 前若干字节、`__pi_init_idmap_pg_dir` 前 64 B、栈顶若干字，然后继续跑；
+在 `0x465E80` 保留交接桩；连跑 N 次对比。**不要再用二分去逼近一个不稳定的现象。**
