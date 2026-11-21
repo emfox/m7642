@@ -1,1 +1,1 @@
-obj-m := wdtarm2.o
+obj-m := wdtarm5.o

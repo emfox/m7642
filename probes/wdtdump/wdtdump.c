@@ -11,10 +11,14 @@
 #include <linux/kallsyms.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
+#include <linux/kernel.h>
 
 static char *sym = "MDrv_SYS_WDTEnable";
 module_param(sym, charp, 0644);
 MODULE_PARM_DESC(sym, "symbol name to dump");
+static char *vaddr = "";
+module_param(vaddr, charp, 0644);
+MODULE_PARM_DESC(vaddr, "dump from this VA instead of a symbol (hex)");
 static int len = 512;
 module_param(len, int, 0644);
 MODULE_PARM_DESC(len, "bytes to dump");
@@ -26,7 +30,12 @@ static int __init wdtdump_init(void)
 
 static void __exit wdtdump_exit(void)
 {
-	unsigned long addr = kallsyms_lookup_name(sym);
+	unsigned long addr;
+
+	if (vaddr && *vaddr)
+		addr = simple_strtoul(vaddr, NULL, 16);
+	else
+		addr = kallsyms_lookup_name(sym);
 	struct file *f;
 	loff_t pos = 0;
 	int n;

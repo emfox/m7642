@@ -366,11 +366,34 @@ DDR 则已被 §B 的 `m7642-boot-s1.img` 证明能返回。
 | `HAL_WDT_SetTimer(secs)` | `ticks = secs × 12,000,000`（12 MHz 时基），再调 `f(0x3008, ticks)` |
 | 同族第二个实现 | `base = *(u64*)0xffffff800232d628`；`strh (ticks>>16) → [base+0x600C]` |
 
-3. 照这个布局直接布防（模块 `probes/wdtarm/wdtarm2.c`：`[base+0x600C]=ticks>>16`、
-   `[base+0x6000]=1`，`base=0xffffff800a000000`）**并没有让设备复位**（120 s 内 uptime 连续）。
+3. 用**厂商自己的高层 API** 也不行：`MDrv_WDT_Init(ch)` + `MDrv_WDT_SetTimer(ch, 20)`
+   （模块 `probes/wdtarm/wdtarm5.c`）**120 s 内没有复位**。直接写寄存器
+   （`[base+0x600C]=ticks>>16`、`[base+0x6000]=1`，`base=0xffffff800a000000`）同样不复位。
+   期间出现的三次「复位」经查全部是我那段诊断代码自己 oops 引发的 **panic**（`dmesg-ramoops`
+   里有 `Kernel panic - not syncing: Fatal exception`），不是狗。
 
-⟹ 完整布防序列还缺一环（`0x3008` 那一路寄存器，或使能位在别的偏移）。**「可靠的 warm reset」
-目前仍然是不可用的**，也就是说「探针记录跨复位存活」这条判据今天无法测。
+⟹ **WDT 在这台机器上目前无法布防**（mboot 的 `wdt_enable`、`HAL_WDT_Start`、`MDrv_WDT_*`
+   三条路都不行）。主线内核挂住时**没有自动复位**，只能人按电源（=切电=丢 DRAM）。
+
+### 7. ★ 但 warm reset 本身找到了：panic（实测，2026-11-21 14:12）
+
+**结论：kernel panic 是一次可靠的 warm reset，DRAM 会保留，复位前写的 pmsg 记录会在下次启动
+被导出成 pstore 文件；连复位前的整份内核日志（`dmesg-ramoops-*`）都能读回。**
+
+证据（一次完整闭环）：
+
+```
+写 /dev/pmsg0 "M7642WDT2\n" + "M7642WDT3\n"
+→ 模块在 module_exit 里触发 oops（panic_on_oops=1 ⟹ panic）
+→ 设备自己复位、起 Android
+→ /sys/fs/pstore/pmsg-ramoops-0 = "M7642WDT2\nM7642WDT3\n"
+   另有 console-ramoops 60 KB、dmesg-ramoops-0 127 KB（复位前的完整内核日志）
+```
+
+⟹ 对**Android 侧**实验，"写记录 → 制造 panic → 复位后读" 这条链现在可用（等价于以前用 sysrq，
+但不需要 sysrq、也不用碰 sysrq 开关）。
+⟹ 对**主线内核**仍然不够：4.19/7.3 自己挂住时，要么它自己 panic（`panic=1` + 可用的 restart
+路径），要么仍需人按电源（丢 DRAM）。这是下一步要解决的点。
 
 `/dev/watchdog` 也不存在（`/proc/devices` 无 watchdog），dmesg 只有一句
 `_MI_WDT_GetHandle: Handle is Not open`。
