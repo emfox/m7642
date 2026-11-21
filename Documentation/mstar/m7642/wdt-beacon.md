@@ -782,7 +782,7 @@ recoverycmd = mmc erase.p misc; mmc read.p 0x23000000 dtb 0x00100000;
 
 | 场地 / 做法 | 结果 | 判据 |
 |---|---|---|
-| recovery 槽 + `b .` + `wdt_enable 10` | 自己回 Android，但**读不到** | pstore 空、zone 数据区 `ff`；10 s 复位把导出一起抹掉 |
+| recovery 槽 + `b .` + `wdt_enable 10` | 4 次里 2 次自己回、2 次落**待机**；即使回来也**读不到** | pstore 空、zone 数据区 `ff`；而且待机=PM51 切电=DDR 全丢，碰上待机这轮就没有信息量 |
 | recovery 槽 + 返回版 + `wdt_enable 120` | 落到**待机**，要人按键 | mboot 先超时，狗不再是兜底 |
 | recovery 槽 + **零改动厂值 boot 镜像** | **90 s 没有 Android** | 场地不行，不是探针不行 |
 | **boot 槽 + 返回版 + 写普通 DDR** | **成功** | Android 起来，8 页记录完好 |
@@ -812,3 +812,14 @@ recoverycmd = mmc erase.p misc; mmc read.p 0x23000000 dtb 0x00100000;
 主线内核不会起 Android ⟹ 读数必须**跨一次复位**存活。用同一套 stash + `wdt_enable 10` 的
 自恢复闭环即可测：存活 ⟹ 整条 bring-up 调试通道成立（每级检查点写 stash，狗咬回来读）；
 不存活 ⟹ 只剩屏幕或持久介质，要重新设计信标。
+
+### 7. 补记（2026-11-21 13:11 / 13:13 两次实测）
+
+`wdt_enable 10` 的「自己回 Android」**不可依赖**：同镜像同 env 下，11:52 / 11:58 两次 ~26 / ~47 s
+自恢复，13:11 / 13:13 两次都落到**待机**、要人按电源（按电源后 ~23 s 进 Android）。
+
+⟹ 两条推论：
+
+1. 把「狗会咬回来」当实验前提是错的；recovery 槽的每次 hang 都可能要人按键。
+2. **待机 = PM51 切电 = DDR 全丢** ⟹ 任何「跨复位存活」的测试，一旦落到待机就无效（测的不是复位）。
+   要用这条判据，必须先有可靠的 warm reset——`/dev/watchdog` 若存在，可用它做受控复位（待验）。
