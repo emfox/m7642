@@ -397,3 +397,20 @@ DDR 则已被 §B 的 `m7642-boot-s1.img` 证明能返回。
 
 `/dev/watchdog` 也不存在（`/proc/devices` 无 watchdog），dmesg 只有一句
 `_MI_WDT_GetHandle: Handle is Not open`。
+
+### 8. 复位寄存器的定位进度（2026-11-21 14:5x，未完成）
+
+**目标**：找一个「从任意上下文（含 EL2 预内核探针）都能触发 warm reset」的写操作。现有能力见 §I.7（panic 可以，但主线内核没有可用的 restart 路径）。
+
+已确定的事实：
+
+| 项 | 值 | 依据 |
+|---|---|---|
+| PM 寄存器块 VA | `0xffffff800a000000`，与 WDT 块**同一片映射** | 模块 `probes/pmbase` 读 `*(u64*)0xffffff8009358000+72` |
+| PM 块物理基址 | **`0x1F000000`**（`/proc/vmallocinfo` 里有 `phys=1f000000 size=0xA01000 start_kernel+0x248`） | read-only |
+| 复位候选寄存器 | **`0x1F201FCC`**（`0x1F201FCC` 可读，`0x1FA01FCC` 是 `deadbeef`） | probeRW 只读对比 |
+| `MDrv_SYS_ResetAeon` 的序列 | `strh 1 → [PM+0x201FCC]`；然后 `[PM+0x20210C]` 的 bit0 先清后置 | 反汇编 `hal/dumps` |
+
+**但按这个序列从 Android 写过去没有复位**（uptime 313→379 连续）。⟹ 要么还缺前置条件（例如先交给 PM51，相邻函数里有一句 `strb 0 → 0xA01FE000`），要么 `MDrv_SYS_ResetAeon` 不是 `machine_restart` 实际走的那条。
+
+**这条暂时不影响主线实验**：现在「挂住 → 红外按电源 → 起来读」已经能自动跑（见 `paths.md` §6），只是挂死时按电源**会切电丢 DRAM**，所以「跨复位的检查点读数」仍然需要这条寄存器路径或主线内核自己的 restart。
