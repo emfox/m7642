@@ -897,3 +897,24 @@ str  x0, [x22]      ; 写入表描述符
 2. 或在入口桩里把从核**重新停泊到 7.3 的 `secondary_holding_pen`（`0x206D54A4`）**
 3. 检查 dtb 的 `enable-method`（`psci` / `spin-table`）与 `cpu-release-addr` 是否与 7.3 期望一致
    —— 这是最可能的**真正的**根因
+
+### 29. 交接桩的适用边界：MMU 关 vs MMU 开（2026-11-22 00:0x）
+
+**实测**：`__no_granule_support`（`Image+0x455558`，`__enable_mmu` 里颗粒度检查的失败分支）**未到达**
+⟹ 颗粒度检查**通过**，`msr sctlr_el1` 执行 ⟹ **内核已打开 MMU**。
+
+**由此暴露交接桩的局限**：桩用**物理地址**（staged `0x30000800`、runtime `0x20280000`、
+stash `0x23080000`）。这在 MMU 关时成立；**MMU 打开后这些地址是未映射的 VA**，桩自己就会 fault
+⟹ 对 `start_kernel`(`Image+0x46091C`)、`panic`(`Image+0x29FF0`)、`setup_arch`(`Image+0x463830`)
+这类**MMU 后**的点，桩无效，"没回来"**不能**解释为"没到达"。
+
+| 类型 | 代表点 | 桩有效性 |
+|---|---|---|
+| MMU 前 | `primary_entry` / `create_init_idmap` / `__enable_mmu` 入口 / `__no_granule_support` | ✅ |
+| MMU 后 | `start_kernel` / `panic` / `setup_arch` | ❌ 需新桩 |
+
+**MMU 后桩的做法**：先 `msr sctlr_el1`（清 M）+ `isb` 关 MMU，再按物理地址走交接流程
+（桩代码本身位于物理地址 `0x21680000`，关 MMU 后仍可继续执行）。
+
+**当前边界（全部 MMU 前、已验证）**：`primary_entry` ✓ → `create_init_idmap` ✓ → `0x465E78` ✓ →
+`__enable_mmu` 颗粒度检查通过 ✓ → 挂在 MMU 之后（`start_kernel` 一带，具体未定位）。
