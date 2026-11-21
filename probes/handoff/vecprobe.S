@@ -20,8 +20,10 @@ _start:
 	msr	vbar_el2, x9
 	msr	vbar_el1, x9
 	isb
-	movz	x9, #0x20df
-	lsl	x9, x9, #16		/* resume at the kernel's code1 target */
+	movz	x9, #0x206d
+	lsl	x9, x9, #16
+	movz	x10, #0x5038
+	add	x9, x9, x10		/* 7.3 primary_entry = 0x206d5038 */
 	br	x9
 
 	/* --- common handler: x9 = vector class index --- */
@@ -69,6 +71,7 @@ handler:
 	.org	0x1000
 	.set	V, 0
 	.rept	16
+	movz	x9, #V
 	b	handler
 	.set	V, V+1
 	.balign	0x80
