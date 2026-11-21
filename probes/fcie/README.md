@@ -15,6 +15,8 @@
 | `build.sh` | `bare` / `ko` / `all` | ✅ |
 | `build-boot.sh` | 把 `emmc_read.S` + 两个 bare 目标链接成一个 blob，并包成 recovery 槽镜像 | ✅ 离线构建通过 |
 | `run-cmd17.sh` | 上机跑 CMD17 镜像，读回 512 B / 心跳 / 记录，并和内核 `dd` 的 LBA0 对比 | ❌ 未上机 |
+| `regs-reference.txt` | 2026-11-22 00:30 的 34+2 个寄存器参考值（含「易变」标注） | — |
+| `check-dump.sh` | 把 `fcie.out` 与参考值对比：易变项只报 INFO，稳定项必须逐位相同 | ✅ 离线测过 |
 | `dumps/` | 厂商函数机器码快照 + 运行时地址表 | — |
 
 ## 关键地址（实测，见 §32.1）
@@ -52,6 +54,13 @@ adb shell su -c 'busybox rmmod fcie 2>/dev/null; /vendor/bin/busybox insmod /dat
 
 这台 ROM 上 `module_init` 不会执行，所有动作在 `module_exit`（`rmmod` 触发）。
 `insmod` 必须用 `/vendor/bin/busybox` 的。
+
+复核读数：
+
+```sh
+adb exec-out su -c "cat /data/local/tmp/fcie.out" > /tmp/fcie.out
+./check-dump.sh /tmp/fcie.out      # 期望 checked 36, diff 0, missing 0
+```
 
 ## 跑 CMD17（**boot-path 版已就绪，未上机**）
 

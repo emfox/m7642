@@ -1,0 +1,43 @@
+# FCIE0 + EMMC_PLL reference dump (probes/fcie/fcie.ko)
+# Measured 2026-11-22 00:30, Android idle, uptime ~1300 s.  See
+# confirmed-facts.md section 32.2.
+#
+# idx  value
+# Volatile indices (leftovers of the last command, checked as INFO only):
+#   00 03 04 05 06 07 08 0b 0c 0d
+00 0000
+01 0000
+02 0000
+03 9680
+04 0163
+05 0010
+06 0000
+07 0002
+08 0001
+09 0200
+0a 0505
+0b 0004
+0c 0006
+0d ff00
+0e 0003
+0f 1100
+10 0003
+11 0000
+12 0000
+13 0000
+14 0000
+15 0000
+16 03ff
+17 82fb
+18 82fb
+29 0000
+34 ffff
+35 020d
+36 0000
+37 8a00
+38 0000
+39 3000
+3f 0001
+63 0000
+pll 0x1a 0035
+pll 0x45 00ff

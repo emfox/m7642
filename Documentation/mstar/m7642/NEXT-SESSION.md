@@ -80,9 +80,11 @@ probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-rung-0x465e80.img <md
   恢复设备后按顺序：
 
   ```bash
-  # 1) 只读模块复核 34 个寄存器（零风险）
+  # 1) 只读模块复核 34+2 个寄存器（零风险），check-dump 期望 diff 0
   adb push ~/kbuild/fcie-build/fcie.ko /data/local/tmp/
-  adb shell su -c "/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie; cat /data/local/tmp/fcie.out"
+  adb shell su -c "/vendor/bin/busybox rmmod fcie 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie"
+  adb exec-out su -c "cat /data/local/tmp/fcie.out" > /tmp/fcie.out
+  ~/Debian/m7642/probes/fcie/check-dump.sh /tmp/fcie.out
   # 2) CMD17：code1 处读 LBA 0，与内核 dd 的同一扇区逐字节对比
   cd ~/Debian/m7642/probes/fcie
   ./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 34de6ec5cf68799ae41f0d85b598f004
