@@ -936,3 +936,37 @@ stash `0x23080000`）。这在 MMU 关时成立；**MMU 打开后这些地址是
 - 静态审阅 7.3 早期 `start_kernel` 前置步骤中**会在控制台起来之前 panic** 的点
   （`early_init_dt_verify`、`parse_early_param`、内存/时钟初始化）
 - 或在**厂内核**里复现 7.3 的那几步（用厂内核可用的观测手段），而不是在 7.3 里观测
+
+### 31. eMMC 持久化路线：逆向进展与 MMU 后交接桩（2026-11-22 01:0x–01:4x）
+
+**目标**：让检查点把记录**写进 eMMC**，从而彻底摆脱「必须交接/必须 warm reset 才能读出」的限制
+（对 MMU 前后都有效，失败运行也能读回）。评估结论：**值得做，约 1 天，写路径有变砖风险**。
+
+**控制器 = MStar FCIE**，厂商内核把每条命令都暴露成独立函数：
+`eMMC_CMD17` / `eMMC_CMD24`、`*_MIU`（MIU = DMA 走物理地址）、`eMMC_DMA_MAP_address`、
+`eMMC_FCIE_*` 一族。**卡初始化由 mboot 完成** ⟹ 我们只需 CMD17/CMD24。
+
+**已拿到的反汇编事实**（`wdtdump` 转储，运行时地址来自 dmesg）：
+
+| 函数 | 运行时地址 | 关键片段 |
+|---|---|---|
+| `eMMC_PlatformInit` | `0xffffff8008ca6264` | `adrp x1,0xffffff8009358000; ldr x0,[x1,#72]; add x0,x0,#0x247,lsl #12; ldrh/strh [x0,#3688]` |
+| `eMMC_CMD17_MIU` | `0xffffff8008c993fc` | 大量 `adrp`+偏移访问全局结构 |
+
+⟹ **FCIE 寄存器基址 = `[0xffffff8009358048] + 0x247000`**，寄存器在基址的小偏移上
+（例如 `+0xE68`）。**注意**：实测该全局读出的值 `0xffffff800000000a` 不像上下文指针，
+说明这条链还要再追一层（该地址可能先指向别的结构）——**下次从 `eMMC_Init_Device` 往下追**。
+
+**同时修好了一个判断**：所谓「不能关 MMU」只适用于**运行中的内核**；检查点桩本身就是要
+**中止**内核，关 MMU 是交接前的最后一幕，**之后 7.3 不再执行任何代码**。据此写了
+
+`probes/handoff/abort-postmmu.S`（MMU 后交接桩）：
+1. 用**线性映射**（`0xffffffc0004d5000`，可写）把一小段 routine 拷到物理页 `0x206d5000`
+2. `dc civac` + `ic iallu` 刷到 PoC
+3. 跳到 **idmap 地址 `0x206d5000`**（VA == PA、可执行；`.idmap.text` 只读所以必须走线性映射写）
+4. routine 里清 `SCTLR_EL1` 的 M/C/I ⟹ 回到物理寻址、无 cache
+5. 写记录 → 拷贝预读厂内核 → 清 `x3/x4` → 跳 `0x21220000`
+
+已生成 `start_kernel`（`Image+0x46091C`）检查点镜像 `m7642-rec-73-skmain.img`
+（`md5 b7970b310cb472f6374c94ac9d793aa8`）。**若这一发能回来，仪器就对 MMU 前后都可用，
+且不再需要人工拔插电源。**
