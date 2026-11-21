@@ -215,6 +215,20 @@ command 字段不是标准 BCB 的 32 字节——它后面紧跟着一串值。
 认识、又能观察到副作用的命令做实验；而唯一有意义的观察量（`boot-recovery` 之后能不能回到
 正常启动）正是我们不敢赌的那一步。**在拿到安全网之前，按"非消费式"处理。**
 
+### 补记（2026-11-19 19:2x）：misc 现状与一条坏读数
+
+- misc = `mmcblk0p6`，**8 MiB**，与整盘 LBA `0x19800` 逐字节对得上，映射没问题。
+- 18:37 前 4096 B 全零（md5 `620f0b67…`）—— 那是**当天下午多次刷机**（每包第一条
+  `mmc erase.p misc`）的结果，**不能用它判断 BCB 归因**。17:2x 的
+  「`arm` 写 `boot-recovery` ⟹ 每次开机进 recovery 槽」仍是最简解释。
+- 19:19 前 48 B 变成 recovery boot header 的前缀（与 `mmcblk0p7` 前 48 B 逐字节相同），
+  来自 `adb reboot recovery`。之后系统正常启动 ⟹ **这 48 B 不是「下次进 recovery」的开关**。
+- ★ `dd if=misc bs=1 count=16` 在这个 toybox 上拿到的是 **recovery header**，不是 misc 偏移 0
+  ⟹ `boottest.sh show` 打印的「BCB」是假读数，以前据此下的「BCB 已空」结论作废。
+  要判 BCB 只用 `bs=512 count=1`。
+
+详见 `misc-bcb-readout.md`。
+
 ### 另一条通路阵亡：eMMC 上没有任何 FAT 分区
 
 内置默认 env 里有标准的 `bootcmd`：
@@ -275,14 +289,14 @@ SoC 的 external abort 硬件复位，不是看门狗。）
 
 **但不要把这条读成「SoC 没有看门狗」。** 静态分析 `mboot_full.bin` 已经查通：
 MStar WDT 在 `0x1F000000 + 0x3000..0x3008`（喂狗 / 复位标志 / 计数值，时钟 12 MHz），
-mboot 在**第一次写 eMMC（CMD25）时布防 205 秒**，函数在 `0x60e9c`。
+mboot 在**第一次写 eMMC（CMD25）时布防 5 秒**，函数在 `0x60e9c`。
 详见 `boot-test.md` 第五十七节。
 
 也就是说：
 
 | 场景 | 会不会被狗咬 |
 |---|---|
-| mboot 正在写 eMMC（刷机、写 BCB）时卡住 | **会**，205 秒后复位 |
+| mboot 正在写 eMMC（刷机、写 BCB）时卡住 | **会**，5 秒后复位 |
 | 纯 `mmc read.p` + `bootm`，不写 eMMC | **不会**（WDT 没布防） |
 | 内核已经跑起来之后挂死 | 取决于内核自己有没有布防，mboot 的那次布防早已完成 |
 

@@ -3,6 +3,32 @@
 按子系统一篇。每篇的体例固定：**结论 → 证据 → 对主线的意义 → 待办**。
 拿不到证据的一律写"待确认"，不写推测当结论。
 
+## 🔴 必读四件（新接手 / 隔了很久回来，按这个顺序）
+
+| 顺序 | 文件 | 为什么必读 |
+|---|---|---|
+| 0 | [HANDOFF.md](HANDOFF.md) | **交接单**：当前状态、已否定清单、下一步第一个动作、协作约定。换对话/换人从这里开始。 |
+| 1 | [discipline.md](discipline.md) | **纪律**。每条都是付过代价换来的：判读 / 赌注 / 观测 / 构建 / 本机环境。不读会重犯。 |
+| 2 | [confirmed-facts.md](confirmed-facts.md) | **确证事实**（分 实测 / 对照 / 推测）+ **§H 已否定的假设**。不读会重走死路。 |
+| 3 | [paths.md](paths.md) | **路径清单**。代码树、产物、脚本、备份、设备地址各在哪。 |
+
+**当前主线只有一件事**：定位 7.3/4.19 在 mboot 交接之后卡在哪一级。
+
+⚠️ **颜色判据已作废，别再用屏幕定等级。** 面板只读每 32 位字的低 16 位、且屏幕内容与
+mboot/GPU 竞争（谁最后写赢随机），项目在 2026-11-18 就把判据改成了"设备是否卡死"。
+来龙去脉见 [display.md](display.md) §九。
+
+⟹ 上手前读 [wdt-beacon.md](wdt-beacon.md) **§十三～§十五**：**pstore/pmsg 通道已端到端打通**
+（往 `0x419c0000` 写 `sig/start/size + data` 记录头，同一次启动内就被导出成
+`/sys/fs/pstore/pmsg-ramoops-0`，`od` 一个文件即可读），它已经取代早先「DDR 标记
+`0x43300000` + probeRW」那一套。设备的当前实际状态与下一步第一动作看 [HANDOFF.md](HANDOFF.md)。
+刷入 / 回滚 / 救砖仍看 [rung419-runbook.md](rung419-runbook.md)（但其中的颜色判读表已过时）。
+
+**做完任何一次实验都要更新**：`confirmed-facts.md`（新事实）、本文件（新文档）、
+工作区 `.workbuddy/memory/MEMORY.md`（只动"下一步该干什么"那部分）。
+
+## 专题文档
+
 | 文档 | 内容 |
 |---|---|
 | [hardware.md](hardware.md) | 这台机器上有什么硬件、主线认不认（14 项清单） |
@@ -26,6 +52,12 @@
 | [flash-and-recovery.md](flash-and-recovery.md) | 怎么刷、怎么退：官方 32 字节容器版式、五张盘的分工、框架缓冲信标 |
 | [pm51-standby.md](pm51-standby.md) | 待机是 PM51 硬件状态机：关机=交权给 MCU、红外电源键由 MCU 解码 |
 | [online-test-ladder.md](online-test-ladder.md) | 在线验证的阶梯：从空模块到真探针 |
+| [rung419-runbook.md](rung419-runbook.md) | **4.19 上机操作卡**：三级颜色判读、刷入、回滚、救砖 |
+| [wdt-beacon.md](wdt-beacon.md) | **★ WDT 信标**：用 mboot 自带的 `wdt_enable` 让设备自己重启，靠 DDR 标记分级 —— 颜色通道废掉之后的替代判据 |
+| [factory49-entry.md](factory49-entry.md) | 原厂 4.9 入口 `+0xFA0000` 判读卡、段界表、厂值 cmdline |
+| [ladder6-readout.md](ladder6-readout.md) ~ [ladder9-readout.md](ladder9-readout.md) | 第 6–9 次梯级的实测读out |
+| [misc-bcb-readout.md](misc-bcb-readout.md) | BCB 布局与实测（`boot-recovery` 非消费式） |
+| [prior-art.md](prior-art.md) | **同类案例与官方契约**：无串口时别人用什么信标（含我们已否证的两条）、ARM 板接屏的接口族、`simple-framebuffer` / `simpledrm` 绑定硬条款 |
 
 ## 可背下来的几条
 
@@ -48,19 +80,23 @@
    **不用改 memory 节点、不用 reserved-memory**。`CON_PRINTBUFFER` 会在
    `postcore_initcall` 时把 128 KB `log_buf` 整体回灌，所以 `setup_arch` 阶段的
    日志也能捞回来。盲区只有"连第 2 级 initcall 都没跑到" —— 见 `ramoops.md`。
+9. **文字通道的唯一官方路径是 `simple-framebuffer`**：7.3 用 `CONFIG_DRM_SIMPLEDRM`（已从
+   `drm/tiny/` 搬到 `drm/sysfb/`），4.19 用 `CONFIG_FB_SIMPLE`，两者**互斥**、DT 写法**相同**。
+   节点必须在 `/chosen` 下（2026-11-20 已从根节点移过去）；`stdout-path` **保持指向串口**
+   （`earlycon` 靠它推断），fbcon 靠 bootargs 的 `console=tty0`。
+   4.19 当前 `FB_SIMPLE` 未开，**且开了也没用**——4.19 只吃外部厂值 DTB，里面没有该节点。
+   见 `prior-art.md` §三、§5.1。
 
-## 在线实验纪律（代价换来的）
+10. **有可用的探针读数通道了**（2026-11-21）：boot 槽 `code1` 探针写普通 DDR
+    （`0x23080000`–`0x230F0000` 八页，每条 64 B）然后返回 `0xFA0000`，Android 起来后
+    `probeRW op=r` 直读。不依赖屏幕 / pstore / DDR 跨复位。见 `confirmed-facts.md` §I、
+    `wdt-beacon.md` §十六。切 `0x419c0000`（ramoops）会挂——那块从没被写成过。
 
-- **禁止 MMIO 盲扫。** 厂商块里有未实现空洞，读到就 external abort，arm64 直接 panic。
-  曾经在 `0xFD200000+0..0x40000` 按 0x100 步长扫 USB 块，电视当场重启。
-- **碰新块先用对齐的字宽读**（`readl`），别用逐字节 hexdump。曾经按字节读 HDMI RX 块
-  （`pm+0x2E7000`），电视再次重启。
-- **地址算术错一位不会报错**，只会读到"平静的一整片 0"。凡是读到全零，
-  先复核算术（`pm+0x22600` 是 `0xffffff800a022600`，不是 `…0a226000`），再怀疑硬件。
-- **读之前记 uptime**。崩了第一时间抓 `/sys/fs/pstore/console-ramoops`——
-  Android 的 init 会在启动时清 pstore，晚几分钟就只剩新启动的日志。
-- `insmod` 用 `/vendor/bin/busybox`（toybox 的走 `finit_module(2)`，在这台机器上会自旋）。
-- 内核符号地址只能用 `kallsyms_lookup_name` 在模块内取（`/proc/kallsyms` 全是 0，
-  `kptr_restrict=2` 对 root 也生效）。
-- 提权走 `/data/local/tmp/tvroot.cmd`：写命令 → 等 12–15 秒 → 读 `tvroot.out`。
-- `adb` 的 server 会随上一个 shell 结束而死，**connect 与动作要写在同一个调用里**。
+## 在线实验纪律
+
+全部搬到 [discipline.md](discipline.md)，那里按「判读 / 赌注 / 观测 / 构建 / 本机环境」分类并写了代价。
+**这里只留最危险的三条**（这三条各自单独造成过一次电视重启或一次救砖）：
+
+1. **禁止 MMIO 盲扫。** 厂商块里有未实现空洞，读到就 external abort，arm64 直接 panic。
+2. **「挂了就 `adb reboot`」是错的。** boot / recovery 都是单向车道，挂了就没 adb，只能 U 盘救砖。
+3. **`boottest.sh arm` 只许执行一次。** 它会把自己写的镜像当厂值备份，第二次就永久失去回滚能力。

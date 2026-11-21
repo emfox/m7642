@@ -462,3 +462,321 @@ pm list packages                 projengmenu + fdroid 都在
 
 ⟹ **「保 data 配方」在救砖场景下同样成立**：擦 BCB、写回官方 recovery、data 一个字不动。
 这是目前最理想的救援动作，比 3.3 GB 官方全量包（会擦 data）好得多。
+
+## 十二、★ 首选救砖包：`rescue-fast.bin`（47.3 MB，保 data，约 4 秒）
+
+2026-11-19。min 包只修 p6/p7，一旦坏到 p8（boot）或 env（`bootcmd`）就无能为力。
+这个包把"内核实验真正会碰坏的东西"一次全覆盖，同时保持保 data、保持快。
+
+| 项 | 值 |
+|---|---|
+| 产物 | `~/kbuild/backup/fix/rescue-fast.bin` |
+| 大小 / md5 | 47,263,776 B / `7e8ef7a725e163672af7fb824b066abc` |
+| 生成工具 | `~/kbuild/backup/mkrescue.py` |
+| 覆盖 | p6 misc（擦）、p12 dtb、p7 recovery、p8 boot、`bootcmd`/`recoverycmd`/`WDT_ENABLE` |
+| 不覆盖 | system / vendor / userdata / optee / tvservice / factory_a |
+| 尾部 | `crc32(header)=0xc773300f`，常量 `0xb74aabba`，`hdr[:16]` 一致 |
+
+脚本顺序（三段都用**厂方自己的长度**，见下）：
+
+```
+mmc erase.p misc
+filepartload … 0x4000    0x5AF3     → dtb      ; erase.p dtb      ; write.p dtb 0x5AF3 1
+filepartload … 0xA000    0x1A33000  → recovery ; erase.p recovery ; write.p recovery 0x1A33000 1
+filepartload … 0x1A3D000 0x12D5800  → boot     ; erase.p boot     ; write.p boot 0x12D5800 1
+setenv bootcmd mmc read.p … boot …\; bootm …        ← 不带 saveenv 前缀
+setenv recoverycmd mmc read.p … recovery …\; bootm …
+setenv WDT_ENABLE 0
+saveenv
+```
+
+脚本里**没有** `MstarUpgrade_complete`，这是故意的，理由见第十三节。
+
+**为什么能比 68 MB 那个小 20 MB**：早先按分区容量写（32 MiB × 2），而厂方脚本只写镜像
+本身长度（recovery `0x1A33000` = 27.5 MB、boot `0x12D5800` = 19.7 MB）。改用厂方长度后
+载荷 47.2 MB，USB 读取时间从约 5 s 降到约 3 s，eMMC 写入量也少 20 MB。
+
+**为什么不能省掉 `saveenv`**：`bootcmd` 一旦被 `-wdt` 那版污染（前缀 `saveenv\;`），
+每次启动都会布防一只 **5 秒**看门狗（不是 205 秒，见 `boot-test.md` §57 更正），
+正常 Android 首启必然超时 ⟹ 自己造出"logo → 几秒 → 待机"的循环。
+这个包把 `bootcmd` 重置成厂方原文并落盘，是唯一能一次性解掉的动��。
+
+**长度与偏移校验**（回读文件按脚本声明的偏移取 md5）：
+
+```
+dtb        off 0x00004000 len 0x5AF3    5dae157554e3596ac5b77ddaca918380  SAME
+recovery   off 0x0000A000 len 0x1A33000 0d6e895a090442fdcb8699e1b583c3d6  SAME
+boot       off 0x01A3D000 len 0x12D5800 f9fce8e1a61c92060f62f4ca7392797f  SAME
+```
+
+用法：U 盘上改名为 `V8-T652T03-LF1V147.bin`（mboot 只认这个名字），
+断电 → 按住机身电源键 → 插盘上电 → 进度条走完 → 停待机 → 按电源键开机。
+
+## 十三、`MstarUpgrade_complete` 到底有没有"默认值"
+
+2026-11-19 追问。「不设它会不会被当成 1，从而把 /data 清掉？」
+
+### 1. 没有"默认值"这个东西
+
+U-Boot 环境变量只有两种状态：**存在**或**不存在**。不存在时 `getenv()` 返回 `NULL`，
+没有"未设置则取 1"这种缺省机制。所以"默认值是多少"这个问题本身不成立，
+真正该问的是两件事：**变量现在是什么值**、**不设它时值会怎么变**。
+
+### 2. 这台机器上它不是"不存在"，而是明确等于 0
+
+2026-11-18 22:48 从设备 dump 的 env（`~/kbuild/mpool3.bin`，主备两份副本）都是：
+
+```
+MstarUpgrade_complete=0
+```
+
+### 3. 不设它，实测不会清 /data
+
+第六次实测（2026-11-17 23:36，见 §十）：`m7642-reconly-min.bin` 只有 recovery 段，
+末行 `saveenv`，**整个脚本没有 `MstarUpgrade_complete`**。刷完结果：
+
+- 没有出现「正在清除...」；
+- 事先放的标记文件 `marker-2332.txt` 还在，时间戳未变 ⟹ `/data` 一个字节没动。
+
+若"不设即视为 1"，这次必然 wipe。所以**不设 ≠ 1**，这条是行为层实证，不依赖反汇编。
+
+### 4. mboot 自己会把它清 0
+
+`mboot16.bin` 里 `0x290a02`（VA `0x27690a02`）有一段内置字符串：
+
+```
+setenv upgrade_mode
+setenv MstarUpgrade_complete 0
+setenv upgrade_status
+setenv force_upgrade
+```
+
+旁边还有格式化串 `setenv %s 0;saveenv`、`setenv %s 0` 和日志 `last upgrade complete`，
+在 `0x28fe82` 一带（与 `recoverycmd`、`reboot-bootloader` 同池）。⟹ 升级流程开始时会把它
+置 0，脚本里若出现 `setenv MstarUpgrade_complete 1`，收尾才被当成"官方完整升级完成"。
+
+这也解释了 dump 为什么是 `0` 而不是 `1`：即便上一次全量包设过 1，下一轮升级开始时又被清回 0。
+
+> **证据强度说明**：第 4 条是"字符串存在 + dump 为 0"的间接证据。试过 `add rX,pc,#imm`
+> （基址无关）、`add rX,pc,rY`、literal 绝对地址、`movw`/`movt`（含机器码直接搜索）四种方式
+> 追引用，全部 0 命中——该镜像代码与数据混排，字符串引用方式没能静态确定，控制流未实证。
+
+### 5. 历史序列反证了"继承值会 wipe"这个担心
+
+一度担心：不设的语义是"保持 env 现值"，而官方全量包末尾 `setenv MstarUpgrade_complete 1`，
+那么全量包刷完之后再用不设的包，会继承 1 从而 wipe。**这个担心被实测否掉了。**
+
+把本机 24 个自制包的脚本全扫一遍（`~/kbuild/scan_pkgs.py`），结果只有一个包设过这个变量：
+
+| 包 | `MstarUpgrade_complete` | 刷后结果 |
+|---|---|---|
+| `m7642-reconly-full.bin` | **1**（官方 set_config 原样保留） | **清了 /data** |
+| 其余 23 个（含 `reconly-min`、全部 misc 包、`rescue-fast`） | 都没有 | 都没清 |
+
+而这两次刷机是连着的：
+
+```
+23:30  刷 reconly-full   → 设 1 + saveenv → wipe
+23:36  刷 reconly-min    → 脚本里没有这个变量 → 没 wipe，标记文件还在
+```
+
+中间只隔 6 分钟。reconly-full 刚 `saveenv` 过 1，所以 23:36 开始时 env 里**几乎必然还是 1**。
+若"不设 = 继承 1 = wipe"，那次必然再清一遍，但它没有。⟹ **不设不会因为继承值而 wipe。**
+
+### 6. 自洽的模型，以及为什么不要画蛇添足
+
+唯一能同时解释全部观测的模型：
+
+```
+升级开始   mboot 无条件 setenv MstarUpgrade_complete 0
+脚本中     只有在脚本显式 setenv ... 1 时才变 1
+收尾       值 == 1 → 视作"官方完整升级完成" → wipe data/cache + 自动重启
+           否则 → 不 wipe，停在待机（需按电源键）
+```
+
+逐条对账：
+
+| 观测 | 模型解释 |
+|---|---|
+| 23:30 reconly-full（设 1）→ wipe | 收尾值 1 |
+| 23:36 reconly-min（不设）→ 不 wipe | 开始时被清 0，收尾仍是 0 |
+| 全量包 → 清 data 并自动重启 | 脚本设 1 |
+| `mpool3.bin` 里是 `0` 而不是 `1` | 最后一次刷的是不设的包，收尾落盘 0 |
+| 11-18 连刷多个不设的包，值仍是 0 | 每次开始都被清 0 |
+
+在这个模型下，"显式 `setenv MstarUpgrade_complete 0`" 与"完全不提这个变量"**完全等价**——
+因为开始时它已经是 0 了。加那行不会更安全，只是多一条没人验证过的命令。
+
+所以 `rescue-fast.bin` **不设它是正确的**，也是那些写 misc 的包一贯的做法；
+它们"一直不清 data"不是运气，是这套机制的正常结果。
+
+> 反面教训：我曾按"继承值"假设给包加了一行 `setenv MstarUpgrade_complete 0`，
+> 属于在没验证的假设上做"加固"。已撤回，产物 md5 回到 `7e8ef7a725e163672af7fb824b066abc` / CRC `0xc773300f`。
+
+## 十四、设备为何反复起不来：是复发，不是一次事故
+
+2026-11-19 早上出现「logo → 约 3 秒 → 回待机」。查证后结论是**同一症状第二次出现**，
+中间隔着一次成功的全量刷机和数小时正常运行。
+
+### 1. 两条曾被当成判因、实际不成立的说法
+
+| 说法 | 为什么错 |
+|---|---|
+| misc 里残留 `boot-recovery` ⟹ recovery 死循环 | v5 包脚本第 19 行就是 `mmc erase.p misc`，每次刷机都擦净 |
+| `bootcmd` 被 `-wdt` 版污染 ⟹ 每次布防 5 秒狗 | v5 包 `set_config` 段有 `setenv WDT_ENABLE 0`，且 `bootcmd` 已重写为官方串 |
+
+取证命令（16 KiB 头就是明文脚本）：
+
+```sh
+dd if=X.bin bs=1 count=16384 | tr -d '\000'
+```
+
+### 2. 时间线（同一症状两次出现）
+
+| 时间 | 事件 |
+|---|---|
+| 11-19 凌晨 | 「logo → 3 s → 回待机」，每次按键只有一次启动机会 |
+| 之后 | 刷 v5 全量包 → **完全救回** |
+| 数小时内 | 设备持续可用：部署 tv-quiz/Projectivy、`status.sh` 全绿、跑测试、编译安装 su、推 3 次 GitHub |
+| 01:5x | 设备停在待机；该小时只做静态产物（`mk-ladder.py`），未接触设备 |
+| 06:2x | 用户开机 → 又是「logo → 3 s → 黑」 |
+
+### 3. 复发说明什么
+
+分区内容刷完即固定。病若在 `boot` / `dtb` / `misc` / `recovery`，刷 v5 之后不可能
+几小时又坏。**能"刷完好了、跑一阵又坏"的，只能是运行期写入的持久数据，或硬件。**
+
+运行期动过的持久位置，按嫌疑排序：
+
+| 位置 | 动作 | 嫌疑 | 依据 |
+|---|---|---|---|
+| `/data` | dex2oat、应用数据、日志，写入量最大 | **高** | 与第十一节结论一致 |
+| `/vendor/etc/init/*.rc` | 手工装的 `lchome.rc`、`tvgate.rc` | 低 | 只影响 `boot_completed` 之后 |
+| `/system/bin/su` | `-t` remount 写入 6755 的 mksh | 低 | `device/su/install.sh` 里 `sync` 在 `remount,ro` 之前，且用 `mv -f` 原子替换 |
+
+### 4. ★ 自我强化循环（最重要的一条）
+
+「回待机」是 PM51 直接切电，**不是正常关机**，等于硬断电。ext4 在反复硬断电下会损坏，
+而损坏又让下一次启动更容易失败。
+
+⟹ **每一次失败的启动尝试都在继续伤 `/data`。**
+⟹ 设备起不来时**不要反复"按一下看看这次行不行"**。要观测就一次做完。
+
+### 5. 选包判据：这个包碰不碰 `/data`、`/system`、`/vendor`
+
+| 包 | 大小 | 写的分区 | `/data` |
+|---|---|---|---|
+| `rescue-fast.bin` | 47.3 MB | misc · dtb · recovery · boot | 保 |
+| `v5-system-full.bin` | 3.0 GB | misc · dtb · recovery · boot · **system** · **vendor** | **保** |
+| `V8-T652T03-LF1V147-v5.bin` | 3.3 GB | 全部 | 清 |
+
+boot/dtb/misc/recovery 已验为厂值时，只写这四个的包（如 `rescue-fast.bin`）**属于白刷**——
+病灶大概率在它不碰的地方。
+
+判读链：
+
+```
+刷 v5-system-full.bin（保 data）
+  ├─ 能进系统  ⟹ 病在 system/vendor，data 无辜
+  └─ 仍 3 s 回待机 ⟹ 病在 /data，再刷全量包（清 data）
+        └─ 全量刷完仍 3 s ⟹ 病不在软件，在 eMMC 或 PMIC
+```
+
+### 6. 刷前静态校验：`tools/host/pkgcheck.py`
+
+设备没有错误通道——坏包和找不到包表现完全一样（无进度条、直接开机）。所以能在主机
+做的检查必须做完再走过去。
+
+```sh
+python3 tools/host/pkgcheck.py <pkg.bin>
+```
+
+检查项：
+
+1. footer 四件：`"12345678"` · `crc32(header)` · 常量 `0xb74aabba` · `header[0:16]` 回指
+2. 脚本终止符 `% <- this is end of script symbol` 存在，其后只有 0xFF/0x00 填充
+3. 每条 `filepartload` 的 `offset + size` 不越出 payload 区
+4. 打印实际会被 erase 的分区列表
+5. 打印 `MstarUpgrade_complete` / `WDT_ENABLE` / `bootcmd` / `recoverycmd` 的实际取值，
+   并明确给出「会不会清 /data」
+
+最后一行 `RESULT: PASS|FAIL` 可直接作为刷机前的放行条件。
+
+### 7. 第三次复发（2026-11-20 23:05）
+
+同一症状第三次出现，与 §十四.2 的两次隔了一天多。这次触发动作有明确记录：
+
+```
+23:05:03  echo 1 > /proc/sys/kernel/sysrq; sync; sync; echo b > /proc/sysrq-trigger
+23:07–09  轮询 adb，30 次全空（设备不再回到 Android）
+23:13     用户：按电源 → logo 3 秒 → 回待机；拔电 15 s 后重试，同样
+```
+
+目的本是用 soft reset 验 DDR 跨复位保留（`wdt-beacon.md` §十 §7 那条未验证前提），
+结果直接复现了已知病灶。
+
+**为什么 `sysrq b` 能一击致命**：它走 `machine_restart`，不 umount、不等写缓存落盘；
+而本机 `/data` 早已处在「回待机 = PM51 切电 = 硬断电」的自我强化循环里（§十四.4）。
+它不是写坏了哪个分区，而是给一个脆弱的 `/data` 又补了一次非正常断电。
+
+**这次新增的可复核事实**：
+
+| 事实 | 证据 |
+|---|---|
+| U 盘根目录放的是 `rescue-norecovery`（md5 `326132c7…`），脚本里 recovery 段被整段注释 | 16 KiB 头明文，只有 `# File Partition: recovery` 而无 `filepartload`/`mmc write` |
+| 同名同尺寸（47,263,776 B）的 `rescue-fast`（md5 `7e8ef7a7…`）**有** recovery 段 | 同上，`filepartload 0xA000 0x1A33000` + `erase.p` + `write.p` |
+| 所以"U 盘里有救砖包"不等于"能修 recovery 槽" | 两个包文件名相同、大小相同、CRC 都合法，只看名字分不出来 |
+| `panic=0`、`sysrq=0`（默认关） | `/proc/sys/kernel/{panic,sysrq}` 实测；`echo c` 只会挂死 |
+
+**这轮该刷的其实不是任何一个 47 MB 包**：boot/dtb/misc/recovery 已验为厂值时，
+只写这四个的包属于白刷（§十四.5）。按判读链应刷保 data 的 system+vendor 包：
+
+| 包 | 大小 | md5 | 擦写分区 | /data |
+|---|---|---|---|---|
+| `backup/fix/V8-T652T03-LF1V147.bin` | 3,077,484,576 | `3aab78e4a1f980d5d5fe817fcce795fe` | misc · recovery · boot · dtb · **system · vendor** | **保** |
+| `Debian/tv/rom/V8-T652T03-LF1V147-v5.bin` | 3,335,655,456 | `6c7b2a00ff589678773cab1f838bb7b7` | 全部 | 清 |
+
+前者 `pkgcheck.py` 报 `RESULT: PASS`、`MstarUpgrade_complete` absent ⟹ 不清 `/data`。
+
+### 8. 复盘的边界：全量包救回 ≠ 病灶就是 `/data`
+
+2026-11-21 00:05，刷原厂全量包（3,335,655,456 B，md5 `6c7b2a00…`）后设备正常启动，
+adb 回到 `unauthorized`（`/data` 已清，`adb_keys` 没了，符合预期）。
+
+**但这不能单独证明病灶在 `/data`。** 全量包擦了 18 个分区：
+
+```
+tvconfig misc recovery boot optee armfw RTPM dtb frc cm4
+cache tcluserdata tclconfig system vendor tvservice factory_a userdata
+```
+
+而前面那个 3.0 GB 包只写了 `misc recovery boot dtb system vendor`，它失败 ⟹ 只能排除这 6 个。
+剩下的 12 个（含 `userdata`、`cache`、`tvconfig`、`optee`、`tclconfig`、`tvservice` …）都在嫌疑名单上。
+
+⟹ **正确的表述是**：病灶在这 12 个之中，`/data` 是其中最可疑的一个，不是唯一结论。
+我中途写过"病灶确认在 /data"，那是过度推论，撤回。
+
+**为什么仍把 `/data` 排在第一位**：
+
+| 依据 | 强度 |
+|---|---|
+| 只有它是高频写入（dex2oat、日志、应用数据） | 推论 |
+| 11-19 两次同症状，第二次是**整夜没操作**、早上开机就坏 ⟹ 会自己发作 | 实测 |
+| 只读分区不可能"刷完好了、跑几小时又坏" | 推论 |
+| `cache` 也可能（Android 会读 `/cache/recovery/*`），但写入频率低得多 | 未排除 |
+
+**要唯一定位，下次的刷机顺序应该是**（每次一个包，二分）：
+
+```
+只擦 cache           → 好 ⟹ 病灶在 cache
+只擦 userdata + 空镜像 → 好 ⟹ 病灶在 userdata
+只擦 tvconfig        → 只擦 optee/tvservice/tclconfig …
+```
+
+代价是每次一次 U 盘往返。今晚没做，是因为已经把整晚耗在救砖上。
+
+**顺带记录的教训**：自制的 `sparse_write` 包两次都在 mboot 报 ERROR（进度条一闪）。
+payload 偏移已验（两处都是 `3aff26ed` sparse 头），`filepartload` 与 `mmc write.p` 同款也能刷
+（`rescue-fast` 成功过），所以问题在 `sparse_write` 这条路径本身——参数或前置条件，
+我没有静态证据。以后要再试，先做**只含一条 `mmc erase.p cache` 的探针包**把变量拆开，
+不要一次把两条新命令塞进同一个包。

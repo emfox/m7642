@@ -5,10 +5,17 @@
 #   boottest.sh arm       write our image into recovery, set BCB=boot-recovery
 #   boottest.sh disarm    restore the factory recovery head and the misc sector
 #   boottest.sh reboot    reboot into recovery (the test itself)
+#   boottest.sh prep      print the rescue-stick recipe and verify the packages
 #
 # The image goes into the *recovery* slot, never into boot: a failed boot
 # leaves Android untouched, and the slot can be restored from Android as long
 # as Android still runs.
+#
+# ★ But arm also writes BCB=boot-recovery, and mboot treats that as sticky:
+# recovery's init is what clears it, so if the kernel never runs, the marker
+# stays and every power-on goes back to the dead slot.  Android is intact yet
+# unreachable.  There is no software way out of that loop -- only a rescue
+# stick.  Hence arm refuses to run unless I_HAVE_RESCUE_STICK=1.
 #
 # Privileges: /factory/su gives uid 0 but CapEff=0 and cannot open block
 # devices, so every block operation runs through the tvroot service.
@@ -22,6 +29,11 @@ set -u
 ADB=${ADB:-/home/emfox/Debian/tv/adb/platform-tools/adb}
 TV=${TV:-192.168.10.60:5555}
 IMG=${IMG:-/home/emfox/kbuild/m7642-out/m7642-boot.img}
+# Full rescue (misc + dtb + recovery + boot), and a 20 KB package that only
+# wipes misc -- enough to break the BCB loop in about one second.
+RESCUE=${RESCUE:-/home/emfox/kbuild/backup/fix/rescue-fast.bin}
+UNSTICK=${UNSTICK:-/home/emfox/kbuild/rescue/partial/m7642-misc-stock.bin}
+STICK_NAME=V8-T652T03-LF1V147.bin
 W=/data/local/tmp
 MISC=/dev/block/by-name/misc
 REC=/dev/block/by-name/recovery
@@ -37,6 +49,22 @@ check_device() {
     "$ADB" connect "$TV" >/dev/null 2>&1
     [ "$(dev getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] || die "device not booted"
     say "device up $(dev 'cut -d. -f1 /proc/uptime' | tr -d '\r')s"
+}
+
+# Refuse to arm without a rescue stick ready.  This is the one gate that has
+# already cost a full evening: arm makes the slot unbootable *and* makes the
+# BCB sticky in the same step, so a failure needs physical media.
+require_rescue_ready() {
+    [ -f "$RESCUE" ] || die "rescue package missing: $RESCUE"
+    [ "${I_HAVE_RESCUE_STICK:-0}" = 1 ] || die \
+"refusing to arm: this writes BCB=boot-recovery, which mboot only clears when
+recovery's init runs.  If our kernel never runs, Android becomes unreachable
+and only a rescue stick gets it back.
+
+prepare the stick first (boottest.sh prep), then re-run with:
+
+    I_HAVE_RESCUE_STICK=1 $0 arm"
+    say "rescue stick: confirmed present by operator"
 }
 
 # Rewrite the command channel to a no-op so a stale command cannot fire later.
@@ -99,6 +127,7 @@ EOF
 
 cmd_arm() {
     check_device
+    require_rescue_ready
     [ -f "$IMG" ] || die "image missing: $IMG"
     local sz want got blocks
     sz=$(stat -c %s "$IMG")
@@ -111,6 +140,16 @@ cmd_arm() {
     [ "$want" = "$got" ] || die "image on device is $got, expected $want"
 
     run_root <<EOF || die "arm failed"
+# arming overwrites rec.head.bin unconditionally.  If what is there now is the
+# factory image, keep a second copy under a name arm never touches, so a
+# mis-timed second arm cannot destroy the only rollback that matters.
+if [ -f $W/rec.head.bin ]; then
+    cur=\$(md5sum $W/rec.head.bin | cut -d' ' -f1)
+    if [ "\$cur" = "0f6e1705f077935e1c3018973e658bfa" ]; then
+        cp $W/rec.head.bin $W/rec.head.factory.bin 2>/dev/null
+        echo "note: kept the factory rollback as rec.head.factory.bin"
+    fi
+fi
 dd if=$REC of=$W/rec.head.bin bs=4096 count=$blocks 2>/dev/null
 dd if=$MISC of=$W/misc.head.bin bs=4096 count=1 2>/dev/null
 echo -n "rollback recovery md5  "; md5sum $W/rec.head.bin
@@ -127,6 +166,8 @@ dd if=$MISC bs=1 count=16 2>/dev/null | od -A n -t c
 echo
 EOF
     say "armed: 'boottest.sh reboot' to try it, 'boottest.sh disarm' to back out"
+    say "note: if the slot does not come up, adb is gone for good here --"
+    say "      recovery only: rescue stick with $STICK_NAME"
 }
 
 cmd_disarm() {
@@ -160,10 +201,36 @@ cmd_reboot() {
     "$ADB" -s "$TV" reboot recovery
 }
 
+cmd_prep() {
+    local n
+    say "rescue packages"
+    for n in "$RESCUE" "$UNSTICK"; do
+        if [ -f "$n" ]; then
+            say "  present $(basename "$n")  $(stat -c %s "$n") bytes  $(md5sum "$n" | cut -d' ' -f1)"
+        else
+            say "  MISSING $(basename "$n")"
+        fi
+    done
+    say ""
+    say "stick recipe (FAT32, root directory, exactly one .bin)"
+    say "  1. copy $RESCUE"
+    say "  2. rename it to $STICK_NAME   (mboot matches prefix 'V8-' + '.bin';"
+    say "     'MstarUpgrade.bin' alone is never read)"
+    say "  3. power off the TV, unplug the mains, wait 10 s"
+    say "  4. hold the body power button, plug the mains back in, keep holding"
+    say "     10-15 s until the progress bar appears, then release"
+    say "  5. it stops in standby; press power to boot Android"
+    say "  6. restore MstarUpgrade_complete=1 afterwards (rescue does not set it)"
+    say ""
+    say "the 20 KB $UNSTICK only wipes misc: enough to break the BCB loop"
+    say "in about a second, but it leaves our image in the recovery slot."
+}
+
 case "${1:-}" in
 show)   cmd_show ;;
 arm)    cmd_arm ;;
 disarm) cmd_disarm ;;
 reboot) cmd_reboot ;;
-*)      say "usage: $0 {show|arm|disarm|reboot}"; exit 1 ;;
+prep)   cmd_prep ;;
+*)      say "usage: $0 {show|arm|disarm|reboot|prep}"; exit 1 ;;
 esac
