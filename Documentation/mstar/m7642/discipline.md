@@ -122,6 +122,13 @@
 2. `/data/local/tmp/rec.head.bin` 的 md5 是厂值（见 confirmed-facts §D）。若不是 ⟹ 厂值回滚已失效。
 3. `misc` 的 BCB 不是 `boot-recovery`。
 
+**探针里任何「长时间」常量，先算一遍量级再上机。**
+
+- 2026-11-21 15:2x：`paint-hold.S` 想空转约 10 s，写成 `movk x9, #0x2, lsl #48`（应为 `lsl #32`），
+  实际 1.4×10^14 次迭代 ⟹ 等于死循环 ⟹ **把 bootstrap 槽刷坏**，每次开机卡 30–40 s 回待机，
+  最后靠 U 盘救砖。
+- ⟹ 含长空转/长循环的镜像**禁止进 boot 槽**；先在 recovery 槽或纯计算里核对迭代数。
+
 **按电源键之前先确认设备不在 Android 运行态。**
 
 - Android 运行中按电源 = 待机 = PM51 切电 = 硬断电（`/data` 风险）。工具 `tools/host/tvpower.sh` 默认拒绝，需 `--force` 才按。
