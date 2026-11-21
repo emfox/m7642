@@ -14,6 +14,8 @@ def main():
     ap.add_argument("--image", default="/home/emfox/kbuild/tcl-419/arch/arm64/boot/Image")
     ap.add_argument("--at", type=lambda x: int(x, 0), default=None,
                     help="Image offset to patch with `bl stub` (default: code1 at 4)")
+    ap.add_argument("--nop", type=lambda x: int(x, 0), action="append", default=[],
+                    help="Image offset(s) to overwrite with nop")
     ap.add_argument("--stub", required=True)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
@@ -35,6 +37,9 @@ def main():
     body += b"\0" * ((-len(body)) % page)
 
     code = bytearray(body)
+    for off in a.nop:
+        struct.pack_into("<I", code, off, 0xD503201F)
+        print("nop at %#x" % off)
     patch_at = a.at if a.at is not None else 4
     # `bl stub` so the stub sees the rung address in x30; it never returns.
     imm = ((at - patch_at) >> 2) & 0x3FFFFFF

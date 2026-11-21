@@ -570,3 +570,48 @@ stagecmd    = mmc read.p 0x30000000 boot 0x2000000
 
 ⟹ **下一步（真正的主线工作）**：把 `abort3` 的那段 stub 插进 4.19/7.3 镜像的早期代码（第 k 条检查点），
 逐档读出主线到底走到哪一步。工具链齐全（`mk-boot-beacon` 注入 + `probeRW` 读 stash）。
+
+### 16. ★★★ 7.3 的动态追踪第一批：两个卡点，第一个已定位并绕过（2026-11-21 17:1x）
+
+**方法**：`recoverycmd` 预读厂内核到 `0x30000000`（`run stagecmd`），被追踪镜像里在指定
+`Image` 偏移打 `bl <stub>`；stub 把 `x30`（档位地址）和 `x0..x5` 写进 `0x23080000`，
+把预读的厂内核拷回 `0x20280000`、清 `x3/x4`、跳 `0x21220000`；Android 照常起来，
+**同一次启动**用 `probeRW` 读回。stub 放在 `Image+0x1400000`（在拷贝区之外，否则会被自己拷掉）。
+
+**结果（7.3，先无修复）**
+
+| 档 | 偏移 | 结果 |
+|---|---|---|
+| A | `code1` `0x4` | ✅ 到达（`x30=0x20280008`） |
+| B | `primary_entry` `0x455038` | ✅ 到达（`x30=0x206D503C`） |
+| C | `0x465E5C` | ❌ |
+| F | `init_kernel_el` `0x4550A4` | ❌ |
+| K | `0x455048`（建栈之后） | ❌ |
+| **cache 修复后** | `0x46803C` 改 `nop`，检查点 `0x455048` | ✅ **到达**（`x30=0x206D504C`） |
+
+**卡点一（真 bug，已绕过）**：`preserve_boot_args` 在 **MMU 关着**（`x19=0`）时尾调
+`dcache_inval_poc`（`Image+0x21DE8`），里面是 `dc ivac`。按 VA 的 cache 维护在 MMU 关时是
+实现定义行为，这颗 SoC 上会抛 data abort ⟹ 卡死。把 `Image+0x46803C` 的 `b dcache_inval_poc`
+改成 `nop` 后，内核顺利走过这一段（同时也跳过 0x468040 那句 `str x19,[x0,#896]` 之前的分支，
+实测无害）。
+
+> 这一条修正了文档 §五十二「7.3 `code0` 是 `nop`、`CONFIG_EFI=n`」那批实验没覆盖到的点：
+> 真正的第一现场不在 `primary_entry` 的 `mrs`，而在它调用的 `preserve_boot_args` 里。
+
+**卡点二（带修复后）**
+
+| 档 | 偏移 | 结果 |
+|---|---|---|
+| N1 | `__pi_create_init_idmap` 入口 `0x465E4C` | ✅ |
+| Q1 | `0x465E50`（`sub sp` 之后） | ✅ |
+| Q2 | `0x465E78`（参数准备前） | ✅ |
+| **Q3** | `0x465ECC`（**`bl map_range` 返回处**） | ❌ |
+| P2 | `0x455058`（`create_init_idmap` 返回后） | ❌ |
+
+⟹ **死亡在 `0x465E78..0x465ECC` 之间：`ldrb` 取全局 + `map_range` 递归建表这一段**。
+页表池 `0x20730000`、栈 `0x206ED000` 都在 DDR 段 `0x20200000-0x41800000` 内，
+「地址不可写」这条路解释不通；下一步应查 `map_range` 的递归深度/参数（`w5` 层级、
+`x26` 页大小掩码、递归里的 `bl 0x206e5cb8`）。
+
+**工具**：`tools/host/mk-mainline-abort.py --at <偏移> [--nop <偏移>]`、
+`tools/host/rung73.sh A..L`、`probes/handoff/abort-rung.S`。
