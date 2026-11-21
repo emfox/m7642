@@ -6,12 +6,14 @@
 ## A. 最高优先级：post-MMU 交接桩验证（若成立，仪器从此全自动）
 
 ```bash
-cd ~/Debian/m7642 && bash tools/host/run-fast.sh ~/kbuild/m7642-out/m7642-rec-73-skmain.img b7970b310cb472f6374c94ac9d793aa8 skmain
+cd ~/Debian/m7642 && bash tools/host/run-fast.sh ~/kbuild/m7642-out/m7642-rec-73-skmain.img 40ef6778dab007af26e8c0cef3f4d1ff skmain
 ```
 
 - **回来** ⟹ MMU 后的检查点可读了 ⟹ 接着跑 `setuparch`(`d3a56dff…`)、`panic2`(`b48b46a5…`)
 - **不回来** ⟹ 看 stash；若 stash 有 `M764`/`MMMU` 说明记录成功但交接没成，再查 routine 第 4、5 步
-- 关键实现：`probes/handoff/abort-postmmu.S`（线性映射写 → idmap 执行 → 清 M/C/I → 物理地址交接）
+- 关键实现：`probes/handoff/abort-postmmu.S`（线性映射写 → idmap 执行 → 清 M/C/I → 跳 `0x21680200` 做物理地址交接）
+- **已修的自毁 bug**：routine 原放在 `0x206d5000`，而交接要拷贝 `0x20280000..0x21554a00`，正好把它自己盖掉；
+  现改为 routine 只做「关 MMU → 跳 `0x21680200`」，交接代码在桩的物理副本里（拷贝区之外）
 
 ## B. 若 A 成立：把 7.3 的卡点继续往下压
 

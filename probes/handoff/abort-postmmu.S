@@ -1,17 +1,24 @@
 /*
  * Handover stub for checkpoints AFTER the MMU is on.
  *
- * The kernel's own idmap covers .idmap.text (VA == PA, 0x206d5000..0x206d58e4),
- * so: copy a small "MMU-off handover" routine into that page, flush it to PoC,
- * jump to its idmap VA, then turn the MMU and caches off and do the handover
- * with physical addresses.  The 7.3 kernel executes nothing after that -- this
- * is the abort path, not a continuation, so switching the MMU off here cannot
- * break any later kernel code.
+ * The stub blob lives at PA 0x21680000 (Image +0x1400000), which is OUTSIDE the
+ * region the handover copies into (0x20280000..0x21554a00) -- so the physical
+ * handover code must run there, not from the idmap page.
+ *
+ *   1. (post-MMU entry, kernel VA) copy a tiny routine into the physical page
+ *      0x206d5000 through the LINEAR map (writable) -- the idmap alias of that
+ *      page is read-only after the switch, so writing via the idmap VA faults.
+ *   2. flush it (clean to PoC + ic iallu) and jump to its idmap VA (VA == PA).
+ *   3. routine turns the MMU and caches off, then jumps to handover_phys
+ *      (0x21680200) which -- now running with physical addressing and caches
+ *      off -- records the checkpoint, copies the staged factory kernel down,
+ *      drops the ramdisk args and enters the factory kernel.
+ *
+ * The 7.3 kernel executes nothing after this: it is the abort path.
  */
 	.text
 	.globl	_start
 _start:
-	/* destination: same physical page, via the linear map (writable) */
 	movz	x16, #0x5000
 	movk	x16, #0x004d, lsl #16
 	movk	x16, #0xffc0, lsl #32
@@ -23,7 +30,6 @@ _start:
 	strb	w19, [x16], #1
 	subs	x18, x18, #1
 	b.ne	1b
-	/* make the copy visible to fetch: clean to PoC, invalidate icache */
 	movz	x16, #0x5000
 	movk	x16, #0x004d, lsl #16
 	movk	x16, #0xffc0, lsl #32
@@ -39,13 +45,10 @@ _start:
 	ic	iallu
 	dsb	sy
 	isb
-	/* jump into the idmap page (VA == PA) */
 	movz	x16, #0x5000
-	movk	x16, #0x206d, lsl #16
+	movk	x16, #0x206d, lsl #16		/* idmap VA == PA */
 	br	x16
 
-/* ---- runs at 0x206d5000 with the MMU on, then turns it off ---- */
-	.balign	4
 off_routine:
 	mrs	x16, sctlr_el1
 	bic	x16, x16, #1		/* M = 0: MMU off */
@@ -53,15 +56,22 @@ off_routine:
 	bic	x16, x16, #0x1000	/* I = 0: instruction cache off */
 	msr	sctlr_el1, x16
 	isb
-	/* physical addressing, caches off from here on */
+	movz	x16, #0x2168
+	lsl	x16, x16, #16
+	add	x16, x16, #0x200	/* handover_phys, outside the copy range */
+	br	x16
+off_end:
+
+	.org	0x200
+handover_phys:
 	movz	x6, #0x2308
 	lsl	x6, x6, #16
 	movz	w7, #0x374d
-	movk	w7, #0x3436, lsl #16
-	str	w7, [x6]		/* "M764" */
+	movk	w7, #0x3436, lsl #16		/* "M764" */
+	str	w7, [x6]
 	movz	w7, #0x4d4d
-	movk	w7, #0x554d, lsl #16
-	str	w7, [x6, #4]		/* "MMMU" = post-MMU rung */
+	movk	w7, #0x554d, lsl #16		/* "MMMU" */
+	str	w7, [x6, #4]
 	mov	w7, #0x40
 	str	w7, [x6, #8]
 	dsb	sy
@@ -83,5 +93,3 @@ off_routine:
 	movz	x9, #0x2122
 	lsl	x9, x9, #16
 	br	x9
-off_end:
-	.word	0
