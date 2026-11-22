@@ -38,9 +38,24 @@ blob = tramp + b"\0" * (0x1000 - len(tramp)) + probe
 open("/tmp/kva-combined%s.bin" % n, "wb").write(blob)
 print("combined %d B (tramp %d, probe %d at +0x1000)" % (len(blob), len(tramp), len(probe)))
 PY
+	EXTRA=""
+	[ "$n" = 5 ] && EXTRA="--allow-mmu-on-store"	# its pre-MMU store IS the test
+	python3 check-probe.py "/tmp/kva$n.bin" --tramp-at $PROBE_AT $EXTRA
 	python3 "$MK" --image "$IMAGE" \
 		--patch "0x4=$SHIM_AT" --patch "0x4555b0=$PROBE_AT" \
-		--stub "/tmp/kva$n.bin" --tramp "/tmp/kva-combined$n.bin" --tramp-at $TRAMP_AT \
+		--stub abort-postmmu.bin --tramp "/tmp/kva-combined$n.bin" --tramp-at $TRAMP_AT \
 		--nop 0x46804c \
 		--out "$OUT/m7642-rec-73-kva$n.img"
+	# the tramp jumps to a fixed PA: Image+0x1400200 must hold abort-postmmu's
+	# body (its .org 0x200).  Using the probe as --stub leaves zeros there and
+	# the handover executes `udf`, which is indistinguishable from a hang.
+	python3 - "$OUT/m7642-rec-73-kva$n.img" abort-postmmu.bin <<'PY'
+import sys
+img = open(sys.argv[1], "rb").read()
+body = open(sys.argv[2], "rb").read()[0x200:0x210]
+got = img[2048 + 0x1400200:2048 + 0x1400200 + 16]
+assert body != b"\0" * 16, "abort-postmmu.bin has no body at .org 0x200"
+assert got == body, "handover body missing at Image+0x1400200 (got %s)" % got.hex()
+print("     handover body OK at Image+0x1400200")
+PY
 done
