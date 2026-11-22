@@ -31,7 +31,22 @@
    注意 `ps0`/`mk*` 那类能回的点都走 tramp 的 **PA 入口**，不能回的两个都走**内核 VA 入口**，
    所以"KVA 入口本身是否可用"仍未排除（`kva6` 是为这个建的，零访存，安全）。
 
-**2026-11-22 14:0x 最新（优先看这条）**：`x8`（`br x8` 目标）实测为
+**2026-11-22 14:4x ★★★★★ 7.3 到达 `start_kernel`（重大突破）**
+
+`br x8` 跳到数据区（`0xffffffc0804e805c`）的根因是：`__pi_early_map_kernel` 用
+`and x25, x19, #0x1fffff` 算「镜像与 2 MB 对齐的差」，而 `adrp _text` 在 **MMU 关**时给的是
+物理地址 ⟹ `0x20280000 & 0x1fffff = 0x80000`，这个值被当作重定位偏移传给
+`__pi_relocate_kernel`（已采到 `x0=0x80000`），把所有重定位指针推高 512 KB。
+arm64 要求 Image 放在 2 MB 对齐地址，mboot 偏要放 `0x20280000`。
+
+**修法**：把 `Image+0x465a1c` 强制成 `mov x25, xzr`（`0xaa1f03f9`）。
+结果：`x8` 变回 `0xffffffc08046805c`；检查点 `0x468060` 回来（`x30` 是内核 VA）；
+**`start_kernel`（`0x46091c`）回来**（`x30 = 0xffffffc080460920`）。
+
+⟹ 后续所有镜像**必须带这个修正**，用 `probes/handoff/mk-zfix.sh <off> <tag> [pa|kva]`。
+详见 `confirmed-facts.md` §34.8。
+
+**2026-11-22 14:0x（已被上面这条取代，仅存档）**：`x8`（`br x8` 目标）实测为
 `0xffffffc0804e805c`，而 `__primary_switched` 在 `0x8046805c`——**差 +0x80000，落在数据区**，
 `br x8` 一跳过去就是执行数据 ⟹ 这一条足以解释"跑到 `br x8` 之后没有下文"。
 `SCTLR_EL1=0x34d4d91d` ⟹ MMU/cache 都开着。详见 `confirmed-facts.md` §34.7。

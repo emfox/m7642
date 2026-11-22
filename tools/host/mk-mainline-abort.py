@@ -28,8 +28,14 @@ def main():
                     help="Image offset for --tramp (default: end-of-.text padding)")
     ap.add_argument("--target", type=lambda x: int(x, 0), default=None,
                     help="branch target for the patch (default: appended stub)")
+    ap.add_argument("--word", action="append", default=[],
+                    help="OFF=VALUE: write a raw 32-bit instruction")
     ap.add_argument("--patch", action="append", default=[],
                     help="OFF=TARGET branch site; replaces --at/--target when given")
+    ap.add_argument("--kernel-addr", type=lambda x: int(x, 0), default=None,
+                    help="rewrite the container's kernel_addr (arm64 needs 2 MB alignment)")
+    ap.add_argument("--stub-at", type=lambda x: int(x, 0), default=0x1400000,
+                    help="Image offset for the appended stub (default 0x1400000)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
@@ -43,7 +49,7 @@ def main():
     # The stub must live OUTSIDE the region the handover copies into
     # (0x20280000..0x21554a00 for the factory kernel), or the copy overwrites
     # the code that is still running.  Default: just past the factory kernel.
-    at = max(len(kern), 0x1400000)
+    at = max(len(kern), a.stub_at)
     at += (-at) % page
     body = bytearray(kern)
     body += b"\0" * (at - len(body))
@@ -61,6 +67,12 @@ def main():
         code[ta:ta + len(tramp)] = tramp
         print("tramp %d B at Image+%#x (PA %#x, VA %#x)" %
               (len(tramp), ta, kernel_addr + ta, 0xffffffc080000000 + ta))
+    for spec in a.word:
+        off, _, val = spec.partition("=")
+        o, v = int(off, 0), int(val, 0)
+        assert 0 <= o < len(code)
+        struct.pack_into("<I", code, o, v)
+        print("word at %#x = %#010x" % (o, v))
     if a.patch:
         patches = []
         for spec in a.patch:
@@ -79,6 +91,9 @@ def main():
     hdr = bytearray(src[:page])
     struct.pack_into("<I", hdr, 8, len(code))           # kernel_size
     struct.pack_into("<I", hdr, 16, 0)                  # ramdisk_size = 0
+    if a.kernel_addr is not None:
+        struct.pack_into("<I", hdr, 12, a.kernel_addr)  # where mboot loads us
+        print("kernel_addr %#x" % a.kernel_addr)
 
     out = bytes(hdr) + bytes(code)
     assert len(out) <= len(src), "does not fit"

@@ -57,8 +57,15 @@ _start_kva:
 	br	x16
 
 1:
-	mov	x21, x8			/* the `br x8` target, for the record */
-	mrs	x22, sctlr_el1		/* was the MMU really on? */
+	/* capture the checkpoint's entry registers before we clobber them;
+	 * the handover stub stores x21..x26 into the record.  This is how a
+	 * checkpoint on a function *entry* reports its arguments. */
+	mov	x21, x8
+	mov	x22, x0
+	mov	x23, x1
+	mov	x24, x2
+	mov	x25, x3
+	mov	x26, x4			/* the `br x8` target, for the record */
 
 	movz	x16, #(BOOT_ARGS_PA & 0xffff)
 	movk	x16, #((BOOT_ARGS_PA >> 16) & 0xffff), lsl #16
