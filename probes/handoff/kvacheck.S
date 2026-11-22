@@ -42,6 +42,16 @@
 _start:
 	mov	x20, x8			/* the branch target; no memory access */
 
+#if KVA_TEST == 6
+	/* no memory access at all: just latch what the CPU's own registers say */
+	mrs	x21, sctlr_el1
+	mrs	x22, ttbr1_el1
+	mrs	x23, tcr_el1
+	mrs	x24, vbar_el1
+	mrs	x25, esr_el1
+	mrs	x26, far_el1
+	b	2f
+#endif
 #if KVA_TEST == 4
 	/* the single memory access performed with the MMU on */
 	movz	x10, #0x0000
@@ -68,11 +78,18 @@ _start:
 	msr	sctlr_el1, x16
 	isb
 
+2:
 	movz	x4, #0x0000
 	movk	x4, #0x2309, lsl #16
 	str	x20, [x4, #0]
 	str	x21, [x4, #8]
 	str	x22, [x4, #16]
+#if KVA_TEST == 6
+	str	x23, [x4, #24]
+	str	x24, [x4, #32]
+	str	x25, [x4, #40]
+	str	x26, [x4, #48]
+#endif
 
 #if KVA_TEST == 5
 	movz	x6, #0x0020
@@ -91,8 +108,10 @@ _start:
 	movz	w7, #0x564b		/* 'K','V' */
 #if KVA_TEST == 4
 	movk	w7, #0x3441, lsl #16	/* 'A','4' */
-#else
+#elif KVA_TEST == 5
 	movk	w7, #0x3541, lsl #16	/* 'A','5' */
+#else
+	movk	w7, #0x3641, lsl #16	/* 'A','6' */
 #endif
 	str	w7, [x6, #4]
 	mov	w7, #4

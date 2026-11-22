@@ -1534,6 +1534,13 @@ idmap 里，MMU 一开就不一定能访问。这一发同样不能证明任何�
 |---|---|---|
 | `m7642-rec-73-kva4.img` | `aaba715835b10bb1b4570964fb24beb9` | MMU 开着时读 `_text` 的**内核 VA**（唯一一次访存） |
 | `m7642-rec-73-kva5.img` | `bdcc99927d97ca42e45b9cb910c0ffd0` | MMU 开着时**写** DDR `0x23090020` 是否生效 |
+| `m7642-rec-73-kva6.img` | `70d57d95221a0786dc5ec2233456e4a0` | **零次访存**：只用 `mrs` 抓 `x8`/SCTLR/TTBR1/TCR/VBAR/ESR/FAR |
+
+**实测到这里**：`kva1`（旧版，MMU 开着写 stash）挂、`kva4`（MMU 开着读 `_text` 内核 VA）
+挂（500 s，11:35）。两次都还不能当结论——`kva6` 是零访存对照，先确认「那一刻 MMU 是否
+真的开着、`x8` 是否是 `__primary_switched` 的内核 VA」，再谈 VA 能不能读。
+`kva6` 的记录：`0x23090000` = [x8, SCTLR, TTBR1, TCR]、
+`0x23090020` = [VBAR, ESR, FAR]，标记 `M764`/`KVA6`。
 
 记录格式：`0x23090000` = [x8, 读到的值, `0x600d`|`0xbad`, kva5 的回读]，
 标记 `0x23090800` = `M764`/`KVA4`|`KVA5`。

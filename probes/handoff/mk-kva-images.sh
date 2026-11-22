@@ -5,6 +5,8 @@
 #         drop the MMU, then store the answer.  The only MMU-on memory access.
 #   kva5  write 0xded to 0x23090020 with the MMU on, read it back after the MMU
 #         is off: is DDR writable under the MMU at all?
+#   kva6  zero memory accesses: latch x8 / SCTLR / TTBR1 / TCR / VBAR / ESR / FAR
+#         with mrs only.  This is the control that costs nothing.
 #
 # Both land at Image+0x36d000 (clear of the code1 shim at 0x36c0c0 and of the
 # tramp at 0x36c000) and are reached from Image+0x4555b0 (`br x8`).
@@ -23,7 +25,7 @@ PROBE_AT=0x36d000
 # the tramp blob must exist (its code1 shim carries the built-in DTB)
 [ -f tramp-postmmu.bin ] || ./build-postmmu.sh >/dev/null
 
-for n in 4 5; do
+for n in 4 5 6; do
 	"${CROSS}gcc" -DKVA_TEST=$n -c -o "/tmp/kva$n.o" kvacheck.S
 	"${CROSS}objcopy" -O binary --only-section=.text "/tmp/kva$n.o" "/tmp/kva$n.bin"
 	python3 - "$n" <<'PY'

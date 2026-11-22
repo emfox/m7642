@@ -9,6 +9,22 @@
 > `out/` 里的 27 张上机镜像已按源码重建并逐一比过 md5，全部一致。
 > 设备当前是活的（adb 可达），上一发 `ps1` 的挂死已由拔插恢复。
 
+> **2026-11-22 11:4x 停在这里（设备挂死，需一次拔插）**：追 `br x8` 的这一轮，`kva1`
+> 和 `kva4` 都挂，但两次都**不能当结论**——`kva1` 是 MMU 开着写 stash（探针自己的错），
+> `kva4` 是 MMU 开着读内核 VA，挂在它自己那次访存上。零访存对照已建好：
+> **`kva6` = `70d57d95221a0786dc5ec2233456e4a0`**（只 `mrs`，安全），恢复设备后先跑它：
+>
+> ```sh
+> cd ~/Debian/m7642/probes/handoff
+> ./run-postmmu.sh ~/Debian/m7642-build/out/m7642-rec-73-kva6.img 70d57d95221a0786dc5ec2233456e4a0 kva6
+> ```
+>
+> 记录 `0x23090000` = [x8, SCTLR, TTBR1, TCR]、`0x23090020` = [VBAR, ESR, FAR]。
+> 判读：SCTLR 的 M 位若为 0 ⟹ 那一刻 MMU 其实没开（VA 访存必挂，`br x8` 也必挂）；
+> 若为 1 ⟹ 看 x8 是否等于 `0xffffffc08046805c`（= `__primary_switched` 的内核 VA），
+> 不等就是重定位没填字面量（`0x4555c0` 的 R_AARCH64_RELATIVE）。
+> 之后才轮到 `kva5`（MMU 开着写 DDR 的对照），再决定 VA 到底能不能读。
+
 ## 0. 必读的上一条结论（§I.33）
 
 NEXT-SESSION 上一版 A 的三张镜像**按原样不可能回来**：桩在 `Image+0x1400000`（PA `0x21680000`），
