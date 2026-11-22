@@ -17,6 +17,15 @@
 	.text
 	.globl	_start
 _start:
+	/* The C code clobbers x0..x5, and the factory kernel entry uses x2
+	 * (it stores w2 into its boot_args).  Save what mboot handed over and
+	 * put it back before the handover. */
+	movz	x16, #0xaf00
+	movk	x16, #0x230a, lsl #16	/* 0x230aff00, below the C stack frame */
+	stp	x0, x1, [x16]
+	stp	x2, x3, [x16, #16]
+	stp	x4, x5, [x16, #32]
+
 	/* fcie_probe_once() has a stack frame; this page is inside the mboot
 	 * dtb read window, far above the payload (0x23080000) and the records. */
 	movz	x16, #0x0000
@@ -38,6 +47,20 @@ _start:
 	str	wzr, [x6, #12]
 	str	x0, [x6, #16]		/* return code */
 	dsb	sy
+
+	/* Restore the boot registers the C code clobbered (x2 especially),
+	 * drop the ramdisk arguments (x3/x4), and hand over with sp = 0 as
+	 * measured. */
+	movz	x16, #0xaf00
+	movk	x16, #0x230a, lsl #16
+	ldp	x0, x1, [x16]
+	ldr	x2, [x16, #16]
+	mov	w3, wzr
+	mov	w4, wzr
+	ldr	x5, [x16, #40]
+
+	mov	x16, xzr
+	mov	sp, x16
 
 	/* handover: 0x30000800 -> 0x20280000, drop the ramdisk, enter vendor */
 	movz	x6, #0x3000

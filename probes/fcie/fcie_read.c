@@ -164,6 +164,12 @@ int fcie_read_block(u64 fcie_base, u32 lba, u64 dst_pa, u64 *diag)
 	if (diag) {
 		diag[0] = 0; diag[1] = 0; diag[2] = 0; diag[3] = 0;
 	}
+
+#if FCIE_STAGE == 9
+	/* Diagnostic: exercise the C entry/stack/heartbeat/handover path with
+	 * no MMIO access at all. */
+	return 0;
+#endif
 	if (dst_pa < 0x20000000ULL || dst_pa >= 0x100000000ULL)
 		return E_DEST;
 	miu = dst_pa - 0x20000000ULL;          /* MSTAR_MIU0_BUS_BASE */

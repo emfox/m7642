@@ -93,15 +93,11 @@ probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-rung-0x465e80.img <md
   判据：心跳 `rc=0` + `R1` 的 CURRENT_STATE=4/READY_FOR_DATA=1 + 512 B 与 `dd` 一致。
   只读 LBA 0；挂住 = 一次物理断电（boot 槽是厂值，卡只被读过）。
 
-  **2026-11-22 08:0x 四级实测**：ctl ✅ / regs ✅（34+2 全读出，code1 卡 idle、DAT0 高）/
-  setup ✗（507 s）/ 全量 ✗（489 s）⟹ **读安全、写就挂**。已给探针加「进出原样
-  保存/还原 `FUNC_CTL`/`SD_MODE`/`SD_CTRL`/`DMA_ADDR`」，新镜像
-  emmc `8d5dd03356029548c6aba05f62514d64`、setup `d2d5fcf9263704acda1deae8a9f15a00`。
-  恢复设备后先跑 emmc，仍挂再跑 setup 二分。**每发之前往 misc 末尾写 4 KB `0xA5`
-  并回读确认**（`recoverycmd` 会擦掉；标记不消失就说明根本没进 recovery）。
-  **2026-11-22 07:43 全量 CMD17 第一次上机 NO_RETURN**，所以改成先跑两张诊断：
-  `ctl`（不碰 eMMC，只记录+交接）`097140f5…`、`regs`（只读 34+2 个寄存器）`a2e76b78…`；
-  命令见 `probes/fcie/README.md` 的「第一次上机」小节。等待已改成 CNTPCT + 2e9 迭代双上限。
+  **2026-11-22 10:00：CMD17 读通道成立**（rc=0、R1=0x900、SD_STATUS=0xff00、
+  512 B 与内核 `dd` 的 LBA0 逐字节相同）。之前连续挂死的根因是 **C 代码冲掉了 x0..x5**，
+  而厂内核入口要读 `w2`；`emmc_read.S` 已改成入口保存、交接前恢复。
+  全量镜像 `9f071ae8ff512a1843396e8849633531`。
+
 - **写路径（CMD24/CMD25）继续冻结**：`probes/fcie` 里没有任何写 eMMC 的代码，也不加。
 
 ## 6. 今天（11-22 凌晨）的账

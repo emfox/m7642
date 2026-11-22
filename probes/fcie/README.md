@@ -92,50 +92,35 @@ md5sum ~/kbuild/m7642-out/m7642-rec-73-emmc.img      # a4479e336f3b4b4ac7fa5ca1a
 `SPIN_CAP`）：即使系统计数器停走，也只是返回错误码而不是静默死等。
 **探测器挂住 = 一次物理断电**（boot 槽是厂值，断电后正常起 Android；卡只被读过，不会坏）。
 
-### 2026-11-22 07:43 第一次上机：NO_RETURN
+### 2026-11-22 10:00 结果：CMD17 读通道成立
 
-489 s 无 Android、设备挂死（需物理断电）。失败是盲的，所以按「不碰 → 只读 → 只写 →
-全量」四级定位，每一级回来（Android 起）就不再需要断电：
+四级诊断全部跑过（每发都用 misc 末尾 `0xA5` 标记确认真的进了 recovery）：
 
-| 镜像 | md5 | 做什么 |
+| 级别 | 镜像 md5 | 结果 |
 |---|---|---|
-| `m7642-rec-73-ctl.img` | `097140f576ef6e34b467b66ced09ab59` | code1 只写记录 + 交接，**完全不碰 eMMC**（对照：证明这套镜像布局的交接没问题） |
-| `m7642-rec-73-regs.img` | `a2e76b787061b803c56bccc96686c973` | code1 **只读** 34 个 FCIE + 2 个 PLL 寄存器（不写、不发命令），存到 `0x23090000 + idx*4` / `0x23090400`，标记在 `0x23090800` |
-| `m7642-rec-73-setup.img` | `d2d5fcf9263704acda1deae8a9f15a00` | code1 **只做寄存器设置**（`-DFCIE_STAGE=1`：到 `CMD_RSP_SIZE` 就返回，不写 SD_MODE/FIFO、不写 SD_CTRL、不起 DMA），心跳照写 |
-| `m7642-rec-73-emmc.img` | `8d5dd03356029548c6aba05f62514d64` | 全量 CMD17 |
+| ctl（不碰 eMMC，记录+交接） | `097140f5…` | REACHED |
+| regs（只读 34+2 个寄存器） | `a2e76b78…` | RETURNED，code1 寄存器全表见 confirmed-facts §32.8 |
+| 单写 wr1 / wt1 / wt2 / wt3 / wt4 / wt5 | 见 git 历史 | 全部 RETURNED（JOB_BL_CNT、FUNC_CTL、SD_MODE、SD_STATUS 读、清事件/清错误、DMA 寄存器组） |
+| clk（定时器） | `466d5d61…` | RETURNED：CNTFRQ=12 MHz、CNTPCT 在跑、EL2、cache 关 |
+| cpa / cpb（C 路径的栈 / 心跳地址） | 见 git 历史 | RETURNED |
+| **cpath**（C 路径、零 MMIO） | `484e1a01…` | 修复后 RETURNED |
+| **setup**（只写寄存器，不起命令） | `2c1d230a…` | 修复后 RETURNED |
+| **全量 CMD17** | `9f071ae8…` | **RETURNED，rc=0，数据与内核 `dd` 逐字节相同** |
 
-2026-11-22 08:0x 的实测结果（详见 confirmed-facts §32.8）：
+**之前连续挂死的根因**：C 代码按 ABI 冲掉了 `x0..x5`，而厂内核入口会把 **`w2`** 存进它的
+`boot_args[2]`。纯汇编桩从不碰它们，所以「凡是 C 路径就挂、凡是汇编就过」。修法：
+`emmc_read.S` 入口保存 `x0..x5`，交接前恢复（`x3/x4` 清 0、`sp` 回 0）。
 
-| 级别 | 结果 |
-|---|---|
-| ctl | **REACHED**（stash `M764`/`STEP`，x30=`0x20280008`）── code1 的「记录 + 交接」成立 |
-| regs | **RETURNED**：34+2 个寄存器全部读出；code1 时 `SD_STATUS=0xff00`（DAT0..7 高、无错误）、`SD_MODE=0x0004`（8 bit、时钟关）、`FUNC_CTL=0x0001` |
-| setup | **NO_RETURN**（507 s）── 写就挂 |
-| emmc | **NO_RETURN**（489 s）── 写就挂 |
-
-⟹ 读安全、写不安全。已在 `fcie_read.c` 加「进出原样保存/还原
-`FUNC_CTL`/`SD_MODE`/`SD_CTRL`/`DMA_ADDR`」（厂内核靠 `RESERVED_FOR_SW=3` 信任 mboot 的
-控制器状态、不重做 init），setup/emmc 两张镜像因此重建。先跑 emmc；仍挂再跑 setup 二分。
+成功读数：`rc=0`、`R1=0x900`（CURRENT_STATE=4/READY_FOR_DATA=1）、`SD_STATUS=0xff00`、
+512 B 与内核 `dd if=/dev/block/mmcblk0 bs=512 count=1` 完全一致（md5 `ce6a9730…`）。
 
 ```sh
 cd ~/Debian/m7642/probes/fcie
-./build-extra.sh; ./build-stage.sh; ./build-boot.sh      # 重建四张
-~/Debian/m7642/probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-ctl.img 097140f576ef6e34b467b66ced09ab59 0x4
-./run-regs.sh ~/kbuild/m7642-out/m7642-rec-73-regs.img a2e76b787061b803c56bccc96686c973
-./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-setup.img 32897a40ccf8b08de2e1e2b7a4d02c59   # 只关心心跳，MATCH 无意义
-./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img  a4479e336f3b4b4ac7fa5ca1aad46887
+./build-boot.sh
+./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 9f071ae8ff512a1843396e8849633531
 ```
 
-判读：ctl 回来 ⟹ 交接没问题；regs 回来 ⟹ code1 能安全读 FCIE（并把 mboot 刚用完
-eMMC 时的寄存器状态带回来）；两者都回来而全量 CMD17 仍挂 ⟹ 挂点在写寄存器 / 命令 /
-DMA 这一段，再按 §32.3 的 18 步逐段切。
-
-成功后的判据（三档）：
-
-- 实测：心跳 `rc=0`、`R1` 的 CURRENT_STATE=4 且 READY_FOR_DATA=1、512 B 与内核 `dd` 的
-  LBA0 完全一致 ⟹ CMD17 读通道成立；
-- 对照：`rc=0` 但内容不一致 ⟹ DMA 落点/MIU 地址有问题（§32.4）；
-- 失败：看 `rc` + 心跳里的 `R1`/`SD_STATUS` 定位（0xE2 = FCIE 归 NAND、0xE3 = DAT0 超时…）。
+写路径（CMD24/CMD25）仍未做，继续冻结。
 
 ## 不要做的事
 

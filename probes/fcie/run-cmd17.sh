@@ -24,7 +24,7 @@ o=$(root "dd if=/data/local/tmp/e.img of=/dev/block/by-name/recovery bs=4096 2>/
 t0=$(date +%s); echo "=== cmd17 $(date +%H:%M:%S) slot ok"
 $ADB -s $TV reboot recovery; sleep 12
 ok=""
-for i in $(seq 1 60); do ready && { ok=1; break; }; sleep 5; done
+for i in $(seq 1 $(( ${WAITSECS:-300} / 5 ))); do ready && { ok=1; break; }; sleep 5; done
 echo "  android_up=${ok:-no} ($(( $(date +%s) - t0 ))s)"
 [ -n "$ok" ] || { echo "  NO_RETURN: the probe hung, or the handover failed"; exit 8; }
 

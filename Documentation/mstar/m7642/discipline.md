@@ -122,6 +122,13 @@
 2. `/data/local/tmp/rec.head.bin` 的 md5 是厂值（见 confirmed-facts §D）。若不是 ⟹ 厂值回滚已失效。
 3. `misc` 的 BCB 不是 `boot-recovery`。
 
+**跳厂内核之前必须把 `x0..x5` 还给 mboot 的值（尤其 `x2`）。**
+
+代价：2026-11-22 09:0x，code1 的 eMMC 探针改用 C 之后连续挂死 6 次。根因：C 按 ABI 可以
+随意用 `x0..x18`，而厂内核入口会把 **`w2`** 存进 `boot_args[2]`；纯汇编桩恰好没碰。
+判据是「凡是 C 路径就挂、凡是汇编就过」。规则：任何要跳厂内核的桩，入口保存
+`x0..x5`、交接前恢复（`x3/x4` 清 0、`sp` 回 0）。
+
 **「进了 recovery」只能用 misc 标记证明，`ro.boot.bootreason` 不算。**
 
 代价：2026-11-22 08:03 的一发 ctl 报「Android 起来了」，stash 却是 dtb 残渣——事后查是

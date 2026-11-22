@@ -1379,3 +1379,28 @@ adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie;
 **信任 mboot 的控制器状态、不重做 init**；探针留在置位的 `EMMC_ACTIVE`/`SD_EN` 和改过的
 DMA 目标地址很可能是挂因。新 md5：setup `d2d5fcf9263704acda1deae8a9f15a00`、
 emmc `8d5dd03356029548c6aba05f62514d64`。先跑 emmc；若仍挂，再用 setup 二分。
+
+**2026-11-22 10:00 突破：CMD17 读通道成立。**
+
+**根因（实测 + 对照）**：**C 代码把 `x0..x5` 冲掉了**，而厂内核入口（`+0xFA0000`）会把它
+拿到的 **`w2` 存进自己的 `boot_args[2]`**（`str w2, [0x20281010]`）。纯汇编桩从不碰
+`x0..x5`，所以所有汇编诊断（ctl / regs / wr1 / wt1–5 / clk / cpa / cpb）**全部回来**；
+凡是经过 C 代码的镜像（setup / 全量 / cpath）**全部挂死** —— 正是这条相关性把根因指出来。
+
+修法：`emmc_read.S` 入口先把 `x0..x5` 存到 `0x230aff00`，交接前恢复 `x0/x1/x2/x5`，
+`x3/x4` 仍清 0（ramdisk），`sp` 回 0。
+
+实测（`~/kbuild/m7642-out/m7642-rec-73-emmc.img`，md5 `9f071ae8ff512a1843396e8849633531`）：
+
+| 项 | 读数 |
+|---|---|
+| 心跳 rc | `0` |
+| R1 | `0x00000900` ⟹ CURRENT_STATE=4（TRAN）、READY_FOR_DATA=1、错误位 0 |
+| SD_STATUS | `0xff00`（DAT0..7 全高、无错误） |
+| 读到的 512 B | 与内核 `dd if=/dev/block/mmcblk0 bs=512 count=1` **逐字节相同**（两边 md5 `ce6a9730267a632b99ef9f16ee532031`） |
+
+注：LBA 0 的内容不是 MBR/GPT（510 处不是 `0xaa55`），内核读出来也是同一份 —— 不影响
+「读通道成立」这个结论；它只说明这块 eMMC 的分区表不在用户区 LBA 0（待查，与主线无关）。
+
+**⟹ 只读 LBA 0 的 CMD17 在 code1（mboot 交接态、MMU/Cache 关）按 18 步序列跑通了。**
+写路径（CMD24/CMD25）仍未做，继续冻结。
