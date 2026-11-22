@@ -29,7 +29,7 @@ typedef unsigned long long u64;
 #define R_BLK_SIZE       0x09   /* block size in bytes (512)                         */
 #define R_CMD_RSP_SIZE   0x0A   /* bits[5:0] response bytes, bits[13:8] command bytes*/
 #define R_SD_MODE        0x0B   /* bit0 CLK_EN, bits[2:1] width, bit4 CIFD/R2N      */
-#define R_SD_CTRL        0x0C   /* bit1 RSP_EN, bit2 CMD_EN, bit3 DAT_EN, bit6 START */
+#define R_SD_CTRL        0x0C   /* bit1 RSP_EN bit2 CMD_EN bit3 DAT_EN bit4 DAT_DIR_W(!) bit5 ADMA_EN bit6 START bit9 ERR_DET_ON */
 #define R_SD_STATUS      0x0D   /* bits[5:0] error flags (W1C), bit6 card busy       */
 #define R_DMA_ADDR_47_32 0x29   /* MIU_DMA_ADDR_47_32                                */
 #define R_RST            0x3F   /* bit0 SOFT_RST_n (active low); never touched here  */
@@ -47,6 +47,10 @@ typedef unsigned long long u64;
 
 #define CTL_READ     0x020E     /* ERR_DET_ON|DAT_EN|CMD_EN|RSP_EN                    */
 #define CTL_START    0x0040     /* BIT_JOB_START                                      */
+/* CMD24 is a TWO-STAGE job (vendor: eMMC_hal_v5.c:3475 / :3572).  Writing one
+ * 0x020E-style value with DAT_EN set is not something the vendor ever does. */
+#define CTL_WR_CMD   0x0006     /* command stage: CMD_EN|RSP_EN                       */
+#define CTL_WR_DAT   0x0218     /* data stage: DAT_EN|DAT_DIR_W|ERR_DET_ON            */
 
 #define FUNC_EMMC_ACTIVE 0x1000
 #define FUNC_SD_EN       0x0002
@@ -117,7 +121,7 @@ static inline int wait_mask(u64 base, unsigned idx, u16 mask, u64 us)
 
 /* ---- entry points ----------------------------------------------------- */
 int fcie_read_block(u64 fcie_base, u32 lba, u64 dst_pa, u64 *diag);
-int fcie_write_block(u64 fcie_base, u32 lba, u64 src_pa, u16 ctl, u64 *diag);
+int fcie_write_block(u64 fcie_base, u32 lba, u64 src_pa, u64 *diag);
 int fcie_write_probe(u64 fcie_base, u32 lba, u64 buf_pa, u64 *diag);
 
 #endif /* FCIE_REGS_H */

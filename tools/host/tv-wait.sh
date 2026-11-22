@@ -1,68 +1,70 @@
 #!/bin/bash
-# Wait for Android, and if it does not come up, press the IR power key and wait
-# again -- no human, no unplugging.
+# tv-wait.sh [timeout_s] [--no-ir]
 #
-# A hung image leaves this TV in standby (measured repeatedly on 2026-11-22).
-# Recovery is a single IR POWER press: standby -> Android in ~25 s.  That is
-# fully scriptable, so every runner can recover itself.
+# Wait for Android after pushing a test image, and recover from a hang.
 #
-#   tv-wait.sh [timeout_s] [--no-ir] [--probe-first]
+# Timing budget, measured rather than guessed: when a checkpoint returns, the
+# handover boots Android in 8-12 s; when it hangs, Android never appears and the
+# box sits on the boot logo until someone presses POWER.  So waiting minutes
+# before the first IR press buys nothing.  The axis is inverted here: we wait
+# only ~35 s, then press, then wait 60 s, press again, wait 60 s.
 #
-# Exit 0 = Android is up; 1 = still not up after the recovery attempt.
-# Prints one line saying how it went, so the caller can record "this run hung".
-set -u
+# Exit 0 = up (the "returned" or "(after IR)" suffix says which), 1 = down.
+HERE=$(cd "$(dirname "$0")" && pwd)
 ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 TV=192.168.10.60:5555
-HERE=$(cd "$(dirname "$0")" && pwd)
 
-TIMEOUT=300
-IR=1
-PROBE_FIRST=0
+TIMEOUT=60; IR=1
 for a in "$@"; do
 	case "$a" in
 	--no-ir) IR=0 ;;
-	--probe-first) PROBE_FIRST=1 ;;
 	''|*[!0-9]*) ;;
 	*) TIMEOUT=$a ;;
 	esac
 done
 
-ready(){ $ADB connect $TV >/dev/null 2>&1; \
-	[ "$($ADB -s $TV exec-out su -c 'getprop sys.boot_completed' 2>/dev/null | tr -d '\r')" = 1 ]; }
-pingable(){ ping -c1 -W1 "${TV%%:*}" >/dev/null 2>&1; }
+# Cheap probe first: `get-state` is ~50 ms, while `exec-out su -c` is ~1.5 s and
+# would dominate a 1 s poll.  No su needed for getprop.
+ready(){
+	local st
+	st=$($ADB -s "$TV" get-state 2>/dev/null)
+	if [ "$st" != device ]; then
+		$ADB connect "$TV" >/dev/null 2>&1
+		st=$($ADB -s "$TV" get-state 2>/dev/null)
+	fi
+	[ "$st" = device ] || return 1
+	[ "$($ADB -s "$TV" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]
+}
 
-# A recovering device may be reachable for adb long before boot_completed.
-wait_up(){	# wait_up <seconds>; 0 if up
-	local n=$(( $1 / 3 ))
-	while [ $n -gt 0 ]; do
+poll(){	# poll <seconds>: 0 as soon as Android answers
+	local end=$(( $(date +%s) + $1 ))
+	while [ "$(date +%s)" -lt "$end" ]; do
 		ready && return 0
-		sleep 3
-		n=$(( n - 1 ))
+		sleep 1
 	done
 	return 1
 }
 
-T0=$(date +%s)
-if wait_up "$TIMEOUT"; then
-	echo "  android_up=yes ($(( $(date +%s) - T0 ))s)"
-	exit 0
-fi
+press(){ "$HERE/tvpower.sh" on >/dev/null 2>&1 || echo "  !! IR send failed"; }
 
-# not up: either the image hung (device in standby) or the boot is just slow
-if [ "$IR" = 1 ]; then
-	if pingable && ! $ADB connect $TV >/dev/null 2>&1; then
-		echo "  not up, but the box answers ping -- waiting a bit longer before IR"
-		wait_up 120 && { echo "  android_up=yes ($(( $(date +%s) - T0 ))s, late)"; exit 0; }
-	fi
-	echo "  HUNG (no Android after $(( $(date +%s) - T0 ))s) -> IR power key"
-	"$HERE/tvpower.sh" on >/dev/null 2>&1 || echo "  !! IR send failed"
-	if wait_up 240; then
-		echo "  android_up=yes after IR ($(( $(date +%s) - T0 ))s total)  [this run hung]"
-		exit 0
-	fi
-	echo "  STILL DOWN after IR ($(( $(date +%s) - T0 ))s) -- needs a physical power cycle"
+T0=$(date +%s); el(){ echo $(( $(date +%s) - T0 )); }
+
+if [ "$IR" = 1 ] && [ "$TIMEOUT" -gt 35 ]; then PRE=35; else PRE=$TIMEOUT; fi
+
+if poll "$PRE"; then echo "  android_up=yes ($(el)s)"; exit 0; fi
+
+if [ "$IR" = 0 ]; then
+	echo "  NO_RETURN ($(el)s, IR recovery disabled)"
 	exit 1
 fi
 
-echo "  NO_RETURN ($(( $(date +%s) - T0 ))s, IR recovery disabled)"
+echo "  no Android after $(el)s -> POWER"
+press
+if poll 60; then echo "  android_up=after IR ($(el)s total)  [this run HUNG]"; exit 0; fi
+
+echo "  still down at $(el)s -> POWER again"
+press
+if poll 60; then echo "  android_up=after 2nd IR ($(el)s total)  [this run HUNG]"; exit 0; fi
+
+echo "  STILL DOWN ($(el)s) -- needs a physical power cycle"
 exit 1

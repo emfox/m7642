@@ -450,3 +450,38 @@ eMMC 这件事有两**条完全不同的路线**，经常被混着说，这里�
 
 卡在 `setup_arch` 的二分只需要 3 发，用不到写路径；等出现"区间大、失败密集"再跑
 `run-write.sh`（那一步会真的写 eMMC，第一次做，建议你看着）。
+
+### 11.5 静态审查结论（2026-11-22 16:0x，子代理审计 + 已修）
+
+**最重要的发现：厂源码里 eMMC 主机驱动根本没缺失**（旧说法作废）。位置与关键值：
+
+| 事实 | 出处 |
+|---|---|
+| 方向位 = `BIT_SD_DAT_DIR_W` = **BIT4** | `drv/mmc/inc/config/eMMC_reg_v5.h:291` |
+| `SD_CTRL` 各位：BIT1 RSP_EN、BIT2 CMD_EN、BIT3 DAT_EN、**BIT4 DAT_DIR_W**、BIT5 **ADMA_EN**、BIT6 JOB_START、BIT9 ERR_DET_ON | 同上 `:285-296` |
+| CMD17 = `CMD_EN|RSP_EN|DAT_EN|ERR_DET_ON` = **0x020E** | `eMMC_hal_v5.c:2507` |
+| **CMD24 命令段** = `CMD_EN|RSP_EN` = **0x0006** | `eMMC_hal_v5.c:3475` |
+| **CMD24 数据段** = `DAT_EN|DIR_W|ERR_DET_ON` = **0x0218** | `eMMC_hal_v5.c:3572` |
+| 另一个驱动同样写法 | `mstar_mci_v5.c:1138`（写）/ `:791`（读） |
+
+⟹ **写是两段式 job，不是"读路径加一位"**。全树 25 处 `SD_CTRL` 写入，**没有一处**把
+`CMD_EN|RSP_EN` 与 `DAT_EN` 组合在一起 ⟹ 原先"枚举 7 个候选"的思路整体废弃。
+
+已按此重写并修掉审计出的三个 P0：
+
+| # | 问题 | 修法 |
+|---|---|---|
+| 1 | 候选表落进 `.rodata`，而 `objcopy --only-section=.text` 把它截掉 ⟹ 运行时读**镜像外**内存当 `SD_CTRL` | 候选表**整个删除**（两段式不需要枚举）；`build-write.sh` 仍加 `--only-section=.rodata` + `nm -u`/`readelf -r` 自检 |
+| 2 | `run-write.sh` 缺 `reboot recovery` ⟹ 桩不执行却照样读到一份旧记录 ⟹ **假阳性"写成功"** | 补 `reboot recovery; sleep 10`；判读改成 python 解析并**校验 magic/tag/长度** |
+| 3 | 桩没保存/恢复 `x0..x5` ⟹ 厂内核拿到错 boot_args ⟹ 不起 Android ⟹ 白跑 | 照 `emmc_read.S` 存到 `0x230AFF00`、交接前恢复 |
+| 附 | `0x022E`（ADMA_EN）会把 512 B 图案当描述符链 ⟹ 不可控 DMA | 随候选表一起删除 |
+| 附 | 收尾少清 `R_EVENT`、`FUNC_CTL`/`SD_MODE` 顺序与读路径相反 | 改成与读路径逐条一致 |
+| 附 | 超时分支不填 `diag` ⟹ 最可能的 0xE4/0xE6 时记录全空 | 统一走 `out:` 填 diag |
+| 附 | `diag` 放在 `sp-128`，与 C 帧的 `stp x19,x20` 槽位重叠 | 移到固定地址 `0x230AFC00` |
+
+**离线验证**：两段式重写后 `fcie_write.o` 1856 B、**零 `.rodata`**；整链 `emmc_write.elf`
+2992 B、`nm -u` 无未定义符号、`readelf -r` 无运行时重定位；镜像 `cd1391ad…`。
+读路径回归：重构共享头后镜像 md5 仍为 `9f071ae8…`（未变）。
+
+**还没做的**：真上机。`run-write.sh` 已加分区 size 边界检查（不再只信"+0x80000 是死区"），
+且**每次必须换一个 LBA**（一次 `E_VERIFY` 会把那块写成 0xA5 图案）。
