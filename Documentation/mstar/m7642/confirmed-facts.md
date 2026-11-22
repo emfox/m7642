@@ -1261,6 +1261,7 @@ adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie;
    `ctl`（code1 只写记录+交接，完全不碰 eMMC）md5 `097140f576ef6e34b467b66ced09ab59`、
    `regs`（code1 只读 34 个 FCIE + 2 个 PLL 寄存器，不写不发命令）md5
    `a2e76b787061b803c56bccc96686c973`。顺序：ctl → regs → 全量 CMD17。
+   → **已上机，结论见 §32.8**（读安全、写就挂）。
 2. `eMMC_translate_DMA_address_Ex` 的 >4 GB 分支：反汇编里的阈值常数是 `0xFFFFFFFE`，
    而源码是 `dma > MSTAR_MIU1_BUS_BASE_H`（`0x300000000`），两者对不上；那一支的加法
    常数也看不出自洽的物理含义。说明**跑着的二进制与本地源码在这一段不一致**（其余函数
@@ -1335,3 +1336,46 @@ adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie;
 3. 再跑 `emap`、`prsw`、`skmain`，把「到达」推进到 `start_kernel`；每一步失败只置信一个 bit。
 4. 若 `prsw`/`skmain` 到达而 `start_kernel` 之后仍挂，再按 `setup_arch`（0x463830）→ `early_init_dt_verify` → `parse_early_param` 二分。
 5. eMMC(FCIE) 那条线不变（§32），`probes/fcie/fcie_read.c` 仍未上机。
+
+#### 32.8 code1 实测：能读、不能写（2026-11-22 08:0x–08:2x）
+
+用「code1 + 交接」的四级探针在设备上实测（每级都先用 misc 末尾标记确认真的进了 recovery）：
+
+| 级别 | 做什么 | 结果 |
+|---|---|---|
+| ctl `097140f5…` | 只写记录 + 交接，**完全不碰 eMMC** | **REACHED**：stash `M764`/`STEP`、x30=`0x20280008`，Android 正常起 |
+| regs `a2e76b78…` | **只读** 34 个 FCIE + 2 个 PLL | **RETURNED**：34+2 值全部读出（见下表） |
+| setup `32897a40…`（旧版，未还原） | 写 `FUNC_CTL`/`SD_MODE`/清事件/DMA 设置，**不发命令** | **NO_RETURN**（507 s，设备挂死） |
+| emmc `34de6ec5…`（旧版，未还原） | 全量 CMD17 | **NO_RETURN**（489 s，设备挂死） |
+
+⟹ **读安全，写就挂**。要么写本身把 CPU 卡住，要么写后的状态让厂内核起不来。
+
+**code1 寄存器实测**（regs 镜像读回；mboot 刚用完 eMMC、还没交权的状态）：
+
+| idx | 名称 | code1 值 | Android 空闲（§32.2） |
+|---|---|---|---|
+| 00 | `MIE_EVENT` | **`0003`** | `0000`（DMA_END\|CMD_END 残留） |
+| 03/04 | `MIU_DMA_ADDR` | `4ac0`/`094b`（MIU `0x094b4ac0`） | `0x01639680` |
+| 05 | `MIU_DMA_LEN_15_0` | `0200` | `0010` |
+| 07 | `MIE_FUNC_CTL` | **`0001`** | `0002` |
+| 0b | `SD_MODE` | `0004` | `0004`（8 bit、时钟关） |
+| 0c | `SD_CTRL` | `000e` | `0006` |
+| 0d | `SD_STATUS` | **`ff00`** | `ff00`（DAT0..7 全高、无错误） |
+| 17/18 | `WR/RD_SBIT_TIMER` | `0000` | `82fb`（驱动 init 才写） |
+| 37 | `BOOT` | `0a00` | `8a00` |
+| 39 | `EMMC_DEBUG_BUS1` | `1000` | `3000` |
+| 其余 24 个 | — | 与 Android 空闲相同（含 PLL `0035`/`00ff`） | — |
+
+⟹ code1 时**卡是 idle/ready**（DAT0 高、无错误）、控制器 8 bit、时钟关、块 512 —— 环境没问题。
+
+**一次假阳性（08:03，记下来）**：同一发 ctl 报「Android 起来了但 stash 是 dtb 残渣」。
+事后查：`adb reboot recovery` **没生效**（走了 `bootcmd`），而 `ro.boot.bootreason` 仍显示
+`recovery`（reason 串会被下一次启动继承）。⟹ **bootreason 不能当「进了 recovery」的证据**；
+用 **misc 末尾标记法**：往 misc 末尾写 4 KB `0xA5`，`recoverycmd` 的第一条
+`mmc erase.p misc` 会擦掉它 —— 标记消失才算真进了 recovery。四张探针镜像都用它验过。
+
+**下一发（已就绪，等断电）**：`setup` 与 `emmc` 都加了「进出原样保存/还原
+`FUNC_CTL` / `SD_MODE` / `SD_CTRL` / `DMA_ADDR`」。厂内核靠 `RESERVED_FOR_SW=3`
+**信任 mboot 的控制器状态、不重做 init**；探针留在置位的 `EMMC_ACTIVE`/`SD_EN` 和改过的
+DMA 目标地址很可能是挂因。新 md5：setup `d2d5fcf9263704acda1deae8a9f15a00`、
+emmc `8d5dd03356029548c6aba05f62514d64`。先跑 emmc；若仍挂，再用 setup 二分。

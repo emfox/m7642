@@ -157,6 +157,7 @@ int fcie_read_block(u64 fcie_base, u32 lba, u64 dst_pa, u64 *diag)
 {
 	u64 miu;
 	u16 mode, ev = 0, st = 0, w0, w1, w2;
+	u16 save_ctl, save_mode, save_sdctrl, save_dl, save_dh, save_d47;
 	u32 r1;
 	int rc;
 
@@ -170,6 +171,16 @@ int fcie_read_block(u64 fcie_base, u32 lba, u64 dst_pa, u64 *diag)
 	/* Never touch the controller if the NAND path owns it (mboot leaves 0). */
 	if (frd(fcie_base, R_NC_FUN_CTL) & 1)
 		return E_NC;
+
+	/* Remember what mboot left behind: the factory kernel trusts this
+	 * state (RESERVED_FOR_SW == 3 means "already initialised"), so it must
+	 * be restored before the handover. */
+	save_ctl    = frd(fcie_base, R_FUNC_CTL);
+	save_mode   = frd(fcie_base, R_SD_MODE);
+	save_sdctrl = frd(fcie_base, R_SD_CTRL);
+	save_dl     = frd(fcie_base, R_DMA_ADDR_L);
+	save_dh     = frd(fcie_base, R_DMA_ADDR_H);
+	save_d47    = frd(fcie_base, R_DMA_ADDR_47_32);
 
 	/* Take the block out of the driver's "idle" state: the driver clears
 	 * SD_MODE.bit0 (clock output) at the end of every command. */
@@ -293,12 +304,18 @@ out:
 		diag[2] = ev;
 		diag[3] = miu;
 	}
-	/* Leave the controller as we found it: drop any armed job (a timed-out
-	 * command or DMA must not stay pending across the handover), clear the
-	 * events and turn the clock off. */
-	fwr(fcie_base, R_SD_CTRL, 0);
+	/* Put the controller back exactly as mboot left it: drop any armed job
+	 * (a timed-out command or DMA must not stay pending across the
+	 * handover), restore the DMA target and the control registers, and
+	 * clear the events.  A factory kernel that skips its own init because
+	 * of the RESERVED_FOR_SW handshake must find the state it expects. */
+	fwr(fcie_base, R_SD_CTRL, save_sdctrl);
+	fwr(fcie_base, R_DMA_ADDR_L, save_dl);
+	fwr(fcie_base, R_DMA_ADDR_H, save_dh);
+	fwr(fcie_base, R_DMA_ADDR_47_32, save_d47);
 	fwr(fcie_base, R_EVENT, EV_ALL_CARD);
-	fwr(fcie_base, R_SD_MODE, frd(fcie_base, R_SD_MODE) & ~0x0001);
+	fwr(fcie_base, R_FUNC_CTL, save_ctl);
+	fwr(fcie_base, R_SD_MODE, save_mode);
 	return rc;
 
 out_timeout:

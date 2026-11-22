@@ -101,8 +101,21 @@ md5sum ~/kbuild/m7642-out/m7642-rec-73-emmc.img      # a4479e336f3b4b4ac7fa5ca1a
 |---|---|---|
 | `m7642-rec-73-ctl.img` | `097140f576ef6e34b467b66ced09ab59` | code1 只写记录 + 交接，**完全不碰 eMMC**（对照：证明这套镜像布局的交接没问题） |
 | `m7642-rec-73-regs.img` | `a2e76b787061b803c56bccc96686c973` | code1 **只读** 34 个 FCIE + 2 个 PLL 寄存器（不写、不发命令），存到 `0x23090000 + idx*4` / `0x23090400`，标记在 `0x23090800` |
-| `m7642-rec-73-setup.img` | `32897a40ccf8b08de2e1e2b7a4d02c59` | code1 **只做寄存器设置**（`-DFCIE_STAGE=1`：到 `CMD_RSP_SIZE` 就返回，不写 SD_MODE/FIFO、不写 SD_CTRL、不起 DMA），心跳照写 |
-| `m7642-rec-73-emmc.img` | `a4479e336f3b4b4ac7fa5ca1aad46887` | 全量 CMD17 |
+| `m7642-rec-73-setup.img` | `d2d5fcf9263704acda1deae8a9f15a00` | code1 **只做寄存器设置**（`-DFCIE_STAGE=1`：到 `CMD_RSP_SIZE` 就返回，不写 SD_MODE/FIFO、不写 SD_CTRL、不起 DMA），心跳照写 |
+| `m7642-rec-73-emmc.img` | `8d5dd03356029548c6aba05f62514d64` | 全量 CMD17 |
+
+2026-11-22 08:0x 的实测结果（详见 confirmed-facts §32.8）：
+
+| 级别 | 结果 |
+|---|---|
+| ctl | **REACHED**（stash `M764`/`STEP`，x30=`0x20280008`）── code1 的「记录 + 交接」成立 |
+| regs | **RETURNED**：34+2 个寄存器全部读出；code1 时 `SD_STATUS=0xff00`（DAT0..7 高、无错误）、`SD_MODE=0x0004`（8 bit、时钟关）、`FUNC_CTL=0x0001` |
+| setup | **NO_RETURN**（507 s）── 写就挂 |
+| emmc | **NO_RETURN**（489 s）── 写就挂 |
+
+⟹ 读安全、写不安全。已在 `fcie_read.c` 加「进出原样保存/还原
+`FUNC_CTL`/`SD_MODE`/`SD_CTRL`/`DMA_ADDR`」（厂内核靠 `RESERVED_FOR_SW=3` 信任 mboot 的
+控制器状态、不重做 init），setup/emmc 两张镜像因此重建。先跑 emmc；仍挂再跑 setup 二分。
 
 ```sh
 cd ~/Debian/m7642/probes/fcie
