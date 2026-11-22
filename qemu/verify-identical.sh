@@ -27,6 +27,9 @@ fi
 ORIG=src/tramp-v1-pinned.S
 BIN=$REPO/probes/handoff/tramp-postmmu.bin
 V2SRC=src/tramp-v2.S
+STUB=src/abort-stub-v3.S
+V4SRC=src/tramp-v4.S
+STUBBIN=$REPO/probes/handoff/abort-postmmu.bin
 SYSMAP=${SYSMAP:-/home/emfox/Debian/m7642-build/kernel/linux-main/System.map}
 KADDR=${KADDR:-0x20280000}
 WORK=gen/ident
@@ -71,7 +74,21 @@ echo "== 3. committed production blob =="
 md5sum "$BIN"
 
 echo
-echo "== 4. bench v2 copy vs the blob committed right now =="
+echo "== 4. handover stub (v3) with its #ifndef defaults =="
+if [ -f "$STUB" ]; then
+    build "$STUB" stub-copy
+    md5sum "$STUBBIN"
+fi
+
+echo
+echo "== 5. v4 copy (world split) vs the blob committed right now =="
+if [ -f "$V4SRC" ]; then
+    build "$V4SRC" v4-copy
+    md5sum "$BIN"
+fi
+
+echo
+echo "== 6. bench v2 copy vs the blob committed right now =="
 if [ -f "$V2SRC" ]; then
     build "$V2SRC" v2-copy
     md5sum "$BIN"
@@ -85,6 +102,27 @@ if [ "$st" = "$sb" ]; then
     echo "OK: bench copy of v1 builds to exactly the pinned v1 source"
 else
     echo "MISMATCH: bench v1 copy differs from src/tramp-v1-pinned.S"; exit 1
+fi
+if [ -f "$WORK/stub-copy.bin" ]; then
+    s3=$(md5sum "$WORK/stub-copy.bin" | cut -d' ' -f1)
+    sp3=$(md5sum "$STUBBIN" | cut -d' ' -f1)
+    if [ "$s3" = "$sp3" ]; then
+        echo "OK: bench stub copy builds to exactly probes/handoff/abort-postmmu.bin"
+        echo "    (TV constants: record 0x23080000, staged 0x30000800 -> 0x20280000,"
+        echo "     0x12d4a00 bytes, entry 0x21220000, and it is the blob the chain runs)"
+    else
+        echo "NOTE: the repo stub has changed since src/abort-stub-v3.S was pinned"
+        echo "      pinned: $s3"; echo "      repo:   $sp3"
+    fi
+fi
+if [ -f "$WORK/v4-copy.bin" ]; then
+    s4=$(md5sum "$WORK/v4-copy.bin" | cut -d' ' -f1)
+    if [ "$s4" = "$sp" ]; then
+        echo "OK: bench v4 copy builds to exactly probes/handoff/tramp-postmmu.bin"
+    else
+        echo "NOTE: the repo tramp has changed again since src/tramp-v4.S was pinned"
+        echo "      pinned v4: $s4"; echo "      repo blob: $sp"
+    fi
 fi
 if [ -f "$WORK/v2-copy.bin" ]; then
     s2=$(md5sum "$WORK/v2-copy.bin" | cut -d' ' -f1)

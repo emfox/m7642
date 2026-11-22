@@ -90,6 +90,10 @@ boot_main:
 	bl	zero_page
 	LQ	x9, L1T0_PA
 	bl	zero_page
+#if T0SZ16
+	LQ	x9, L0T0_PA
+	bl	zero_page
+#endif
 	LQ	x9, ZEROT_PA
 	bl	zero_page
 
@@ -100,10 +104,12 @@ boot_main:
 	LQ	x11, KIMAGE_L1_OFF
 	str	x10, [x9, x11]
 
-	/* kimage L2 entry = 2 MB block, executable at EL1 */
+	/* kimage L2 entry = 2 MB block, executable at EL1 (read-only when the
+	 * TABLE_RO variant asks for it, so that a write through the image map
+	 * faults the way it would on a real kernel with .rodata protected) */
 	LQ	x9, L2K_PA
 	LQ	x10, KIMAGE_BLOCK_PA
-	LQ	x11, DESC_KERNEL
+	LQ	x11, DESC_KIMAGE
 	orr	x10, x10, x11
 	LQ	x11, KIMAGE_L2_OFF
 	str	x10, [x9, x11]
@@ -140,10 +146,24 @@ boot_main:
 	/* ---- 3. MAIR / TCR / TTBR / VBAR, then MMU on ------------------- */
 	LQ	x9, MAIR_VAL
 	msr	mair_el1, x9
+#if T0SZ16
+	/* 48-bit VA, four levels, TTBR0 rooted at L0 -- the layout the TV kernel
+	 * has, and the one the tramp's T0SZ rewrite is written for */
+	LQ	x9, TCR_VAL_T0SZ16
+	msr	tcr_el1, x9
+	LQ	x9, L0T0_PA			/* L0[..] -> L1T0 */
+	LQ	x10, L1T0_PA
+	orr	x10, x10, #3			/* table descriptor */
+	LQ	x11, IDMAP_L0_OFF
+	str	x10, [x9, x11]
+	dsb	sy
+	msr	ttbr0_el1, x9
+#else
 	LQ	x9, TCR_VAL
 	msr	tcr_el1, x9
 	LQ	x9, L1T0_PA
 	msr	ttbr0_el1, x9
+#endif
 	LQ	x9, L1T_PA
 	msr	ttbr1_el1, x9
 	LQ	x9, IMAGE_BASE
@@ -280,7 +300,21 @@ boot_main:
 	PH	s_x5, x13
 	SH_PUTS	s_nl
 
-	/* ---- 6. enter the tramp at its kernel VA ------------------------ */
+	/* ---- 6. sentinels in the identity-table page --------------------
+	 * The v4 tramp must NOT touch this page when the kernel's identity map
+	 * is still alive (world (a)); in world (b) it installs its block
+	 * descriptor at offset 0 and zeroes the rest.  Written through the
+	 * linear map, which is valid in both scenarios. */
+	LQ	x10, TABLE_PA
+	LQ	x11, LIN
+	add	x10, x10, x11
+	LQ	x12, SENTINEL_A
+	str	x12, [x10]
+	LQ	x13, SENTINEL_OFF
+	str	x12, [x10, x13]
+	dsb	sy
+
+	/* ---- 7. enter the tramp at its kernel VA ------------------------ */
 	LQ	x0, 0xa0a0a0a0a0a0a0a0
 	LQ	x1, 0xa1a1a1a1a1a1a1a1
 	LQ	x2, 0xa2a2a2a2a2a2a2a2

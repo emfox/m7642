@@ -47,10 +47,19 @@
 #define PRIMARY_ENTRY_PA 0x206d5038
 #endif
 #ifndef TABLE_PA
-#define TABLE_PA 0x206d8000		/* reserved_pg_dir: inside the image */
+#define TABLE_PA 0x20601000		/* a page inside .bss of the image */
 #endif
 #ifndef TABLE_VA
-#define TABLE_VA 0xffffffc080458000	/* ... and writable via its link VA */
+#define TABLE_VA 0xffffffc080601000	/* ... always mapped RW, so safe to write
+					 * in any mapping regime.  We never return
+					 * to the kernel, so clobbering it is fine;
+					 * reserved_pg_dir was a poor choice because
+					 * whether .rodata is already read-only at a
+					 * given checkpoint cannot be assumed. */
+#endif
+#ifndef IDMAP_PROBE_PA
+#define IDMAP_PROBE_PA 0x20280000	/* _text's PA: inside the init idmap
+					 * iff that identity map still exists */
 #endif
 #ifndef HANDOVER_PA
 #define HANDOVER_PA 0x21680200
@@ -62,8 +71,40 @@ _start:
 	mov	x5, xzr			/* MMU off: physical addressing */
 	b	1f
 
+	/* Pinned: the checkpoint patch is "bl Image+0x36c010", so this entry must
+	 * stay at blob offset 0x10.  (It silently drifted to 0x8 once when _start
+	 * grew to two instructions, and every checkpoint then jumped into _start's
+	 * branch -- skipping the AT probe and running with the wrong x5.  Two runs
+	 * were lost to that.  build-postmmu.sh now asserts this offset.) */
+	.org	0x10
 	.globl	_start_kva
 _start_kva:
+	/* Two worlds, and they need different code:
+	 *
+	 *  a) the kernel's identity map is still installed (everything before
+	 *     cpu_uninstall_idmap()).  Then the proven path works: hop to our
+	 *     physical alias, clear the MMU there, jump to the stub.  No page
+	 *     tables, no TCR games -- this is the path f1/ps1z/skmainz used.
+	 *  b) it is gone.  A physical address is no longer an address, so we
+	 *     stay at the kernel VA and build our own identity map.
+	 *
+	 * Ask the MMU which world we are in instead of assuming: translate a
+	 * physical address that lies inside the init idmap.  F=0 means the
+	 * identity map answered, i.e. world (a). */
+	movz	x16, #(IDMAP_PROBE_PA & 0xffff)
+	movk	x16, #((IDMAP_PROBE_PA >> 16) & 0xffff), lsl #16
+	at	s1e1r, x16
+	mrs	x17, par_el1
+	tbnz	x17, #0, 5f		/* F=1 -> no identity map */
+	adr	x16, 1f			/* world (a): run at the physical alias */
+	movz	x17, #(KIMAGE_OFFSET & 0xffff)
+	movk	x17, #((KIMAGE_OFFSET >> 16) & 0xffff), lsl #16
+	movk	x17, #((KIMAGE_OFFSET >> 32) & 0xffff), lsl #32
+	movk	x17, #((KIMAGE_OFFSET >> 48) & 0xffff), lsl #48
+	sub	x16, x16, x17
+	mov	x5, xzr			/* physical addressing from here */
+	br	x16
+5:					/* world (b): keep the kernel VA */
 	movz	x5, #(KIMAGE_OFFSET & 0xffff)
 	movk	x5, #((KIMAGE_OFFSET >> 16) & 0xffff), lsl #16
 	movk	x5, #((KIMAGE_OFFSET >> 32) & 0xffff), lsl #32

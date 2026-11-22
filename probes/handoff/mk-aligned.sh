@@ -28,7 +28,7 @@ KADDR=$KADDR ./build-postmmu.sh >/dev/null
 
 python3 ../../tools/host/mk-mainline-abort.py \
 	--image "$IMAGE" --kernel-addr $KADDR --stub-at $STUB_AT \
-	--patch "0x4=0x36c0c0" --patch "$OFF=0x36c000" \
+	--patch "0x4=0x36c0c0" --patch "$OFF=$TRAMP_PA_ENTRY" \
 	--stub abort-postmmu.bin --tramp tramp-postmmu.bin --tramp-at 0x36c000 \
 	"$@" \
 	--out "$OUT/m7642-rec-73-$TAG.img"
