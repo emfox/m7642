@@ -15,15 +15,30 @@
 	.org	0x200
 	.globl	handover_phys
 handover_phys:
+	/* The tramp may enter here with the MMU still on (it installs a 1 GB
+	 * identity block just before jumping, so this physical address is
+	 * addressable).  Clear M/C/I now that we are identity-mapped and never
+	 * come back: from here on everything is plain physical addressing, which
+	 * is the state mboot hands the factory kernel. */
+	cbz	x5, 9f
+	mrs	x16, sctlr_el1
+	bic	x16, x16, #1
+	bic	x16, x16, #4
+	bic	x16, x16, #0x1000
+	msr	sctlr_el1, x16
+	isb
+	mov	x5, xzr
+9:
 	movz	x6, #0x2308
 	lsl	x6, x6, #16		/* 0x23080000 */
+	add	x6, x6, x5
 	movz	w7, #0x374d
 	movk	w7, #0x3436, lsl #16	/* "M764" */
 	str	w7, [x6]
 	movz	w7, #0x4d4d
 	movk	w7, #0x554d, lsl #16	/* "MMMU" */
 	str	w7, [x6, #4]
-	mov	w7, #0x70
+	mov	w7, #0x90
 	str	w7, [x6, #8]
 	str	wzr, [x6, #12]
 	str	x30, [x6, #16]
@@ -36,13 +51,18 @@ handover_phys:
 	str	x24, [x6, #88]
 	str	x25, [x6, #96]
 	str	x26, [x6, #104]
+	str	x27, [x6, #112]		/* kimage = VA - PA (measured with AT) */
+	str	x28, [x6, #120]		/* memstart_addr */
+	str	x29, [x6, #128]		/* lin = PAGE_OFFSET - memstart_addr */
 	dsb	sy
 
 	movz	x6, #0x3000
 	lsl	x6, x6, #16
 	add	x6, x6, #0x800		/* staged factory kernel */
+	add	x6, x6, x5
 	movz	x7, #0x2028
 	lsl	x7, x7, #16		/* runtime image base */
+	add	x7, x7, x5
 	movz	x8, #0x4a00
 	movk	x8, #0x012d, lsl #16	/* 0x12d4a00 bytes */
 1:
@@ -56,4 +76,5 @@ handover_phys:
 	mov	w4, wzr
 	movz	x9, #0x2122
 	lsl	x9, x9, #16		/* factory entry 0x21220000 */
+	add	x9, x9, x5
 	br	x9
