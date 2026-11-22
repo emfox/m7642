@@ -21,6 +21,7 @@ handover_phys:
 	 * come back: from here on everything is plain physical addressing, which
 	 * is the state mboot hands the factory kernel. */
 	mrs	x16, sctlr_el1
+	mov	x27, x16		/* keep the kernel's own SCTLR for the record */
 	tbz	x16, #0, 9f		/* M == 0 -> the MMU is already off */
 				/* (test the hardware, not a value we passed in:
 				 * trusting a register once put us here with the MMU
@@ -40,7 +41,7 @@ handover_phys:
 	movz	w7, #0x4d4d
 	movk	w7, #0x554d, lsl #16	/* "MMMU" */
 	str	w7, [x6, #4]
-	mov	w7, #0x90
+	mov	w7, #0xB0
 	str	w7, [x6, #8]
 	str	wzr, [x6, #12]
 	str	x30, [x6, #16]
@@ -53,9 +54,25 @@ handover_phys:
 	str	x24, [x6, #88]
 	str	x25, [x6, #96]
 	str	x26, [x6, #104]
-	str	x27, [x6, #112]		/* kimage = VA - PA (measured with AT) */
-	str	x28, [x6, #120]		/* memstart_addr */
-	str	x29, [x6, #128]		/* lin = PAGE_OFFSET - memstart_addr */
+	str	x27, [x6, #112]		/* SCTLR_EL1 as the kernel had it */
+	/* Hardware identity.  Read on the TV and in QEMU so that we can say how
+	 * faithful the emulation is for the parts we exercise (page tables and
+	 * cache maintenance depend on CTR/TCR/MAIR, not on the core's marketing
+	 * name).  These need no MMU, so they are safe here. */
+	mrs	x17, midr_el1
+	str	x17, [x6, #120]
+	mrs	x17, ctr_el0
+	str	x17, [x6, #128]
+	mrs	x17, revidr_el1
+	str	x17, [x6, #136]
+	mrs	x17, tcr_el1
+	str	x17, [x6, #144]
+	mrs	x17, mair_el1
+	str	x17, [x6, #152]
+	mrs	x17, id_aa64mmfr0_el1
+	str	x17, [x6, #160]
+	mrs	x17, mpidr_el1
+	str	x17, [x6, #168]
 	dsb	sy
 
 	movz	x6, #0x3000
