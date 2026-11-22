@@ -6,8 +6,8 @@ K=/home/emfox/Debian/m7642-build
 T=/home/emfox/Debian/m7642/tools/host/envtool.py
 NEW='mmc erase.p misc; mmc read.p 0x23000000 dtb 0x00100000; mmc read.p 0x25000000 recovery 0x02000000; wdt_enable 10; bootm 0x25000000'
 
-cp "$K/env-write.bin" "$K/env-before-recprobe.bin"
-python3 - "$K/env-write.bin" "$NEW" "$K/env-rec.bin" "$T" <<'PY'
+cp "$K/diag/env-write.bin" "$K/diag/env-before-recprobe.bin"
+python3 - "$K/diag/env-write.bin" "$NEW" "$K/diag/env-rec.bin" "$T" <<'PY'
 import hashlib, subprocess, sys
 src, new, out, tool = sys.argv[1:5]
 d = open(src, 'rb').read()
