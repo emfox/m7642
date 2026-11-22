@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Emfox Zhou <emfox@debian.org>
 Date: Tue, 17 Nov 2026 16:38:19 +0800
-Subject: [PATCH 1/8] usb: ehci: support controllers with split 32-bit
+Subject: [PATCH 1/9] usb: ehci: support controllers with split 32-bit
  registers
 
 Some SoCs do not decode 32-bit EHCI registers.  Every register is instead

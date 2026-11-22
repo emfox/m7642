@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: m7642 <m7642@local>
+Date: Mon, 23 Nov 2026 00:37:36 +0800
+Subject: [PATCH 9/9] arm64: mstar: note that the built-in DTB needs "make
+ dtbs" first
+
+m7642-dtb.S .incbin's the compiled board DTB, so it has to exist before the
+kernel is linked.  A kbuild prerequisite was tried and dropped: the dtc rules
+live in the dts sub-make, so a prerequisite declared here is "no rule to make
+target".  Clean out-of-tree builds therefore need: make dtbs Image
+---
+ arch/arm64/kernel/Makefile | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index b4268f2ef..2cfff51d6 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -90,5 +90,10 @@ endif
+ 
+ obj-$(CONFIG_MSTAR_M7642_BUILTIN_DTB)	+= m7642-dtb.o
+ 
++# m7642-dtb.S .incbin's the compiled board DTB, so `make dtbs` has to run before
++# the kernel is linked -- build with "make dtbs Image".  A kbuild dependency was
++# tried and dropped: the dtc rules live in the dts sub-make, so a prerequisite
++# here is "no rule to make target" (2026-11-23).
++
+ # for cleaning
+ subdir- += vdso vdso32

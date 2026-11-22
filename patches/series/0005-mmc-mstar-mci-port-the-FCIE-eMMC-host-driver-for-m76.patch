@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: m7642 <m7642@local>
 Date: Mon, 23 Nov 2026 00:25:05 +0800
-Subject: [PATCH 5/8] mmc: mstar-mci: port the FCIE eMMC host driver for m7642
+Subject: [PATCH 5/9] mmc: mstar-mci: port the FCIE eMMC host driver for m7642
 
 Not described by patches/000x -- this is the driver brought over from the
 vendor 4.9 tree during the eMMC work.  See Documentation/mstar/m7642/emmc.md.

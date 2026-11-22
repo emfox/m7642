@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: m7642 <m7642@local>
 Date: Mon, 23 Nov 2026 00:25:05 +0800
-Subject: [PATCH 6/8] arm64: dts: mstar: update the m7642 trees to what is
+Subject: [PATCH 6/9] arm64: dts: mstar: update the m7642 trees to what is
  actually running
 
 patches/0003 was generated before these edits, so replaying the series produced
