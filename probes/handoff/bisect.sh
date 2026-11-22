@@ -16,24 +16,30 @@ TV=192.168.10.60:5555
 OUT=$HOME/Debian/m7642-build/out
 rc_all=0
 
+specs=()
 while read -r off tag md5; do
 	[ -n "${off:-}" ] || continue
+	specs+=("$off $tag $md5")
+done
+
+for spec in "${specs[@]}"; do
+	set -- $spec; off=$1; tag=$2; md5=$3
 	img=$OUT/m7642-rec-73-$tag.img
 	[ -f "$img" ] || { echo "MISSING $img"; rc_all=1; break; }
 
 	# device must be up before we can push
 	for i in $(seq 1 40); do
-		$ADB connect $TV >/dev/null 2>&1
-		[ "$($ADB -s $TV shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] && break
+		$ADB </dev/null connect $TV >/dev/null 2>&1
+		[ "$($ADB </dev/null -s $TV shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] && break
 		sleep 2
 	done
 
-	$ADB -s $TV push "$img" /data/local/tmp/t.img >/dev/null 2>&1 || { echo "PUSH_FAIL $tag"; rc_all=1; break; }
-	got=$($ADB -s $TV exec-out su -c "dd if=/data/local/tmp/t.img of=/dev/block/by-name/recovery bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/recovery" | tr -d '\r' | cut -d' ' -f1)
+	$ADB </dev/null -s $TV push "$img" /data/local/tmp/t.img >/dev/null 2>&1 || { echo "PUSH_FAIL $tag"; rc_all=1; break; }
+	got=$($ADB </dev/null -s $TV exec-out su -c "dd if=/data/local/tmp/t.img of=/dev/block/by-name/recovery bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/recovery" | tr -d '\r' | cut -d' ' -f1)
 	[ "$got" = "$md5" ] || { echo "SLOT_MISMATCH $tag ($got)"; rc_all=1; break; }
-	$ADB -s $TV exec-out su -c "dd if=/data/local/tmp/mark.bin of=/dev/block/by-name/misc bs=512 seek=16376 count=8 2>/dev/null; sync" >/dev/null 2>&1
+	$ADB </dev/null -s $TV exec-out su -c "dd if=/data/local/tmp/mark.bin of=/dev/block/by-name/misc bs=512 seek=16376 count=8 2>/dev/null; sync" >/dev/null 2>&1
 
-	$ADB -s $TV reboot recovery >/dev/null 2>&1
+	$ADB </dev/null -s $TV reboot recovery >/dev/null 2>&1
 	sleep 10
 	line=$(timeout 300 "$D/../../tools/host/tv-wait.sh" 35 2>&1 | tr '\n' ' ')
 	printf "%-6s %-8s %s\n" "$tag" "$off" "$line"
@@ -41,13 +47,13 @@ while read -r off tag md5; do
 	case "$line" in
 	*"[$]this run HUNG"*|*"this run HUNG"*|*NO_RETURN*|*STILL\ DOWN*)
 		# hung: report whatever is in the record and stop
-		$ADB -s $TV exec-out su -c "/vendor/bin/busybox rmmod probeRW 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/probeRW.ko addr=0x23080000 len=32 op=r; rmmod probeRW; /vendor/bin/busybox cat /data/local/tmp/probeRW.out" 2>/dev/null | tr -d '\r' | grep '^0000' | head -2
+		$ADB </dev/null -s $TV exec-out su -c "/vendor/bin/busybox rmmod probeRW 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/probeRW.ko addr=0x23080000 len=32 op=r; rmmod probeRW; /vendor/bin/busybox cat /data/local/tmp/probeRW.out" 2>/dev/null | tr -d '\r' | grep '^0000' | head -2
 		echo "STOP: $tag hung -> upper bound is $off"
 		break
 		;;
 	*)
 		# returned: pull the record for the report
-		$ADB -s $TV exec-out su -c "/vendor/bin/busybox rmmod probeRW 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/probeRW.ko addr=0x23080000 len=32 op=r; rmmod probeRW; /vendor/bin/busybox cat /data/local/tmp/probeRW.out" 2>/dev/null | tr -d '\r' | grep '^0000' | head -2 | sed 's/^/       /'
+		$ADB </dev/null -s $TV exec-out su -c "/vendor/bin/busybox rmmod probeRW 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/probeRW.ko addr=0x23080000 len=32 op=r; rmmod probeRW; /vendor/bin/busybox cat /data/local/tmp/probeRW.out" 2>/dev/null | tr -d '\r' | grep '^0000' | head -2 | sed 's/^/       /'
 		;;
 	esac
 done
