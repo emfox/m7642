@@ -87,11 +87,14 @@ probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-rung-0x465e80.img <md
   ~/Debian/m7642/probes/fcie/check-dump.sh /tmp/fcie.out
   # 2) CMD17：code1 处读 LBA 0，与内核 dd 的同一扇区逐字节对比
   cd ~/Debian/m7642/probes/fcie
-  ./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 34de6ec5cf68799ae41f0d85b598f004
+  ./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 12c117c1b0b642e7aec1bdfd97d75282
   ```
 
   判据：心跳 `rc=0` + `R1` 的 CURRENT_STATE=4/READY_FOR_DATA=1 + 512 B 与 `dd` 一致。
   只读 LBA 0；挂住 = 一次物理断电（boot 槽是厂值，卡只被读过）。
+  **2026-11-22 07:43 全量 CMD17 第一次上机 NO_RETURN**，所以改成先跑两张诊断：
+  `ctl`（不碰 eMMC，只记录+交接）`097140f5…`、`regs`（只读 34+2 个寄存器）`a2e76b78…`；
+  命令见 `probes/fcie/README.md` 的「第一次上机」小节。等待已改成 CNTPCT + 2e9 迭代双上限。
 - **写路径（CMD24/CMD25）继续冻结**：`probes/fcie` 里没有任何写 eMMC 的代码，也不加。
 
 ## 6. 今天（11-22 凌晨）的账

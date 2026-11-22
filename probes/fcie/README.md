@@ -80,16 +80,37 @@ adb exec-out su -c "cat /data/local/tmp/fcie.out" > /tmp/fcie.out
 ```sh
 cd ~/Debian/m7642/probes/fcie
 ./build-boot.sh
-md5sum ~/kbuild/m7642-out/m7642-rec-73-emmc.img      # 34de6ec5cf68799ae41f0d85b598f004
-./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 34de6ec5cf68799ae41f0d85b598f004
+md5sum ~/kbuild/m7642-out/m7642-rec-73-emmc.img      # 12c117c1b0b642e7aec1bdfd97d75282
+./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 12c117c1b0b642e7aec1bdfd97d75282
 ```
 
 `run-cmd17.sh` 起 Android 后读三处，并和内核自己
 `dd if=/dev/block/mmcblk0 bs=512 count=1` **逐字节对比** —— 一致才算 CMD17 读通道成立。
 
 仍然只读：`LBA=0`，没有任何 CMD24/CMD25/CMD38。失败码在原来的 0xE1–0xE8 之外多了
-**0xE9**（事件位 1 s 内没清掉）。**探测器挂住 = 一次物理断电**（boot 槽是厂值，
-断电后正常起 Android；卡只被读过，不会坏）。
+**0xE9**（事件位 1 s 内没清掉）。所有等待都是**双上限**（`CNTPCT` 截止 + 2e9 次迭代
+`SPIN_CAP`）：即使系统计数器停走，也只是返回错误码而不是静默死等。
+**探测器挂住 = 一次物理断电**（boot 槽是厂值，断电后正常起 Android；卡只被读过，不会坏）。
+
+### 2026-11-22 07:43 第一次上机：NO_RETURN
+
+489 s 无 Android、设备挂死（需物理断电）。失败是盲的，所以先跑两张更小的诊断镜像：
+
+| 镜像 | md5 | 做什么 |
+|---|---|---|
+| `m7642-rec-73-ctl.img` | `097140f576ef6e34b467b66ced09ab59` | code1 只写记录 + 交接，**完全不碰 eMMC**（对照：证明这套镜像布局的交接没问题） |
+| `m7642-rec-73-regs.img` | `a2e76b787061b803c56bccc96686c973` | code1 **只读** 34 个 FCIE + 2 个 PLL 寄存器（不写、不发命令），存到 `0x23090000 + idx*4` / `0x23090400`，标记在 `0x23090800` |
+
+```sh
+cd ~/Debian/m7642/probes/fcie
+./build-extra.sh                                   # 重建 ctl + regs
+~/Debian/m7642/probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-ctl.img 097140f576ef6e34b467b66ced09ab59 0x4
+./run-regs.sh ~/kbuild/m7642-out/m7642-rec-73-regs.img a2e76b787061b803c56bccc96686c973
+```
+
+判读：ctl 回来 ⟹ 交接没问题；regs 回来 ⟹ code1 能安全读 FCIE（并把 mboot 刚用完
+eMMC 时的寄存器状态带回来）；两者都回来而全量 CMD17 仍挂 ⟹ 挂点在写寄存器 / 命令 /
+DMA 这一段，再按 §32.3 的 18 步逐段切。
 
 成功后的判据（三档）：
 

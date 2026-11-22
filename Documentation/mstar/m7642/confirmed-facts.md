@@ -1254,7 +1254,13 @@ adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie;
    数据落 `0x23080000`、心跳 `0x23080FE0`、记录 `0x23090000`，然后交接厂内核。
    镜像 `m7642-rec-73-emmc.img` md5 `34de6ec5cf68799ae41f0d85b598f004`；
    `probes/fcie/run-cmd17.sh` 会把读到的 512 B 与内核 `dd` 的 LBA 0 逐字节对比。
-   **仍未上机**（设备等一次物理断电）。
+   **2026-11-22 07:43 第一次上机：NO_RETURN**（489 s 无 Android，设备挂死、需物理断电）。
+   失败是盲的，因此把探针里所有等待改成**双上限**（CNTPCT 截止 + 2e9 次迭代 `SPIN_CAP`），
+   这样即使系统计数器停走也只是返回错误码而不是静默死等；全量镜像 md5 改为
+   `12c117c1b0b642e7aec1bdfd97d75282`。另做两张更小的诊断镜像：
+   `ctl`（code1 只写记录+交接，完全不碰 eMMC）md5 `097140f576ef6e34b467b66ced09ab59`、
+   `regs`（code1 只读 34 个 FCIE + 2 个 PLL 寄存器，不写不发命令）md5
+   `a2e76b787061b803c56bccc96686c973`。顺序：ctl → regs → 全量 CMD17。
 2. `eMMC_translate_DMA_address_Ex` 的 >4 GB 分支：反汇编里的阈值常数是 `0xFFFFFFFE`，
    而源码是 `dma > MSTAR_MIU1_BUS_BASE_H`（`0x300000000`），两者对不上；那一支的加法
    常数也看不出自洽的物理含义。说明**跑着的二进制与本地源码在这一段不一致**（其余函数
