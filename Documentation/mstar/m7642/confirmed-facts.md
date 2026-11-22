@@ -1501,6 +1501,20 @@ emmc `8d5dd03356029548c6aba05f62514d64`。先跑 emmc；若仍挂，再用 setup
 
 ⟹ **镜像确实只是源码 + Image 的确定性函数**，删掉不损失信息；有 md5 就能判定重建是否等价。
 
+**可复验性锚点**（有了这三项，任何一张镜像都能重算出文档里的 md5）：
+
+| 锚点 | 值 |
+|---|---|
+| `kernel/linux-main/arch/arm64/boot/Image` | 6,238,720 B · md5 **`18f7ed3c290050be3102d8665636ea27`** |
+| 工具链 | `toolchain/gcc13/bin/aarch64-buildroot-linux-gnu-*`（buildroot GCC 13.3） |
+| 构建入口 | `probes/handoff/{build-postmmu,mk-postmmu-images,mk-emap-images,mk-kva-images}.sh`、`probes/fcie/{build-extra,build-stage,build-boot}.sh` |
+| 容器来源 | `backups/partitions/rec/recovery_full.bin`（厂值 recovery 全槽） |
+
+**所以 `out/` 只留在办的那几张**（2026-11-22 12:0x 起）：`kva4`/`kva5`/`kva6`。
+其余 31 张（含 4 张作废的 `kva`/`kva1`/`kva2`/`kva3`）全部删除——它们对应的
+问题都已经回答过，md5 留在本文件里，需要时一条命令重建。
+换内核后 Image 的 md5 会变，那时重建出来的镜像 md5 也会变，**这是预期行为**。
+
 附带两张补记：
 - `m7642-rec-73-cmin.img`（md5 `b84c7384a4899bd6eb16cb62def6f719`）：C 路径的最小对照
   （只调一个返回 `0x42` 的 C 函数），用来把「C 代码本身能不能在 code1 跑」和

@@ -38,7 +38,7 @@
 | `kernel/linux-main/` | **7.3 编译树**（Linux 7.3.0） | 只用于编译，不在这里写文档；DTS 权威副本在它下面 |
 | `kernel/mstar-4.9/` | 厂内核 **4.9.118 源码**（`drivers/mstar2/` 在里面） | 驱动移植的参照实现；**探针模块就靠它编**（自带 `scripts/mod/modpost` 与 `Module.symvers`） |
 | `toolchain/gcc13/` | 交叉工具链 `aarch64-buildroot-linux-gnu-*` | `objdump` / `gcc` / `ld`；2018.11 那套老工具链已删（只有 4.19 需要它） |
-| `out/` | 上机镜像（`m7642-rec-73-*.img`） | 历史镜像已清；用 `probes/*/build-*.sh` 随时重建 |
+| `out/` | 上机镜像 | **只留在办的**（当前 kva4/5/6）。镜像 = 源码 + Image 的确定性函数，md5 全部记在 `confirmed-facts.md` §34.1，重建后可对账 |
 | `build/fcie-build/` | FCIE 裸机 blob 的中间产物 | |
 | `backups/` | **救砖与回滚**：`fix/V8-T652T03-LF1V147.bin`（3.0 GB 原厂包）、`fix/rescue-fast.bin`（唯一能修 boot 的 47 MB 包）、`rescue/`、`partitions/`（boot/recovery/misc/dtb/tvconfig）、`partitions/rec/` | 只读，勿删 |
 | `diag/` | env 快照、dmesg、厂内核 config、`live.dtb`、`mboot-guide.pdf` | |
