@@ -1,6 +1,8 @@
 # 内核补丁集（m7642 / Linux 7.3）
 
-**基线**：上游 `v7.3`，commit `c03c1a14507dfaf8b856c2608f9ac216021fc222`（`Linux 7.3`）。
+**基线**：上游稳定版 `v7.3.5`，commit `753f54c32085b30df045344d0bae91433864dd96`（`Linux 7.3.5`）。
+取法：`git fetch --depth 1 stable refs/tags/v7.3.5`（stable 树在 `gregkh/linux` 或
+`git.kernel.org/.../stable/linux.git`，**不在** torvalds/linux 里；直连要走本机代理 7890）。
 取上游源码：`cdn.kernel.org` 的 `linux-7.3.tar.xz`，或 `git fetch --depth 1 ... refs/tags/v7.3`（见
 `~/Debian/m7642-build/kernel/README-git.md`，注意 git 直连要走本机代理 7890）。
 
@@ -48,3 +50,12 @@ git fetch ~/Debian/m7642/patches/kernel-m7642.bundle "refs/*:refs/remotes/bundle
 2026-11-23 之前这里只有 4 个手工 patch，**与实际树不一致**：缺整个 eMMC 驱动、head.S 信标插桩、
 DTS 后续修改，且 0004 已无法干净应用。现由内核 git 树（分支 `m7642`）用
 `git format-patch v7.3-import..HEAD` 重新生成并验证。
+
+## 升级记录
+
+| 日期 | 基线 | 结果 |
+|---|---|---|
+| 2026-11-22 | `v7.3` c03c1a145 | 9 个补丁重放零差异 |
+| 2026-11-23 | **`v7.3.5` 753f54c3** | **9 个补丁重放零冲突、零差异**；构建通过；函数地址整体位移（`setup_arch` +8、`__primary_switched` +0x14、符号 +21 个），**函数内相对偏移不变** |
+
+升级后偏移由 `tools/host/ckpt.py` 按"符号+delta"重新解析，不再有任何手工写死的偏移。
