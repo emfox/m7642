@@ -192,3 +192,15 @@ bring-up beacon 要经线性映射写），不要拿它们当构建源。
 
 ⚠️ **纪律**：Android 运行态按电源 = 待机 = PM51 切电 = 硬断电。脚本默认拒绝，必须显式 `--force`。
 救砖流程（按住机身键 + 插电 ≤15 s）IR 做不了，仍要人。
+
+### build 布局（2026-11-23 更新）
+
+内核源码已 **git 化**：`~/Debian/m7642-build/kernel/linux-git`，分支 `m7642-7.3.5`
+（基线 `753f54c3` Linux 7.3.5），9 个提交就是我们的全部改动。当前构建树
+`~/Debian/m7642-build/kernel/linux-735-out`。详见 `~/Debian/m7642-build/kernel/README-git.md`。
+
+**`linux-main`（旧的 7.3 构建树）暂不退役**：它是唯一被真机验证过的构建
+（`Image` md5 `18f7ed3c290050be3102d8665636ea27`）。**等 7.3.5 的真机实测通过后再退役。**
+
+镜像偏移不再手工维护：检查点写成 `<符号>+<delta>`，由 `tools/host/ckpt.py` 按 System.map 解析
+（7.3 → 7.3.5 实测：函数地址整体位移，但函数内相对偏移不变）。`mk-zfix.sh` 接受名字。
