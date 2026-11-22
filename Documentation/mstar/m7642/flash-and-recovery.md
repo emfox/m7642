@@ -472,7 +472,7 @@ pm list packages                 projengmenu + fdroid 都在
 |---|---|
 | 产物 | `~/Debian/m7642-build/backups/fix/rescue-fast.bin` |
 | 大小 / md5 | 47,263,776 B / `7e8ef7a725e163672af7fb824b066abc` |
-| 生成工具 | `~/Debian/m7642-build/backups/mkrescue.py` |
+| 生成工具 | `tools/host/rescue/make-rescue-bin.sh`（配 `mkbin.py`） |
 | 覆盖 | p6 misc（擦）、p12 dtb、p7 recovery、p8 boot、`bootcmd`/`recoverycmd`/`WDT_ENABLE` |
 | 不覆盖 | system / vendor / userdata / optee / tvservice / factory_a |
 | 尾部 | `crc32(header)=0xc773300f`，常量 `0xb74aabba`，`hdr[:16]` 一致 |
