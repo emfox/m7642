@@ -1456,3 +1456,30 @@ emmc `8d5dd03356029548c6aba05f62514d64`。先跑 emmc；若仍挂，再用 setup
 
 构建：`probes/handoff/mk-emap-images.sh`。运行：`probes/handoff/run-postmmu.sh <img> <md5> <tag>`。
 顺序 mk1 → mk6：第一个「不回来」的档就是卡点；它前一档（回来的）是最后确认的边界。
+
+**2026-11-22 10:2x 续（mk / ps 阶梯）**：
+
+| 检查点 | 偏移 | 结果 | 记录 x30 |
+|---|---|---|---|
+| mk1 | `0x465a94`（`bl __memset`） | 回来 | `0x206e5a98` |
+| mk2 | `0x465ab8`（`bl __pi_init_feature_override`） | 回来 | `0x206e5abc` |
+| mk3 | `0x465c14`（`bl idmap_cpu_replace_ttbr1`） | 回来 | `0x206e5c18` |
+| mk4 | `0x465c1c`（`bl __pi_relocate_kernel`） | 回来 | `0x206e5c20` |
+| mk5 | `0x465ca4`（第二次 `bl idmap_cpu_replace_ttbr1`） | 回来 | `0x206e5ca8` |
+| mk6 | `0x465cbc`（尾声 `ldp x27,x28`） | 回来 | `0x206e5cc0` |
+| ps0 | `0x4555b0`（`__primary_switch` 的 `br x8`） | 回来 | `0x206d55b4` |
+| ps1 | `0x468060`（`__primary_switched+4`，`bti c` 之后） | **不回来**（533 s） | — |
+
+⟹ `__pi_early_map_kernel` **从头到尾都执行完了**（连尾声都到了），`__primary_switch` 也执行到
+`br x8`；卡点在**「`br x8` 跳进内核 VA → 执行 `__primary_switched` 第一条」**这一小段。
+
+**已排除/待判**：
+- `ldr x8` 的字面量（`0x4555c0`）在镜像里是 **0**，靠 `R_AARCH64_RELATIVE`
+  （addend `-0x3f7fb97fa4` ⟹ `0xffffffc08046805c`）在 `relocate_kernel` 里填 —— 即
+  `br x8` 的目标就是 `__primary_switched` 的内核 VA。
+- 所有**成功**的检查点走的都是 tramp 的 **PA 入口**；两个失败的（prsw/ps1）走的是
+  **内核 VA 入口**。所以嫌疑只剩两类：(a) 该时刻内核 VA 的页表/权限不可用；(b) tramp 的
+  KVA 入口路径本身有问题。
+- 判别镜像 **`m7642-rec-73-kva.img`**（md5 `3b220ef4e31cc357c65f08a547021732`）：在
+  `0x4555b0` 处用自定义桩记录 `x8`，并**用内核 VA 读** `_text`、目标页、tramp 页
+  （`0x23090000[0..3]`）。它挂 ⟹ 内核 VA 读不了（(a)）；它回来 ⟹ 看读到什么再定 (b)。

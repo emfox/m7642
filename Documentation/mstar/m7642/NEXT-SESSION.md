@@ -24,6 +24,13 @@ NEXT-SESSION 上一版 A 的三张镜像**按原样不可能回来**：桩在 `I
 - 下一批镜像 `mk1`..`mk6`（函数体内 6 个调用点）已构建，md5 与偏移见
   confirmed-facts §34。顺序 mk1→mk6，第一个不回来的就是卡点。
   设备当前挂死（prsw 那一发），**先物理拔插**，再跑：
+- **2026-11-22 10:2x 续**：`mk1..mk6`（函数体内 6 个调用点）**全部回来** ⟹
+  `__pi_early_map_kernel` 执行完；`ps0`(`0x4555b0`，`br x8`) 回来、`ps1`(`0x468060`) 不回来
+  ⟹ 卡点是 **`br x8` 跳内核 VA / `__primary_switched` 第一条**。
+  判别镜像 `kva`(`3b220ef4e31cc357c65f08a547021732`) 在 `0x4555b0` 记录 `x8` 并用内核 VA
+  读 `_text`/目标页/tramp 页。**设备当前挂死，先拔插**，然后：
+  `./run-postmmu.sh ~/kbuild/m7642-out/m7642-rec-73-kva.img 3b220ef4e31cc357c65f08a547021732 kva`
+
 
   ```bash
   cd ~/Debian/m7642/probes/handoff
