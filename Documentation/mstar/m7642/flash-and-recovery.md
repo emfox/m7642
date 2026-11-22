@@ -712,7 +712,7 @@ python3 tools/host/pkgcheck.py <pkg.bin>
 23:13     用户：按电源 → logo 3 秒 → 回待机；拔电 15 s 后重试，同样
 ```
 
-目的本是用 soft reset 验 DDR 跨复位保留（`wdt-beacon.md` §十 §7 那条未验证前提），
+目的本是用 soft reset 验 DDR 跨复位保留（`wdt-beacon.md` §三 §7 那条未验证前提），
 结果直接复现了已知病灶。
 
 **为什么 `sysrq b` 能一击致命**：它走 `machine_restart`，不 umount、不等写缓存落盘；

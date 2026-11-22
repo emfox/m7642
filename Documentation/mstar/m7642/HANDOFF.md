@@ -411,7 +411,7 @@ md5 `7e8ef7a7…`），但这一类指令（`movz/movk/str/dsb`）实测能返�
 
 - 落点：`0x23080000`–`0x230F0000` 八页（每页 64 B 记录），读法 `probeRW op=r`。
 - `x0=0` `x1=0x1c` `x2=0x20200100` `x3=0` `x4=0` `x5=0x9dcc10d4` `sp=0`（实测；含义待确认）。
-- 详见 `confirmed-facts.md` §I、`wdt-beacon.md` §十六。
+- 详见 `confirmed-facts.md` §I、`wdt-beacon.md` §四。
 
 ### 12.4 下一步（唯一关键门）
 
@@ -426,7 +426,7 @@ recovery 槽 + stash 写 + b . + wdt_enable 10   → 狗咬回来 → 读 8 页
 
 ### 12.5 今天被证明无效的文档结论（已就地标注）
 
-- `wdt-beacon.md` §十二.1「改过的 recovery 镜像没有被 mboot 执行」——**作废**。
-- `wdt-beacon.md` §十四.6 的标记 `M764`——实际是 `M746`。
+- `wdt-beacon.md` §一「改过的 recovery 镜像没有被 mboot 执行」——**作废**。
+- `wdt-beacon.md` §四.6 的标记 `M764`——实际是 `M746`。
 - §8.1 的「必须先 disable `/system/etc/install-recovery.sh`」——路径是 `/system/bin/`；
   且不动它反而更好：每次 Android 启动自动把槽还原厂值。

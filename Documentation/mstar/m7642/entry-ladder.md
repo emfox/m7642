@@ -153,7 +153,7 @@ Android 正常起来后：
 > 正确的分类是 **soft reset（WDT / panic）保留 DDR**、`adb reboot` 不保留（`confirmed-facts.md` §G）。
 > ⟹ 标记通道**仍然可行**，但要用 WDT 复位去验，且**优先改用 ramoops 签名**
 > （`0x42300000` + `sig=0x43474244`，pstore 自动导出成 `/sys/fs/pstore/console-ramoops`，
-> 不用 `probeRW`）。见 `wdt-beacon.md` §十。
+> 不用 `probeRW`）。见 `wdt-beacon.md` §三。
 > 🔴 唯一保留的硬结论：`0x20100000` 是 **mboot 的活动代码区**（写进去的字节重启后变 ARM 指令），
 > **绝对不要碰**。
 

@@ -94,7 +94,7 @@ mboot/GPU 竞争（谁最后写赢随机），项目在 2026-11-18 就把判据�
 10. **有可用的探针读数通道了**（2026-11-21）：boot 槽 `code1` 探针写普通 DDR
     （`0x23080000`–`0x230F0000` 八页，每条 64 B）然后返回 `0xFA0000`，Android 起来后
     `probeRW op=r` 直读。不依赖屏幕 / pstore / DDR 跨复位。见 `confirmed-facts.md` §I、
-    `wdt-beacon.md` §十六。切 `0x419c0000`（ramoops）会挂——那块从没被写成过。
+    `wdt-beacon.md` §四。切 `0x419c0000`（ramoops）会挂——那块从没被写成过。
 
 ## 在线实验纪律
 
