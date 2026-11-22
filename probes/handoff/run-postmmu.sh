@@ -10,6 +10,7 @@
 set -u
 ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 TV=192.168.10.60:5555
+D=$(cd "$(dirname "$0")" && pwd)
 IMG=$1; IMD5=$2; TAG=$3
 root(){ $ADB -s $TV exec-out su -c "$1"; }
 ready(){ $ADB connect $TV >/dev/null 2>&1; [ "$(root 'getprop sys.boot_completed' 2>/dev/null | tr -d '\r')" = 1 ]; }
@@ -23,10 +24,11 @@ o=$(root "dd if=/data/local/tmp/f.img of=/dev/block/by-name/recovery bs=4096 2>/
 
 t0=$(date +%s); echo "=== $TAG $(date +%H:%M:%S) slot ok"
 $ADB -s $TV reboot recovery; sleep 12
-ok=""
-for i in $(seq 1 60); do ready && { ok=1; break; }; sleep 5; done
-echo "  android_up=${ok:-no} ($(( $(date +%s) - t0 ))s)"
-[ -n "$ok" ] || { echo "  NO_RETURN: checkpoint not reached, or the handover failed"; exit 8; }
+# Wait, and if the image hung, press the IR power key and keep waiting.
+# A hang is itself data: the record (if any) is what we are after.
+W=$(WAITSECS=300; echo ${WAITSECS:-300})
+"$D/../../tools/host/tv-wait.sh" "$W" || {
+	echo "  NO_RETURN: checkpoint not reached (device did not come back)"; exit 8; }
 
 page(){  # $1 addr, $2 outfile
 	root "/vendor/bin/busybox rmmod probeRW 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/probeRW.ko addr=$1 len=128 op=r; rmmod probeRW; /vendor/bin/busybox cat /data/local/tmp/probeRW.out" | tr -d '\r' > "$2"

@@ -22,12 +22,18 @@
    `0x4557F0`（`wait_linear_map_split_to_ptes`/`scondary_cpu_wait`）与
    `0x4554D8`（`secondary_holding_pen`）最可疑：从核被 mboot 停在**厂内核**地址上，
    永远到不了 7.3 的同步点 ⟹ 主核在 `wfe` 里无限等，**不产生异常**。
-3. **最可能的真正根因**：dtb 的 `enable-method`（`psci` / `spin-table`）与
-   `cpu-release-addr` 与 7.3 的期望不一致。**这一项宿主侧就能查，先查它。**
+3. ~~最可能的真正根因：dtb 的 `enable-method` / `cpu-release-addr` 与 7.3 不一致~~
+   **——已排除（2026-11-21 23:43 实测）**：`/cpus` 根本没有 `enable-method`，各 CPU 是
+   自旋表式 `cpu-release-addr = <0 0x100510>`；而 **SMP 初始化在 `start_kernel` 之后**，
+   与我们这个早期卡点无关。不要再查这一项。
 4. 2026-11-22 新增的边界约束：`Image+0x4555b0`（`br x8`）**能回**，
    `Image+0x468060`（`__primary_switched+4`）**不能回** ⟹ 空转点在 `br x8` 之后。
    注意 `ps0`/`mk*` 那类能回的点都走 tramp 的 **PA 入口**，不能回的两个都走**内核 VA 入口**，
    所以"KVA 入口本身是否可用"仍未排除（`kva6` 是为这个建的，零访存，安全）。
+
+**新会话第 0 步**：跑 `tools/host/session-start.sh`（可选带关键词）。它会打印最近提交、
+上面这块结论、树里已有的探针清单，以及**上一个会话最后几条用户消息**——信息全在
+`~/.dsh/sessions/` 的原始对话记录里，`zstdcat <dir>/session.v4.jsonl.zstd | less` 可查全文。
 
 **规矩**：设计新探针之前，先 `grep` 一遍 `probes/` 和 `confirmed-facts.md`——
 这个仓库里已经躺着 27 个 `.S` 探针，重复造轮子等于重复付代价。

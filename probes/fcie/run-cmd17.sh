@@ -23,10 +23,9 @@ o=$(root "dd if=/data/local/tmp/e.img of=/dev/block/by-name/recovery bs=4096 2>/
 
 t0=$(date +%s); echo "=== cmd17 $(date +%H:%M:%S) slot ok"
 $ADB -s $TV reboot recovery; sleep 12
-ok=""
-for i in $(seq 1 $(( ${WAITSECS:-300} / 5 ))); do ready && { ok=1; break; }; sleep 5; done
-echo "  android_up=${ok:-no} ($(( $(date +%s) - t0 ))s)"
-[ -n "$ok" ] || { echo "  NO_RETURN: the probe hung, or the handover failed"; exit 8; }
+# wait, and press the IR power key if the image hung (see tools/host/tv-wait.sh)
+"$(dirname "$0")/../../tools/host/tv-wait.sh" "${WAITSECS:-300}" || {
+	echo "  NO_RETURN: the probe hung and did not come back"; exit 8; }
 
 probe(){
 	root "/vendor/bin/busybox rmmod probeRW 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/probeRW.ko addr=$1 len=$2 op=r; rmmod probeRW; /vendor/bin/busybox cat /data/local/tmp/probeRW.out" | tr -d '\r'

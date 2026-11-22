@@ -14,10 +14,8 @@ o=$(root "dd if=/data/local/tmp/w.img of=/dev/block/by-name/recovery bs=4096 2>/
 [ "$o" = "$IMD5" ] || { echo "SKIP: slot mismatch ($o)"; exit 9; }
 t0=$(date +%s); echo "=== wr1 $(date +%H:%M:%S) slot ok"
 $ADB -s $TV reboot recovery; sleep 12
-ok=""
-for i in $(seq 1 60); do ready && { ok=1; break; }; sleep 5; done
-echo "  android_up=${ok:-no} ($(( $(date +%s) - t0 ))s)"
-[ -n "$ok" ] || { echo "  NO_RETURN: a plain 16-bit FCIE write hung the CPU"; exit 8; }
+"$(dirname "$0")/../../tools/host/tv-wait.sh" 300 || { echo "  NO_RETURN"; exit 8; }
+
 probe(){ root "/vendor/bin/busybox rmmod probeRW 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/probeRW.ko addr=$1 len=$2 op=r; rmmod probeRW; /vendor/bin/busybox cat /data/local/tmp/probeRW.out" | tr -d '\r'; }
 probe 0x23090000 16 > /tmp/wr1-vals.txt
 probe 0x23090800 16 > /tmp/wr1-mark.txt
