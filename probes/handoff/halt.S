@@ -1,11 +1,12 @@
 /*
  * halt.S -- write a record, then spin forever.  Deliberately hangs.
  *
- * Purpose: prove the harness, not the kernel.  If recoverycmd is armed with
- * `wdt_enable 10`, a hang here must be followed by a watchdog warm reset and an
- * automatic return to Android in ~20-40 s -- no power key, no unplug.  The
- * record written *before* the spin must survive in DDR and be readable
- * afterwards with probeRW.
+ * Purpose: produce a hang, so the recovery path can be exercised.
+ *
+ * 2026-11-22: `wdt_enable` does NOT bite (see confirmed-facts.md §34.13 -- four
+ * paths measured), so a hang here is NOT recovered automatically: the TV stays
+ * on with the logo up and needs the power plug pulled.  Do not expect the DDR
+ * record to survive either -- standby cuts DC, and an unplug kills DRAM.
  *
  * Writes the record TWICE, because the fence matters:
  *   0x23090000  inside the dtb read window (0x23000000+0x100000) -> wiped by

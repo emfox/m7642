@@ -1,5 +1,8 @@
 #!/bin/bash
-# Prove the harness self-recovers from a hang.
+# Exercise the hang-recovery path.  NOTE: as of 2026-11-22 the expectation is
+# the OPPOSITE of what this script was written for -- `wdt_enable` does not
+# bite (§34.13), so a hang here needs a human unplug.  Kept as a probe of the
+# recovery behaviour, not as a self-heal test.
 #
 # Deploys a stub that writes a record and then spins forever, waits for the
 # watchdog to bring Android back on its own, and reads the record out of DDR.

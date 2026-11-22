@@ -52,7 +52,7 @@ mboot/GPU 竞争（谁最后写赢随机），项目在 2026-11-18 就把判据�
 | [pm51-standby.md](pm51-standby.md) | 待机是 PM51 硬件状态机：关机=交权给 MCU、红外电源键由 MCU 解码 |
 | [online-test-ladder.md](online-test-ladder.md) | 在线验证的阶梯：从空模块到真探针 |
 | [rung419-runbook.md](rung419-runbook.md) | **4.19 上机操作卡**：三级颜色判读、刷入、回滚、救砖 |
-| [wdt-beacon.md](wdt-beacon.md) | **★ WDT 信标**：用 mboot 自带的 `wdt_enable` 让设备自己重启，靠 DDR 标记分级 —— 颜色通道废掉之后的替代判据 |
+| [wdt-beacon.md](wdt-beacon.md) | ⚠️ **WDT 自动复位已否证（2026-11-21 实测，见 §34.13）**；本文保留作为 pstore/pmsg 通道与 boot 槽读数通道的记录 |
 | [factory49-entry.md](factory49-entry.md) | 原厂 4.9 入口 `+0xFA0000` 判读卡、段界表、厂值 cmdline |
 | [misc-bcb-readout.md](misc-bcb-readout.md) | BCB 布局与实测（`boot-recovery` 非消费式） |
 
