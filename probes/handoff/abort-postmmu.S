@@ -20,8 +20,11 @@ handover_phys:
 	 * addressable).  Clear M/C/I now that we are identity-mapped and never
 	 * come back: from here on everything is plain physical addressing, which
 	 * is the state mboot hands the factory kernel. */
-	cbz	x5, 9f
 	mrs	x16, sctlr_el1
+	tbz	x16, #0, 9f		/* M == 0 -> the MMU is already off */
+				/* (test the hardware, not a value we passed in:
+				 * trusting a register once put us here with the MMU
+				 * on while the code believed it was off) */
 	bic	x16, x16, #1
 	bic	x16, x16, #4
 	bic	x16, x16, #0x1000
@@ -31,7 +34,6 @@ handover_phys:
 9:
 	movz	x6, #0x2308
 	lsl	x6, x6, #16		/* 0x23080000 */
-	add	x6, x6, x5
 	movz	w7, #0x374d
 	movk	w7, #0x3436, lsl #16	/* "M764" */
 	str	w7, [x6]
@@ -59,10 +61,8 @@ handover_phys:
 	movz	x6, #0x3000
 	lsl	x6, x6, #16
 	add	x6, x6, #0x800		/* staged factory kernel */
-	add	x6, x6, x5
 	movz	x7, #0x2028
 	lsl	x7, x7, #16		/* runtime image base */
-	add	x7, x7, x5
 	movz	x8, #0x4a00
 	movk	x8, #0x012d, lsl #16	/* 0x12d4a00 bytes */
 1:
@@ -76,5 +76,4 @@ handover_phys:
 	mov	w4, wzr
 	movz	x9, #0x2122
 	lsl	x9, x9, #16		/* factory entry 0x21220000 */
-	add	x9, x9, x5
 	br	x9
