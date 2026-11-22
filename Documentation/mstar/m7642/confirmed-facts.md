@@ -1404,3 +1404,55 @@ emmc `8d5dd03356029548c6aba05f62514d64`。先跑 emmc；若仍挂，再用 setup
 
 **⟹ 只读 LBA 0 的 CMD17 在 code1（mboot 交接态、MMU/Cache 关）按 18 步序列跑通了。**
 写路径（CMD24/CMD25）仍未做，继续冻结。
+
+### 34. ★★★ post-MMU 仪器成立；7.3 的卡点收窄到 `__pi_early_map_kernel` 体内（2026-11-22 10:05）
+
+**一句话：新 tramp/handover 在 MMU 开之后可用；7.3 进得了 `__pi_early_map_kernel`，但到不了
+`__primary_switched` ⟹ 卡点在这个函数体里，不在 `start_kernel` 之后。**
+
+三发实测（每发都用 misc 末尾 `0xA5` 标记确认进了 recovery）：
+
+| 检查点 | 镜像 md5 | 结果 | 记录里的 x30 |
+|---|---|---|---|
+| `__enable_mmu+0x38` (`0x455548`，`msr sctlr_el1` 之后) | `7f309a47…` | **回来**（Android 34 s） | `0x206D554C` = PA(`0x45554C`) ✓ |
+| `__pi_early_map_kernel` 入口 `0x4659e0` | `f0ca4aa2…` | **回来**（35 s） | `0x206E59E4` = PA(`0x4659E4`) ✓ |
+| `__primary_switched` `0x46805c` | `b8651fd2…` | **不回来**（488 s） | — |
+
+⟹ **`mmuon` 与 `emap` 都是 stash 验证过的「到达」**，所以：
+1. tramp 的两条入口（PA / 内核 VA）、cache 清理、关 M/C/I、物理 handover 全部成立；
+2. 内核确实打开了 MMU 并进入了 `__pi_early_map_kernel`；
+3. `__primary_switched` 之前的某个环卡住。
+
+**顺带坐实一条旧假设**：code1 shim 记录的 mboot 入口寄存器是
+`x0=0, x1=0x1c, x2=0x20200100, x3=0, x4=0, x5=0x9dcc10d4` ⟹ **mboot 交的 x0 真的是 0**
+（§I.33 的 DTB 判断成立；也解释了厂内核为什么要自己硬编码 DTB 地址）。
+
+**`__pi_early_map_kernel` 的结构（新编译，System.map + 反汇编）**：
+
+| 偏移 | 动作 |
+|---|---|
+| `0x465a74` | `bl __pi_map_range`（`map_fdt` 内联体，把 FDT 映射进去） |
+| `0x465a94` | `bl __memset`（清 BSS，`__bss_start..init_pg_end`） |
+| `0x465aa8` | `bl __pi_fdt_path_offset`（找 `/chosen`） |
+| `0x465ab8` | `bl __pi_init_feature_override`（解析 CPU 特性覆盖） |
+| `0x465b54..0x465c04` | 6 × `bl __pi_map_segment`（`map_kernel` 的各段） |
+| `0x465c14` | `bl idmap_cpu_replace_ttbr1`（切到 `init_pg_dir`） |
+| `0x465c1c` | `bl __pi_relocate_kernel` |
+| `0x465c38..0x465c88` | 再 3 × `map_segment`（两遍映射的第二遍） |
+| `0x465c98` | `bl __memcpy`（`swapper_pg_dir` 拷根表） |
+| `0x465ca4` | `bl idmap_cpu_replace_ttbr1`（切到 `swapper_pg_dir`） |
+| `0x465cbc` | 尾声 `ldp x27,x28`，随后返回 `__primary_switch` → `br x8` |
+
+**下一批检查点（已构建，都是 PA 段，用 tramp 的 `_start` 入口）**：
+
+| 镜像 | 偏移 | 含义 | md5 |
+|---|---|---|---|
+| `m7642-rec-73-mk1.img` | `0x465a94` | `map_fdt` 之后、清 BSS 之前 | `371627c1fd729baa16723a3912bcbe1a` |
+| `m7642-rec-73-mk2.img` | `0x465ab8` | `fdt_path_offset` 之后 | `50a5f07f5f37e0aa5f3320c880fcaa70` |
+| `m7642-rec-73-mk3.img` | `0x465c14` | 6 段映射之后、第一次切 TTBR1 之前 | `3b7dac457072a6c815f9c82a3d08c0f2` |
+| `m7642-rec-73-mk4.img` | `0x465c1c` | 第一次切 TTBR1 之后、`relocate_kernel` 之前 | `83cb6f291c5cf838be34301d6c4bc910` |
+| `m7642-rec-73-mk5.img` | `0x465ca4` | `memcpy(swapper_pg_dir)` 之后 | `5d567f3a45998c9af33aff9a1bc8fb6e` |
+| `m7642-rec-73-mk6.img` | `0x465cbc` | 函数尾声（即将返回） | `893a2274b321cab41137b4b57008cc13` |
+
+构建：`probes/handoff/mk-emap-images.sh`。运行：`probes/handoff/run-postmmu.sh <img> <md5> <tag>`。
+顺序 mk1 → mk6：第一个「不回来」的档就是卡点；它前一档（回来的）是最后确认的边界。
