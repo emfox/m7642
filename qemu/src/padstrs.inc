@@ -1,0 +1,26 @@
+/* padstrs.inc -- strings/buffers for pad.S (section .padstr, writable) */
+s_pad_nl:	.asciz	"\n"
+s_pad_banner:	.asciz	"[pad] tramp handover reached with the MMU ON (TTBR0 = tramp 1GB block)\n"
+s_pad_x5off:	.asciz	"[pad] x5=KIMAGE_OFFSET=0x"
+s_pad_kimage:	.asciz	"[pad] kimage=0x"
+s_pad_memstart:	.asciz	" memstart=0x"
+s_pad_lin:	.asciz	" lin=0x"
+s_pad_x0:	.asciz	"[pad] x0=0x"
+s_pad_x1:	.asciz	" x1=0x"
+s_pad_x2:	.asciz	" x2=0x"
+s_pad_x5:	.asciz	"[pad] x5=0x"
+s_pad_x30:	.asciz	" x30=0x"
+s_pad_sctlr:	.asciz	" sctlr=0x"
+s_pad_ttbr0:	.asciz	" ttbr0=0x"
+s_pad_tcr:	.asciz	" tcr=0x"
+s_pad_desc:	.asciz	"[pad] idmap_desc=0x"
+s_pad_ba0:	.asciz	" boot_args[0]=0x"
+s_pad_ba1:	.asciz	" [1]=0x"
+s_pad_ba2:	.asciz	" [2]=0x"
+s_pad_pass1:	.asciz	"PASS stage1"
+s_pad_pass2:	.asciz	"PASS stage2"
+s_pad_fail:	.asciz	"FAIL stage chk="
+s_pad_chk:	.asciz	""
+	.balign	8
+prbuf:		.space	24
+exit_blk:	.space	16

@@ -1,0 +1,48 @@
+#!/bin/bash
+# build.sh <profile> <scenario> <variant>
+#
+# Builds the fake kernel + tramp blob for one bench configuration.
+#   profile  : zcu102 | virt
+#   scenario : 1 (P1, idmap alive) 2 (P2, idmap gone) 3 (P1, entry x5=0)
+#              4 (P2, entry x5=0)
+#   variant  : vanilla | badlin | no-idmap | pa-alias | dbl-offset
+set -eu
+CD=$(cd "$(dirname "$0")" && pwd)
+cd "$CD"
+PROFILE=${1:?profile}; SCEN=${2:?scenario}; VAR=${3:-vanilla}; TVER=${4:-v1}
+TC=${TC:-/home/emfox/Debian/m7642-build/toolchain/gcc13/bin}
+CC=$TC/aarch64-buildroot-linux-gnu-gcc
+LD=$TC/aarch64-buildroot-linux-gnu-ld
+OC=$TC/aarch64-buildroot-linux-gnu-objcopy
+OD=$TC/aarch64-buildroot-linux-gnu-objdump
+
+python3 gen.py "$PROFILE" "$SCEN" "$VAR" "$TVER"
+eval "$(cat gen/profile.sh)"
+
+TRAMP_DEFS=$(cat gen/tramp-defs.txt)
+# tramp: same -D shape as probes/handoff/build-postmmu.sh
+TRAMP_SRC=$(cat gen/tramp-src.txt)
+"$CC" -I. $TRAMP_DEFS -c "$TRAMP_SRC" -o gen/tramp.o
+"$OC" -O binary --only-section=.text gen/tramp.o gen/tramp.bin
+"$OD" -d gen/tramp.o > gen/tramp.dis
+
+# the VA entry offset (_start_kva) is version dependent: verify it
+KVA_OFF=$("$TC/aarch64-buildroot-linux-gnu-nm" gen/tramp.o | awk '$3=="_start_kva"{print "0x"$1}')
+if [ $(( KVA_OFF )) -ne $(( TRAMP_ENTRY_OFF )) ]; then
+	echo "FATAL: _start_kva is at $KVA_OFF but gen.py assumed $TRAMP_ENTRY_OFF (version $TRAMP_VERSION)" >&2
+	exit 1
+fi
+
+# fake kernel: SCENARIO/KILL_IDMAP are cpp-level, everything else is .equ
+CFLAGS="-I. -I src -DSPIN_ON_FAULT=${SPIN_ON_FAULT:-0} -DKILL_IDMAP=$KILL_IDMAP -DSCENARIO=$SCEN -DTRAMP_V2=$TRAMP_V2 -ffreestanding -fno-stack-protector"
+"$CC" $CFLAGS -c src/boot.S -o gen/boot.o
+"$CC" $CFLAGS -c src/pad.S -o gen/pad.o
+"$CC" $CFLAGS -c src/tramp-blob.S -o gen/tramp-blob.o
+"$LD" -T src/link.ld --defsym=IMAGE_BASE=$IMAGE_BASE \
+	-o gen/image.elf gen/boot.o gen/pad.o gen/tramp-blob.o
+
+if [ "${QUIET:-0}" != 1 ]; then
+	echo "  [$PROFILE/$SCENARIO_NAME/$VAR/$TRAMP_VERSION] image=$(printf %#x $IMAGE_BASE)" \
+	     "tramp_pa=$(printf %#x $TRAMP_PA) tramp_va=$(printf %#x $TRAMP_VA)" \
+	     "blob_md5=$(md5sum <gen/tramp.bin | cut -d' ' -f1)"
+fi
