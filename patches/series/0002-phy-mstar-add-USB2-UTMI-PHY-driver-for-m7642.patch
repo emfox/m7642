@@ -1,7 +1,7 @@
-From a9777661863ed29300a8790a43dab2496b4a08b8 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: emfox <emfox@debian.org>
 Date: Tue, 17 Nov 2026 17:07:50 +0800
-Subject: [PATCH] phy: mstar: add USB2 UTMI PHY driver for m7642
+Subject: [PATCH 2/8] phy: mstar: add USB2 UTMI PHY driver for m7642
 
 MediaTek MT9652 (MStar m7642) has four EHCI ports, each with its own UTMI
 analog block.  The registers in that block are 16 bits wide and addressed
@@ -33,7 +33,7 @@ Signed-off-by: emfox <emfox@debian.org>
 
 diff --git a/Documentation/devicetree/bindings/phy/mstar,usb2-phy.yaml b/Documentation/devicetree/bindings/phy/mstar,usb2-phy.yaml
 new file mode 100644
-index 0000000..6f36c73
+index 000000000..6f36c73c2
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/phy/mstar,usb2-phy.yaml
 @@ -0,0 +1,78 @@
@@ -116,7 +116,7 @@ index 0000000..6f36c73
 +    };
 +...
 diff --git a/drivers/phy/Kconfig b/drivers/phy/Kconfig
-index 19f3b7d..73f0cf5 100644
+index 19f3b7d12..73f0cf565 100644
 --- a/drivers/phy/Kconfig
 +++ b/drivers/phy/Kconfig
 @@ -186,6 +186,7 @@ source "drivers/phy/mediatek/Kconfig"
@@ -128,7 +128,7 @@ index 19f3b7d..73f0cf5 100644
  source "drivers/phy/qualcomm/Kconfig"
  source "drivers/phy/ralink/Kconfig"
 diff --git a/drivers/phy/Makefile b/drivers/phy/Makefile
-index d7aa516..aa5ee37 100644
+index d7aa516bc..aa5ee37ba 100644
 --- a/drivers/phy/Makefile
 +++ b/drivers/phy/Makefile
 @@ -38,6 +38,7 @@ obj-$(CONFIG_GENERIC_PHY)		+= allwinner/	\
@@ -141,7 +141,7 @@ index d7aa516..aa5ee37 100644
  					   ralink/	\
 diff --git a/drivers/phy/mstar/Kconfig b/drivers/phy/mstar/Kconfig
 new file mode 100644
-index 0000000..b2358ad
+index 000000000..b2358ad7a
 --- /dev/null
 +++ b/drivers/phy/mstar/Kconfig
 @@ -0,0 +1,6 @@
@@ -153,7 +153,7 @@ index 0000000..b2358ad
 +	  Enable the UTMI PHY found on MStar m7642 (MT9652) based SoCs.
 diff --git a/drivers/phy/mstar/Makefile b/drivers/phy/mstar/Makefile
 new file mode 100644
-index 0000000..9778133
+index 000000000..97781339e
 --- /dev/null
 +++ b/drivers/phy/mstar/Makefile
 @@ -0,0 +1,2 @@
@@ -161,7 +161,7 @@ index 0000000..9778133
 +obj-$(CONFIG_PHY_MSTAR_USB2)		+= phy-mstar-usb.o
 diff --git a/drivers/phy/mstar/phy-mstar-usb.c b/drivers/phy/mstar/phy-mstar-usb.c
 new file mode 100644
-index 0000000..cea8e36
+index 000000000..cea8e3656
 --- /dev/null
 +++ b/drivers/phy/mstar/phy-mstar-usb.c
 @@ -0,0 +1,326 @@

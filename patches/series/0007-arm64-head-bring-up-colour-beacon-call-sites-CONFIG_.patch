@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: m7642 <m7642@local>
+Date: Mon, 23 Nov 2026 00:25:05 +0800
+Subject: [PATCH 7/8] arm64: head: bring-up colour beacon call sites
+ (CONFIG_MSTAR_M7642_BEACON, disabled)
+
+Dead channel: the panel-colour readings were abandoned, and the Kconfig option
+defaults to off, so these 8 call sites compile to nothing.  Kept as its own
+commit so it can be dropped in one revert; see the cleanup note in
+Documentation/mstar/m7642/discipline.md.
+---
+ arch/arm64/kernel/head.S | 63 +++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 62 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+index 87a822e5c..2fb412fd2 100644
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -82,16 +82,62 @@
+ 	 *  x20        primary_entry() .. __primary_switch()    CPU boot mode
+ 	 *  x21        primary_entry() .. start_kernel()        FDT pointer passed at boot in x0
+ 	 */
++/*
++ * m7642_color c -- bring-up checkpoint.
++ *
++ * Floods the panel with colour c; see m7642_beacon().  The panel is the only
++ * output channel available before fbcon, so this is the one place progress can
++ * be reported from.
++ *
++ * It calls out to assembly that clobbers x4..x13, so it is only placed at sites
++ * where those are dead.  x0..x3 and x19..x21 are left alone, which is what makes
++ * it safe between calls that carry boot state in them.  It must never be placed
++ * between a compare and its branch -- unlike the PM-register write it replaces,
++ * filling 8 MB of framebuffer rewrites NZCV.
++ *
++ * Colours in order, each naming the furthest checkpoint reached when the panel
++ * stops changing (only the final fill survives, so the reading is the colour
++ * and not a count):
++ *
++ *	white	primary_entry
++ *	red	record_mmu_state returned
++ *	green	preserve_boot_args returned
++ *	yellow	create_init_idmap returned, page tables built
++ *	magenta	dcache maintenance over those tables finished
++ *	cyan	init_kernel_el returned
++ *	blue	__cpu_setup returned
++ *	orange	__primary_switch, the last point before the MMU comes on
++ */
++	.macro	m7642_color c
++	movz	w12, #\c
++	bl	m7642_beacon
++	.endm
++
+ SYM_CODE_START(primary_entry)
++#ifdef CONFIG_MSTAR_M7642_BEACON
++	m7642_color 0xffff
++#endif
+ 	bl	record_mmu_state
++#ifdef CONFIG_MSTAR_M7642_BEACON
++	m7642_color 0xf800
++#endif
+ 	bl	preserve_boot_args
++#ifdef CONFIG_MSTAR_M7642_BEACON
++	m7642_color 0x07e0
++#endif
++
+ 
+ 	adrp	x1, early_init_stack
+ 	mov	sp, x1
++	/* A store to [sp] succeeded on 2026-11-19, so the stack probe is gone and
++	 * its colour goes to the three checkpoints past the page-table build. */
+ 	mov	x29, xzr
+ 	adrp	x0, __pi_init_idmap_pg_dir
+ 	mov	x1, xzr
+ 	bl	__pi_create_init_idmap
++#ifdef CONFIG_MSTAR_M7642_BEACON
++	m7642_color 0xffe0
++#endif
+ 
+ 	/*
+ 	 * If the page tables have been populated with non-cacheable
+@@ -116,9 +162,17 @@ SYM_CODE_START(primary_entry)
+ 	adr_l	x2, dcache_clean_poc
+ 	blr	x2
+ 
+-1:	mov	x0, x19
++1:
++	mov	x0, x19
++#ifdef CONFIG_MSTAR_M7642_BEACON
++	m7642_color 0xf81f
++#endif
+ 	bl	init_kernel_el			// w0=cpu_boot_mode
+ 	mov	x20, x0
++#ifdef CONFIG_MSTAR_M7642_BEACON
++	m7642_color 0x07ff
++#endif
++
+ 
+ 	/*
+ 	 * The following calls CPU setup code, see arch/arm64/mm/proc.S for
+@@ -127,6 +181,10 @@ SYM_CODE_START(primary_entry)
+ 	 * the TCR will have been set.
+ 	 */
+ 	bl	__cpu_setup			// initialise processor
++#ifdef CONFIG_MSTAR_M7642_BEACON
++	m7642_color 0x001f
++#endif
++
+ 	b	__primary_switch
+ SYM_CODE_END(primary_entry)
+ 
+@@ -506,6 +564,9 @@ SYM_FUNC_START_LOCAL(__no_granule_support)
+ SYM_FUNC_END(__no_granule_support)
+ 
+ SYM_FUNC_START_LOCAL(__primary_switch)
++#ifdef CONFIG_MSTAR_M7642_BEACON
++	m7642_color 0xfd20
++#endif
+ 	adrp	x1, reserved_pg_dir
+ 	adrp	x2, __pi_init_idmap_pg_dir
+ 	bl	__enable_mmu

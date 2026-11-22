@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: m7642 <m7642@local>
+Date: Mon, 23 Nov 2026 00:25:05 +0800
+Subject: [PATCH 6/8] arm64: dts: mstar: update the m7642 trees to what is
+ actually running
+
+patches/0003 was generated before these edits, so replaying the series produced
+a different tree from the one we build and measure.
+---
+ .../boot/dts/mstar/m7642-tcl-65s535d.dts      | 58 +++++++++++++------
+ arch/arm64/boot/dts/mstar/m7642.dtsi          | 22 +++++++
+ 2 files changed, 63 insertions(+), 17 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts b/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
+index 9eef3e2a8..91462c519 100644
+--- a/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
++++ b/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
+@@ -24,9 +24,43 @@ chosen {
+ 		/*
+ 		 * maxcpus=1: see the CPU comment in m7642.dtsi.
+ 		 * ignore_loglevel so early failures are visible on fbcon too.
++		 * Two consoles on purpose: fbcon works without any driver (the
++		 * bootloader keeps scanning out) while ttyS0 needs the pads.
++		 *
++		 * ramoops goes in the gap between the first two memory banks,
++		 * so it has no struct page and pstore maps it with
++		 * ioremap_wc() instead of vmap().  The stock tree reserves the
++		 * same address and the contents survive a warm reset, which
++		 * was verified by panicking the vendor kernel and reading the
++		 * log back from /sys/fs/pstore.  console takes 512 KB, the
++		 * remaining 512 KB is two 256 KB kmsg slots.
+ 		 */
+-		bootargs = "console=tty0 earlycon ignore_loglevel maxcpus=1";
++		bootargs = "console=tty0 console=ttyS0,115200n8 earlycon ignore_loglevel fbcon=nodefer maxcpus=1 ramoops.mem_address=0x42300000 ramoops.mem_size=0x100000 ramoops.record_size=0x40000 ramoops.console_size=0x80000";
+ 		stdout-path = "serial0:115200n8";
++
++		/*
++		 * The bootloader has already programmed tcon and panel timing and
++		 * keeps scanning out of this buffer; nothing in the kernel touches
++		 * the display controller.  Sizes come from /sys/class/graphics/fb0.
++		 *
++		 * The binding (display/simple-framebuffer.yaml) requires this to be
++		 * a child of /chosen named framebuffer@<addr>.  That is the node
++		 * of_platform_default_populate_init() looks for before it disables
++		 * sysfb, so keeping it in /chosen also gives simpledrm a clean
++		 * handover.
++		 */
++		#address-cells = <2>;
++		#size-cells = <2>;
++
++		framebuffer@2d100000 {
++			compatible = "simple-framebuffer";
++			reg = <0x0 0x2d100000 0x0 0x7e9000>;
++			width = <1920>;
++			height = <1080>;
++			stride = <7680>;
++			format = "a8r8g8b8";
++			status = "okay";
++		};
+ 	};
+ 
+ 	/*
+@@ -57,24 +91,14 @@ reserved-memory {
+ 		#size-cells = <2>;
+ 		ranges;
+ 
++		/*
++		 * No "no-map": the bring-up beacons (arch/arm64/kernel/
++		 * m7642-dtb.S) poke this buffer through the linear map before
++		 * any driver exists, so it has to be mapped.  It stays reserved,
++		 * so the allocator never hands it out.
++		 */
+ 		framebuffer: framebuffer@2d100000 {
+ 			reg = <0x0 0x2d100000 0x0 0x7e9000>;
+-			no-map;
+ 		};
+ 	};
+-
+-	/*
+-	 * The bootloader has already programmed tcon and panel timing and
+-	 * keeps scanning out of this buffer; nothing in the kernel touches
+-	 * the display controller.  Sizes come from /sys/class/graphics/fb0.
+-	 */
+-	framebuffer@2d100000 {
+-		compatible = "simple-framebuffer";
+-		reg = <0x0 0x2d100000 0x0 0x7e9000>;
+-		width = <1920>;
+-		height = <1080>;
+-		stride = <7680>;
+-		format = "a8r8g8b8";
+-		status = "okay";
+-	};
+ };
+diff --git a/arch/arm64/boot/dts/mstar/m7642.dtsi b/arch/arm64/boot/dts/mstar/m7642.dtsi
+index 501349b44..504f9e64c 100644
+--- a/arch/arm64/boot/dts/mstar/m7642.dtsi
++++ b/arch/arm64/boot/dts/mstar/m7642.dtsi
+@@ -76,9 +76,15 @@ gic: interrupt-controller@16001000 {
+ 	 * No timer node in the vendor DT -- its board code registers the
+ 	 * architected timer by hand.  The PPI assignments below are the
+ 	 * architectural ones and need no knowledge of the SoC.
++	 *
++	 * clock-frequency is 12 MHz, read out of the vendor DT (0xb71b00).
++	 * It has to be spelled out: mboot does not program CNTFRQ_EL0, and
++	 * without a frequency the driver cannot register a clock event and
++	 * the kernel panics before it can print anything.
+ 	 */
+ 	timer {
+ 		compatible = "arm,armv8-timer";
++		clock-frequency = <12000000>;
+ 		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
+ 			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
+ 			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
+@@ -100,6 +106,22 @@ uart0: serial@1f201300 {
+ 		interrupts = <GIC_SPI 0 IRQ_TYPE_LEVEL_HIGH>;
+ 	};
+ 
++	/*
++	 * mboot prints on UART2 (its env says console=ttyS2,115200n8) while
++	 * the vendor kernel uses UART0.  Enable this one as well when a serial
++	 * cable is attached, otherwise the bootloader stage looks silent.
++	 * Kept disabled by default: the input clock has not been measured yet.
++	 */
++	uart2: serial@1f220d00 {
++		compatible = "ns16550a";
++		reg = <0x0 0x1f220d00 0x0 0x100>;
++		clock-frequency = <123000000>;
++		reg-shift = <3>;
++		reg-io-width = <4>;
++		interrupts = <GIC_SPI 50 IRQ_TYPE_LEVEL_HIGH>;
++		status = "disabled";
++	};
++
+ 	/*
+ 	 * Four EHCI controllers, all with 16-bit registers (see
+ 	 * "split-registers" below).  The addresses are the vendor "ehc" base

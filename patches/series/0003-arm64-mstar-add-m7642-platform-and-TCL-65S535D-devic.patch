@@ -1,7 +1,8 @@
-From 5bf861ea511528c81a0d7125fe29f98b944c3f06 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: emfox <emfox@debian.org>
 Date: Tue, 17 Nov 2026 17:12:23 +0800
-Subject: [PATCH] arm64: mstar: add m7642 platform and TCL 65S535D device tree
+Subject: [PATCH 3/8] arm64: mstar: add m7642 platform and TCL 65S535D device
+ tree
 
 Add the ARCH_MSTAR platform symbol so the device tree and the USB PHY
 driver have something to hang off, then describe the board: four Cortex-A73
@@ -29,7 +30,7 @@ Signed-off-by: emfox <emfox@debian.org>
  create mode 100644 arch/arm64/boot/dts/mstar/m7642.dtsi
 
 diff --git a/arch/arm64/Kconfig.platforms b/arch/arm64/Kconfig.platforms
-index d2acfac..715e971 100644
+index d2acfac73..715e971eb 100644
 --- a/arch/arm64/Kconfig.platforms
 +++ b/arch/arm64/Kconfig.platforms
 @@ -188,6 +188,15 @@ config ARCH_MEDIATEK
@@ -49,7 +50,7 @@ index d2acfac..715e971 100644
  	bool "Amlogic Platforms"
  	help
 diff --git a/arch/arm64/boot/dts/Makefile b/arch/arm64/boot/dts/Makefile
-index fc726b2..62de240 100644
+index fc726b215..62de240fd 100644
 --- a/arch/arm64/boot/dts/Makefile
 +++ b/arch/arm64/boot/dts/Makefile
 @@ -25,6 +25,7 @@ subdir-y += lg
@@ -62,7 +63,7 @@ index fc726b2..62de240 100644
  subdir-y += qcom
 diff --git a/arch/arm64/boot/dts/mstar/Makefile b/arch/arm64/boot/dts/mstar/Makefile
 new file mode 100644
-index 0000000..520f27d
+index 000000000..520f27d30
 --- /dev/null
 +++ b/arch/arm64/boot/dts/mstar/Makefile
 @@ -0,0 +1,2 @@
@@ -70,7 +71,7 @@ index 0000000..520f27d
 +dtb-$(CONFIG_ARCH_MSTAR) += m7642-tcl-65s535d.dtb
 diff --git a/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts b/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
 new file mode 100644
-index 0000000..9eef3e2
+index 000000000..9eef3e2a8
 --- /dev/null
 +++ b/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
 @@ -0,0 +1,80 @@
@@ -156,7 +157,7 @@ index 0000000..9eef3e2
 +};
 diff --git a/arch/arm64/boot/dts/mstar/m7642.dtsi b/arch/arm64/boot/dts/mstar/m7642.dtsi
 new file mode 100644
-index 0000000..501349b
+index 000000000..501349b44
 --- /dev/null
 +++ b/arch/arm64/boot/dts/mstar/m7642.dtsi
 @@ -0,0 +1,200 @@
