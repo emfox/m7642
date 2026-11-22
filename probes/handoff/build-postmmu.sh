@@ -28,8 +28,8 @@ print("-DBOOT_ARGS_PA=%#x -DIMAGE_START_PA=%#x -DIMAGE_END_PA=%#x "
        text - kaddr, pa("primary_entry")))
 PY
 )
-echo "defs: $DEFS"
-aarch64-buildroot-linux-gnu-gcc $DEFS -c tramp-postmmu.S -o tramp-postmmu.o
+echo "defs: $DEFS  WORLD_VA=${WORLD_VA:-0}"
+aarch64-buildroot-linux-gnu-gcc $DEFS -DWORLD_VA=${WORLD_VA:-0} -c tramp-postmmu.S -o tramp-postmmu.o
 aarch64-buildroot-linux-gnu-gcc -c abort-postmmu.S -o abort-postmmu.o
 # abort-rung.bin is the plain record+handover stub the fcie build scripts
 # patch in for the ctl/paint images; it needs no kernel constants.

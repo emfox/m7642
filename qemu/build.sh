@@ -27,6 +27,21 @@ TRAMP_SRC=$(cat gen/tramp-src.txt)
 "$OC" -O binary --only-section=.text gen/tramp.o gen/tramp.bin
 "$OD" -d gen/tramp.o > gen/tramp.dis
 
+# the instruction words at the interesting blob offsets, so the bench can check
+# (and name) what a patched `bl` would land on
+python3 - "$TRAMP_ENTRY_OFF" <<'PYW'
+import struct, sys
+d = open("gen/tramp.bin", "rb").read()
+def w(off):
+    return struct.unpack_from("<I", d, off)[0] if off + 4 <= len(d) else 0
+with open("gen/words.inc", "w") as f:
+    f.write("/* generated: instruction words inside the tramp blob */\n")
+    f.write(".equ TRAMP_W0, %#x\n" % w(0))
+    f.write(".equ TRAMP_W4, %#x\n" % w(4))
+    f.write(".equ TRAMP_W_ENTRY, %#x\n" % w(int(sys.argv[1], 0)))
+PYW
+cat gen/words.inc >> gen/layout.inc
+
 # the VA entry offset (_start_kva) is version dependent: verify it
 KVA_OFF=$("$TC/aarch64-buildroot-linux-gnu-nm" gen/tramp.o | awk '$3=="_start_kva"{print "0x"$1}')
 if [ $(( KVA_OFF )) -ne $(( TRAMP_ENTRY_OFF )) ]; then
@@ -35,7 +50,7 @@ if [ $(( KVA_OFF )) -ne $(( TRAMP_ENTRY_OFF )) ]; then
 fi
 
 # fake kernel: SCENARIO/KILL_IDMAP are cpp-level, everything else is .equ
-CFLAGS="-I. -I src -DSPIN_ON_FAULT=${SPIN_ON_FAULT:-0} -DKILL_IDMAP=$KILL_IDMAP -DSCENARIO=$SCEN -DTRAMP_V2=$TRAMP_V2 -DTRAMP_V4=$TRAMP_V4 -DTRAMP_VERSION_1=$TRAMP_VERSION_1 -DCHAIN=$CHAIN -DT0SZ16=$T0SZ16 -DTABLE_RO=$TABLE_RO -ffreestanding -fno-stack-protector"
+CFLAGS="-I. -I src -DSPIN_ON_FAULT=${SPIN_ON_FAULT:-0} -DKILL_IDMAP=$KILL_IDMAP -DSCENARIO=$SCEN -DTRAMP_V2=$TRAMP_V2 -DTRAMP_V4=$TRAMP_V4 -DTRAMP_VERSION_1=$TRAMP_VERSION_1 -DCHAIN=$CHAIN -DT0SZ16=$T0SZ16 -DTABLE_RO=$TABLE_RO -DUSE_BL=$USE_BL -ffreestanding -fno-stack-protector"
 "$CC" $CFLAGS -c src/boot.S -o gen/boot.o
 "$CC" $CFLAGS -c src/pad.S -o gen/pad.o
 "$CC" $CFLAGS -c src/tramp-blob.S -o gen/tramp-blob.o

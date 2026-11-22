@@ -29,6 +29,7 @@ BIN=$REPO/probes/handoff/tramp-postmmu.bin
 V2SRC=src/tramp-v2.S
 STUB=src/abort-stub-v3.S
 V4SRC=src/tramp-v4.S
+V5SRC=src/tramp-v5.S
 STUBBIN=$REPO/probes/handoff/abort-postmmu.bin
 SYSMAP=${SYSMAP:-/home/emfox/Debian/m7642-build/kernel/linux-main/System.map}
 KADDR=${KADDR:-0x20280000}
@@ -88,7 +89,14 @@ if [ -f "$V4SRC" ]; then
 fi
 
 echo
-echo "== 6. bench v2 copy vs the blob committed right now =="
+echo "== 6. v5 copy (entry offsets from tramp-entries.env) vs the repo blob =="
+if [ -f "$V5SRC" ]; then
+    build "$V5SRC" v5-copy
+    md5sum "$BIN"
+fi
+
+echo
+echo "== 7. bench v2 copy vs the blob committed right now =="
 if [ -f "$V2SRC" ]; then
     build "$V2SRC" v2-copy
     md5sum "$BIN"
@@ -113,6 +121,15 @@ if [ -f "$WORK/stub-copy.bin" ]; then
     else
         echo "NOTE: the repo stub has changed since src/abort-stub-v3.S was pinned"
         echo "      pinned: $s3"; echo "      repo:   $sp3"
+    fi
+fi
+if [ -f "$WORK/v5-copy.bin" ]; then
+    s5=$(md5sum "$WORK/v5-copy.bin" | cut -d' ' -f1)
+    if [ "$s5" = "$sp" ]; then
+        echo "OK: bench v5 copy builds to exactly probes/handoff/tramp-postmmu.bin"
+    else
+        echo "NOTE: the repo tramp has changed again since src/tramp-v5.S was pinned"
+        echo "      pinned v5: $s5"; echo "      repo blob: $sp"
     fi
 fi
 if [ -f "$WORK/v4-copy.bin" ]; then

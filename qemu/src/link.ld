@@ -15,6 +15,13 @@ SECTIONS
   .benchstr : { *(.benchstr) } :all
   . = IMAGE_BASE + 0x02000;
   .text.boot : { *(.text.boot) } :all
+  /* the "checkpoint" call site: the real kernel patches `bl tramp` at a fixed
+   * image offset, so its address must be fixed too.  Must stay clear of
+   * .text.boot above and the tramp blob below. */
+  . = IMAGE_BASE + 0x1f000;
+  .ckpt : { *(.ckpt) } :all
+  ASSERT(ckpt_site == IMAGE_BASE + 0x1f000, "checkpoint call site moved")
+
   . = IMAGE_BASE + 0x20000;
   .tramp : { *(.tramp) } :all
   . = IMAGE_BASE + 0x30200;

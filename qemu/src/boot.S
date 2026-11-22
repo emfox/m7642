@@ -314,18 +314,74 @@ boot_main:
 	str	x12, [x10, x13]
 	dsb	sy
 
-	/* ---- 7. enter the tramp at its kernel VA ------------------------ */
+	/* ---- 7. verify what the patched entry actually points at --------
+	 * Read the instruction word at the target and classify it.  A drift from
+	 * "the first instruction of _start_kva" to "the second instruction of
+	 * _start" is invisible to a symbol-based jump, so it is checked here. */
+	LQ	x10, BL_TARGET_VA
+	PH	s_ent_target, x10
+	LQ	x10, BL_TARGET_VA		/* PH clobbers x11..x15 */
+	ldr	w19, [x10]			/* x19 survives PH */
+	PH	s_ent_word, x19
+	LQ	x13, TRAMP_W_ENTRY
+	cmp	w19, w13
+	b.eq	.Lent_ok
+	PH	s_ent_expected, x13
+	LQ	x13, TRAMP_W4
+	cmp	w19, w13
+	b.eq	.Lent_drift
+	LQ	x13, TRAMP_W0
+	cmp	w19, w13
+	b.eq	.Lent_start
+	b	.Lent_done
+.Lent_drift:
+	SH_PUTS	s_ent_drift
+	b	.Lent_done
+.Lent_start:
+	SH_PUTS	s_ent_start
+	b	.Lent_done
+.Lent_ok:
+	SH_PUTS	s_ent_ok
+.Lent_done:
+	SH_PUTS	s_nl
+
+	/* ---- 8. enter the tramp ----------------------------------------- */
 	LQ	x0, 0xa0a0a0a0a0a0a0a0
 	LQ	x1, 0xa1a1a1a1a1a1a1a1
 	LQ	x2, 0xa2a2a2a2a2a2a2a2
 	LQ	x3, 0xa3a3a3a3a3a3a3a3
 	LQ	x4, 0xa4a4a4a4a4a4a4a4
 	mov	x8, #0x88			/* "br x8 target" slot */
-	LQ	x5, MODE_X5			/* entry x5: nonzero = VA mode */
+	LQ	x5, MODE_X5			/* what the caller happens to hold */
 	LQ	x30, CHECKPOINT_RET		/* checkpoint return address */
+#if USE_BL
+	/* the real thing: jump to the patched call site, which does `bl` */
+	LQ	x16, CKPT_VA
+	br	x16
+#else
+	/* the bench's old shortcut: branch straight to the symbol */
 	LQ	x16, TRAMP_VA_ENTRY
 	br	x16
+#endif
 	SH_EXIT_FAIL				/* never reached */
+
+/* --------------------------------------------------- checkpoint call site
+ * This is what the real kernel does: a `bl` patched in at a FIXED image
+ * offset, with the target taken from probes/handoff/tramp-entries.env.  The
+ * bench reproduces that patch (instead of branching to a symbol), because an
+ * offset drift between the .S file and the build script is exactly the bug that
+ * three TV runs died of.  link.ld pins this label at IMAGE_BASE+0x1f000. */
+	.section .ckpt, "ax"
+	.globl	ckpt_site
+ckpt_site:
+#if USE_BL
+	.word	BL_WORD			/* bl <Image + TRAMP_KVA_ENTRY> */
+#else
+	nop
+#endif
+	br	xzr			/* the tramp never returns */
+
+	.section .text.boot, "ax"	/* resume the main code section */
 
 /* ------------------------------------------------------------------ helpers */
 	.balign	4

@@ -39,6 +39,11 @@ P1-v4|zcu102|1|vanilla|0|v4|normal|PASS|v4 world (a): idmap alive -> PA alias, n
 P2-v4|zcu102|2|vanilla|0|v4|normal|PASS|v4 world (b): idmap gone -> own 1GB table, T0SZ forced to 25
 P1-v4-t0sz16|zcu102|1|vanilla|0|v4|t0sz16|PASS|same, but TTBR0 starts 48-bit (T0SZ=16) like the TV kernel
 P2-v4-t0sz16|zcu102|2|vanilla|0|v4|t0sz16|PASS|world (b) with the 16->25 T0SZ rewrite load-bearing
+P1-v5-sym|zcu102|1|vanilla|0|v5|normal|PASS|v5 entered by symbol (_start_kva), idmap alive -- baseline
+P2-v5-sym|zcu102|2|vanilla|0|v5|normal|PASS|v5 entered by symbol, idmap gone -- baseline
+P1-v5-bl|zcu102|1|vanilla|0|v5|bl|PASS|v5 entered through a REAL patched bl to Image+0x10, idmap alive
+P2-v5-bl|zcu102|2|vanilla|0|v5|bl|PASS|same bl entry, idmap gone
+P1-v5-bl-drift|zcu102|1|vanilla|0|v5|bl-drift|FAIL|negative: patch target 0x4 instead of 0x10 must be caught
 P1-v4-roimg|zcu102|1|vanilla|0|v4|roimg|PASS|image mapped READ-ONLY: world (a) writes no table, so it survives
 P2-v4-roimg|zcu102|2|vanilla|0|v4|roimg|FAIL|READ-ONLY image reproduces the TV failure: the table write faults
 virt-v1|virt|1|vanilla|1|v1|normal|FAIL|RAM at 0x40000000 vs the tramp's 1GB block
@@ -65,7 +70,10 @@ while IFS='|' read -r name prof scen var fix tver mode expect desc; do
     T0SZ16=0; TABLE_RO=0
     [ "$mode" = "t0sz16" ] && { T0SZ16=1; mode=normal; }
     [ "$mode" = "roimg" ] && { TABLE_RO=1; mode=normal; }
-    T0SZ16=$T0SZ16 TABLE_RO=$TABLE_RO BASE_FIX=$fix QUIET=1 ./build.sh "$prof" "$scen" "$var" "$tver" "$mode" >/dev/null 2>&1 || {
+    ENTRY_MODE=sym
+    [ "$mode" = "bl" ] && ENTRY_MODE=bl
+    [ "$mode" = "bl-drift" ] && ENTRY_MODE=drift
+    T0SZ16=$T0SZ16 TABLE_RO=$TABLE_RO ENTRY_MODE=$ENTRY_MODE BASE_FIX=$fix QUIET=1 ./build.sh "$prof" "$scen" "$var" "$tver" "$mode" >/dev/null 2>&1 || {
         printf '%-16s %-8s %-14s BUILD FAILED\n' "$name" "$expect" "-"; bad=$((bad+1)); continue; }
     # shellcheck disable=SC1090
     eval "$(cat gen/profile.sh)"
@@ -99,6 +107,19 @@ while IFS='|' read -r name prof scen var fix tver mode expect desc; do
     ok=$([ "$got" = "$expect" ] && [ "$atok" = ok ] && echo ok || echo "MISMATCH $atok")
     if [ "$ok" = ok ]; then pass=$((pass+1)); else bad=$((bad+1)); fi
     printf '%-16s %-8s %-14s %-9s %s\n' "$name" "$expect" "$got" "$kind" "$ok"
+    if [ "$ENTRY_MODE" != sym ]; then
+        OD=$TC/aarch64-buildroot-linux-gnu-objdump
+        SITE=$((IMAGE_BASE + CKPT_OFF))
+        TGT_OFF=$((BL_TARGET_VA - TRAMP_VA))
+        echo "    patched call site (fixed image offset 0x$(printf %x $CKPT_OFF), like the real build):"
+        "$OD" -d gen/image.elf --start-address=$SITE --stop-address=$((SITE+8)) |
+            grep -E '^ +[0-9a-f]+:' | sed 's/^/      /' || true
+        echo "    instruction the bl lands on (blob+0x$(printf %x $TGT_OFF)):"
+        "$OD" -D -b binary -m aarch64 --start-address=$TGT_OFF \
+              --stop-address=$((TGT_OFF+4)) gen/tramp.bin |
+            grep -E '^ +[0-9a-f]+:' | sed 's/^/      /' || true
+        grep -o '\[bench\] patched-entry.*' "$lf" | sed 's/^/    /' || true
+    fi
     echo "    $desc"
     if [ "$got" = FAIL ] && [ -n "$kind" ]; then
         elr=$(grep -o 'elr=0x[0-9A-Fa-f]*' "$lf" | tail -1 | cut -d= -f2)

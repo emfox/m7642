@@ -97,6 +97,11 @@ tramp 自己把 SP 清零，所以异常处理只能靠寄存器 + semihosting�
 | P2-v4-t0sz16 | 同上，idmap 拆掉 | **PASS** | 世界(b) 里 **T0SZ 16→25 的改写是承重的**：改写后 `…3510` → `…3519`，1 GB 块被按 3 级解释并生效 |
 | P1-v4-roimg | 镜像映射为 **EL1 只读**（AP=11），idmap 在 | **PASS** | 世界(a) 一笔表都不写，所以即使 `.rodata`/镜像只读也能活 |
 | P2-v4-roimg | 同上，idmap 拆掉 | **FAIL** | **复现电视上的挂死形态**：`str xzr,[x16,x19,lsl#3]`（清表那步）踩 EL1 只读页 → ESR `0x9600004E`（permission fault, level 2）、FAR=`TABLE_VA` |
+| P1-v5-sym | v5 按**符号**进入（旧做法） | **PASS** | 基线：与 bl 路径对照 |
+| P2-v5-sym | 同上，idmap 拆掉 | **PASS** | 基线 |
+| P1-v5-bl | v5 经**真实 `bl` 到固定镜像偏移**（目标取自 `tramp-entries.env`） | **PASS** | 入口偏移漂移这类 bug 只有在 `bl` 路径下才可见 |
+| P2-v5-bl | 同上，idmap 拆掉 | **PASS** | 世界(b) 走 bl 入口同样成立 |
+| P1-v5-bl-drift | **负向**：把补丁目标故意写成 `0x4` | **FAIL** | 打印 `DRIFT: this is _start+4 (b 0x110)`，并定位到模型加载后的 `chk 1` |
 | virt-v1 | `-M virt`（RAM 0x40000000） | **FAIL** | 演示 §6 的障碍：交接地址 0x400b0200 落在 1 GB 块覆盖之外，取指 abort（ESR 0x86000005, FAR=0x400b0200） |
 | P1-chain-v3 | 完整链路，idmap 在 | **PASS** | tramp(v3) → **真** `abort-postmmu.S`(v3) 写满 0xB0 记录 → 搬 0x12d4a00 字节到 0x20280000 → 跳 0x21220000 的替身内核 |
 | P2-chain-v3 | 完整链路，idmap 拆掉 | **PASS** | 同上，且 `AT(pa)` 返回 F=1，交接仍成立 |
@@ -217,6 +222,56 @@ v4 的 `_start_kva` 先用 `AT S1E1R` 探一个"在 init idmap 里"的物理地�
 **`TCR.T0SZ` 从 16 改成 25 这一步在世界(b) 是承重的**（不改的话 tramp 的 1 GB 块会被
 按 L0 解释 → 保留编码 → 取指异常）。
 
+## 4.25 真实 `bl` 入口（v5，堵结构性盲区）
+
+2026-11-22 夜里的第三、四、五发挂机，根因**不在这段代码里**：v2 把 `_start` 改成两条指令，
+`_start_kva` 从 blob 偏移 4 漂到 8（现在 v5 用 `.org 0x10` 钉在 0x10），而镜像构建脚本里
+检查点补丁目标写死成 `Image+0x36c004` —— 于是 `bl` 落在 `_start` 的**第二条指令** `b 0x110`，
+整段 AT 探测被绕过，还带着内核现场的 `x5`。
+
+这个 bug 在原先的夹具里**天然不可见**，因为夹具一直是「按符号」跳进去的
+（`entering tramp _start_kva at VA=...`）。现在补上了两条路径：
+
+- **`bl` 入口**（`ENTRY_MODE=bl`）：`link.ld` 把 `ckpt_site` 钉在 `IMAGE_BASE+0x1f000`，
+  `build.sh` 把 `probes/handoff/tramp-entries.env` 里的 `TRAMP_KVA_ENTRY`（`0x36c010`）
+  换算成 blob 偏移（`0x10`），据此算出 `bl` 的 imm26 并直接写成 `.word`（和真实补丁一模一样）。
+  内核代码 `br` 到 `ckpt_site` 执行这条 `bl`；此后 `x30 = ckpt_site+4`，也就是真实的
+  "checkpoint 返回地址"。
+- **入口自检**：进入前读出目标处的指令字并与已知编码比对，打印
+  `patched-entry target=… word=… => OK: this is _start_kva's first instruction`
+  或 `=> DRIFT: this is _start+4 (b 0x110), the entry offset is wrong`。
+  编码值由 `build.sh` 从 `gen/tramp.bin` 里取（`blob[0]=0xaa1f03e5`、`blob[4]=0x14000043`、
+  `blob[0x10]=0xd2800010`），不是写死的。
+- **负向场景** `P1-v5-bl-drift`：把目标写成 `0x4`，必须 FAIL。实测：
+
+```
+   patched call site: 2001f000: 94000401 .word   → 落点 = Image+0x20004 = tramp blob+0x4
+   instruction it lands on: 4: 14000043  b 0x110     ← 正是 _start 的第二条指令
+   [bench] patched-entry ... => DRIFT: this is _start+4 (b 0x110), the entry offset is wrong
+   FAIL stage chk=1
+```
+
+以后任何入口偏移漂移都会被这两条抓住。
+
+## 4.26 镜像级静态检查（`check-images.py` / `check-entries.sh`）
+
+不需要启动就能判死：`check-images.py` 直接读 `~/Debian/m7642-build/out/*.img`，
+找到内嵌的 tramp blob（按 `_start` 的指令签名），算出 `_start_kva` 的真实偏移，
+再找出镜像构建写进去的那条 `bl` 落在 blob 的哪个偏移上。两者不一致就是必挂。
+
+```
+$ ./check-images.py ~/Debian/m7642-build/out/m7642-rec-73-{p1,p2,q1,q2}.img
+m7642-rec-73-p1.img   blob@0x36c800 (v4) _start_kva@0x8  bl@0x464178 -> blob+0x4   POISONED
+m7642-rec-73-p2.img   blob@0x36c800 (v4) _start_kva@0x8  bl@0x4641c0 -> blob+0x4   POISONED
+m7642-rec-73-q1.img   blob@0x36c800 (v5) _start_kva@0x10 bl@0x464178 -> blob+0x10  OK
+m7642-rec-73-q2.img   blob@0x36c800 (v5) _start_kva@0x10 bl@0x4641c0 -> blob+0x10  OK
+POISONED images: 2
+```
+
+`check-entries.sh` 是它的静态同伴：检查 `probes/handoff/*.sh` 里还有谁在硬编码
+`TRAMP_AT + 4`（或 `0x36c004`）而不读 `tramp-entries.env`。当前仍有
+`mk-postmmu-images.sh`（prsw/skmain 两发）和 `mk-emap-images.sh`（ps1）在用旧偏移。
+
 ## 4.3 "表页只读"这个假设（v2/v3 在电视上挂死的解释）
 
 v2/v3 在电视上于「恒等映射还活着」的检查点挂死、记录为空。最省事的解释是：
@@ -307,7 +362,8 @@ translation fault —— 正是 L1 表项不存在）。
 |---|---|
 | `src/tramp-v1-pinned.S` | 22:02 版 `probes/handoff/tramp-postmmu.S` 的原样拷贝（只作对照基线） |
 | `src/tramp-qemu.S` | 由上面那份派生的**参数化副本**：把 `IDMAP_TABLE_PA`、`HANDOVER_PA` 两个写死地址变成 `#ifndef` 参数，另加 `INJECT_*`（故意注错）与 `FIX_PAGE_OFFSET`（修 bug ③）开关。**所有开关默认关闭时，生成的目标机器码与原件逐字节相同**（`verify-identical.sh` 证明） |
-| `src/tramp-v4.S` | 当前版 `probes/handoff/tramp-postmmu.S`（世界 a/b 分岔 + 表搬到 `.bss`）的原样拷贝 |
+| `src/tramp-v5.S` | 最新版 `probes/handoff/tramp-postmmu.S`（`.org 0x10` 钉住 `_start_kva`）|
+| `src/tramp-v4.S` | 上一版 `probes/handoff/tramp-postmmu.S`（世界 a/b 分岔 + 表搬到 `.bss`）的原样拷贝 |
 | `src/tramp-v2.S` / `src/tramp-v3.S` | 22:31 版 `probes/handoff/tramp-postmmu.S` 的原样拷贝（两版 md5 相同；它自己就带 `#ifndef TABLE_PA/TABLE_VA/HANDOVER_PA`，无需参数化） |
 | `src/abort-stub-v3.S` | 当前 `probes/handoff/abort-postmmu.S`（0xB0 记录 + 7 个身份寄存器）的原样拷贝 |
 | `src/impostor.S` | 完整链路里 0x21220000 处的“替身内核”：打印/校验 0xB0 记录 |
@@ -319,7 +375,10 @@ translation fault —— 正是 L1 表项不存在）。
 2. 用 `src/tramp-v2.S` 汇编，与 `probes/handoff/tramp-postmmu.bin` 比 md5
    （钉住时是 `dc19259a890f18b7bfe037f7488d2b2e`，完全一致）；
 3. 用 `src/tramp-v4.S` 汇编，与 `probes/handoff/tramp-postmmu.bin` 比 md5
-   （钉住时是 `8b6760de157fae90747e54740cdcf3e2`）；
+   （v4 钉住时是 `8b6760de157fae90747e54740cdcf3e2`）；
+3b. 用 `src/tramp-v5.S`（加了 `.org 0x10`）汇编，与仓库当前 blob 比 md5
+   （钉住时是 `3f2a9fcf6aa0bfc7e76c2a1043b6ce66`）；**入口偏移不写死在本仓库里**，
+   每次构建都从 `probes/handoff/tramp-entries.env` 读；
 4. 用 `src/abort-stub-v3.S` 的 `#ifndef` 默认值（即 `KADDR=0x20280000` 的电视常量组）
    汇编桩，与 `probes/handoff/abort-postmmu.bin` 比 md5
    （`3efd72efc793d2f6654bca2504095bf8`，完全一致 —— 并且链路场景跑的就是这份桩）。
