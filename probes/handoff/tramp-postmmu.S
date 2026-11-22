@@ -57,6 +57,9 @@ _start_kva:
 	br	x16
 
 1:
+	mov	x21, x8			/* the `br x8` target, for the record */
+	mrs	x22, sctlr_el1		/* was the MMU really on? */
+
 	movz	x16, #(BOOT_ARGS_PA & 0xffff)
 	movk	x16, #((BOOT_ARGS_PA >> 16) & 0xffff), lsl #16
 	ldp	x0, x1, [x16]

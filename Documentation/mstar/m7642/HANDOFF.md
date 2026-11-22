@@ -31,6 +31,13 @@
    注意 `ps0`/`mk*` 那类能回的点都走 tramp 的 **PA 入口**，不能回的两个都走**内核 VA 入口**，
    所以"KVA 入口本身是否可用"仍未排除（`kva6` 是为这个建的，零访存，安全）。
 
+**2026-11-22 14:0x 最新（优先看这条）**：`x8`（`br x8` 目标）实测为
+`0xffffffc0804e805c`，而 `__primary_switched` 在 `0x8046805c`——**差 +0x80000，落在数据区**，
+`br x8` 一跳过去就是执行数据 ⟹ 这一条足以解释"跑到 `br x8` 之后没有下文"。
+`SCTLR_EL1=0x34d4d91d` ⟹ MMU/cache 都开着。详见 `confirmed-facts.md` §34.7。
+下一步：查 `__pi_relocate_kernel` 的 offset 为什么是 +0x80000（`--stub` 把 kernel
+补齐到 `0x1400000` 是首要嫌疑）。
+
 **新会话第 0 步**：跑 `tools/host/session-start.sh`（可选带关键词）。它会打印最近提交、
 上面这块结论、树里已有的探针清单，以及**上一个会话最后几条用户消息**——信息全在
 `~/.dsh/sessions/` 的原始对话记录里，`zstdcat <dir>/session.v4.jsonl.zstd | less` 可查全文。

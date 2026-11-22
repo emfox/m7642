@@ -23,13 +23,15 @@ handover_phys:
 	movz	w7, #0x4d4d
 	movk	w7, #0x554d, lsl #16	/* "MMMU" */
 	str	w7, [x6, #4]
-	mov	w7, #0x40
+	mov	w7, #0x50
 	str	w7, [x6, #8]
 	str	wzr, [x6, #12]
 	str	x30, [x6, #16]
 	stp	x0, x1, [x6, #24]
 	stp	x2, x3, [x6, #40]
 	str	x4, [x6, #56]
+	str	x21, [x6, #64]		/* br x8 target */
+	str	x22, [x6, #72]		/* SCTLR_EL1 */
 	dsb	sy
 
 	movz	x6, #0x3000
