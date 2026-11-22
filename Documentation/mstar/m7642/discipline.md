@@ -122,6 +122,20 @@
 2. `/data/local/tmp/rec.head.bin` 的 md5 是厂值（见 confirmed-facts §D）。若不是 ⟹ 厂值回滚已失效。
 3. `misc` 的 BCB 不是 `boot-recovery`。
 
+**构建目录的移动/清理必须做「重建 + md5 对账」。**
+
+代价：2026-11-22 清理 `~/kbuild` 时，一条 glob 映射写反（`add "out/$c"` 把源写成裸文件名），
+phase A 把 `m7642-out/` 整个删空——5.1 GB、175 张历史镜像没了重建脚本之外的副本。
+补救办法正是纪律本身：源码在、工具链在，跑一遍 `build-*.sh` 再逐张比文档里的 md5，
+27 张全部一致，等于没有损失。**推论：上机镜像永远是"可重建产物"，不是资产**；
+真正要保住的是源码、脚本、md5 记录，以及 `backups/` 里的救砖包。
+
+**删任何东西之前，先确认它不在"救砖路径"上。**
+
+同一天的清单里差点有 `backup/fix/rescue-fast.bin`（47 MB，**唯一能修 boot 的包**，
+`tools/host/boottest.sh` 的默认值）。判据不是"名字像不像历史产物"，而是**谁在引用它**：
+`git grep` 一遍仓库里的路径引用，比看文件名可靠。
+
 **跳厂内核之前必须把 `x0..x5` 还给 mboot 的值（尤其 `x2`）。**
 
 代价：2026-11-22 09:0x，code1 的 eMMC 探针改用 C 之后连续挂死 6 次。根因：C 按 ABI 可以
@@ -225,7 +239,7 @@ Android 的 init 会在启动时清 pstore，晚几分钟就只剩新启动的�
 **`insmod` 用 `/vendor/bin/busybox`。** toybox 的走 `finit_module(2)`，在这台机器上会自旋。
 
 **提权走 `/data/local/tmp/tvroot.cmd`**：写命令 → 等 12–15 秒 → 读 `tvroot.out`。
-调用封装是 `~/kbuild/tvrun.sh <本地脚本>`。
+调用封装是 `~/Debian/m7642-build/scripts/tvrun.sh <本地脚本>`。
 
 **`adb` 的 server 会随上一个 shell 结束而死**，`connect` 与动作要写在同一个调用里。
 
@@ -244,7 +258,7 @@ Android 的 init 会在启动时清 pstore，晚几分钟就只剩新启动的�
 - 停构建用 `pkill -x make`（别用 `-f`，会匹配到自己）。
 - 梯级（rung）是独立汇编的 ⟹ **改梯级零内核重编**，别为了改一个颜色重编整个内核。
 
-**4.19 树（`~/kbuild/tcl-419/`）专属**
+**4.19 树（原 `~/kbuild/tcl-419/`，2026-11-22 已删除）专属**
 
 - `make clean` 是**坏的**（`No rule to make target 'clean'`）⟹ 改用 `tcl419-clean.sh`。
 - 厂家把构建产物（`.o`/`.a`/`.cmd`/`modules.order`）**提交进了 git**。只删一部分 `.o` 会让 kbuild
@@ -292,7 +306,7 @@ Android 的 init 会在启动时清 pstore，晚几分钟就只剩新启动的�
 - **要动系统、写工作区外、碰块设备 / 挂载 / U 盘，第一时间 `ssh emfox@localhost` 出沙箱。**
 - 沙箱 `/tmp` 是 10 MB tmpfs 且**每条命令开始时清空** ⟹ 不能当备份、放不下大文件。
 - 沙箱里多行命令会被压成单行 ⟹ 用 `;` 分隔，或先写成脚本再 `bash 脚本`。
-- 产物一律落 `~/Debian/<项目>/` 或 `~/kbuild/`，不在外面新开目录。
+- 产物一律落 `~/Debian/<项目>/` 或 `~/Debian/m7642-build/`，不在外面新开目录。
 - 沙箱里 `ls -l` 显示 `root:root` 是 userns 映射假象，`chown` 报 `Invalid argument`，别去"修"。
 - 网络：`github.com:443` 直连不通、`api.github.com` 通；推仓库走 SSH（`-F /dev/null` +
   `~/.ssh/id_ed25519_github`）或 `127.0.0.1:7890` 代理。**PAT 不写进 remote URL。**

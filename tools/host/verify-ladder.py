@@ -10,9 +10,9 @@ import os
 import struct
 import sys
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else "/home/emfox/kbuild/m7642-out/m7642-ladder.img"
-SRC = "/home/emfox/kbuild/rec/recovery_full.bin"
-IMAGE = "/home/emfox/kbuild/linux-main/arch/arm64/boot/Image"
+OUT = sys.argv[1] if len(sys.argv) > 1 else "/home/emfox/Debian/m7642-build/out/m7642-ladder.img"
+SRC = "/home/emfox/Debian/m7642-build/backups/partitions/rec/recovery_full.bin"
+IMAGE = "/home/emfox/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image"
 
 CODE1_AT = 0x600000
 FA_AT = 0xF9FE00

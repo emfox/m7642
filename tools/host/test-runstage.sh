@@ -3,7 +3,7 @@ set -u
 ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 TV=192.168.10.60:5555
 T=/home/emfox/Debian/m7642/tools/host/envtool.py
-IMG=/home/emfox/kbuild/m7642-out/m7642-rec-abort1c.img
+IMG=/home/emfox/Debian/m7642-build/out/m7642-rec-abort1c.img
 IMD5=bd2637a1c3f6a7def24216d6cf144e9b
 STAGE='mmc read.p 0x30000000 boot 0x2000000'
 RC='mmc erase.p misc; mmc read.p 0x23000000 dtb 0x100000; mmc read.p 0x25000000 recovery 0x2000000; run stagecmd; bootm 0x25000000'

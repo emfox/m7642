@@ -6,7 +6,7 @@ TV=192.168.10.60:5555
 IMD5=a2a2fc39fd363fd68a8ce7ac5614a452
 root(){ $ADB -s $TV exec-out su -c "$1"; }
 $ADB connect $TV >/dev/null 2>&1
-$ADB -s $TV push $HOME/kbuild/m7642-out/m7642-boot-gopsnap.img /data/local/tmp/gopsnap.img >/dev/null
+$ADB -s $TV push $HOME/Debian/m7642-build/out/m7642-boot-gopsnap.img /data/local/tmp/gopsnap.img >/dev/null
 o=$(root "dd if=/data/local/tmp/gopsnap.img of=/dev/block/by-name/boot bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/boot" | tr -d '\r' | cut -d' ' -f1)
 echo "boot slot -> $o"; [ "$o" = "$IMD5" ] || { echo FAIL; exit 1; }
 echo "=== reboot $(date +%H:%M:%S)"; $ADB -s $TV reboot; sleep 10

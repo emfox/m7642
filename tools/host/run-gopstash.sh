@@ -3,7 +3,7 @@ set -u
 export PATH=$HOME/.local/bin:$PATH
 ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 TV=192.168.10.60:5555
-IMG=$HOME/kbuild/m7642-out/m7642-boot-gopstash.img
+IMG=$HOME/Debian/m7642-build/out/m7642-boot-gopstash.img
 IMD5=79fa577682e9637e8f98353aa17378f5
 root(){ $ADB -s $TV exec-out su -c "$1"; }
 $ADB connect $TV >/dev/null 2>&1

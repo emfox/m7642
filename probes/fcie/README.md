@@ -35,9 +35,9 @@ EMMC_PLL      = mstar_pm_base + 0x247E00  → PA 0x1F247E00 / VA 0xffffff800a247
 
 ```sh
 cd ~/Debian/m7642/probes/fcie
-./build.sh bare    # → ~/kbuild/fcie-build/fcie_read.o (896 B) + fcie_probe.o (88 B)
-./build.sh ko      # → ~/kbuild/fcie-build/fcie.ko（走 ~/kbuild/build-probe.sh）
-./build-boot.sh    # → ~/kbuild/m7642-out/m7642-rec-73-emmc.img + fcie_boot.bin
+./build.sh bare    # → ~/Debian/m7642-build/build/fcie-build/fcie_read.o (896 B) + fcie_probe.o (88 B)
+./build.sh ko      # → ~/Debian/m7642-build/build/fcie-build/fcie.ko（走 ~/Debian/m7642-build/scripts/build-probe.sh）
+./build-boot.sh    # → ~/Debian/m7642-build/out/m7642-rec-73-emmc.img + fcie_boot.bin
 ```
 
 `bare` 用的编译参数是 `-O2 -march=armv8-a -mgeneral-regs-only -ffreestanding
@@ -48,7 +48,7 @@ cd ~/Debian/m7642/probes/fcie
 ## 跑模块（安全，纯读）
 
 ```sh
-adb push ~/kbuild/fcie-build/fcie.ko /data/local/tmp/
+adb push ~/Debian/m7642-build/build/fcie-build/fcie.ko /data/local/tmp/
 adb shell su -c 'busybox rmmod fcie 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie; cat /data/local/tmp/fcie.out'
 ```
 
@@ -80,8 +80,8 @@ adb exec-out su -c "cat /data/local/tmp/fcie.out" > /tmp/fcie.out
 ```sh
 cd ~/Debian/m7642/probes/fcie
 ./build-boot.sh
-md5sum ~/kbuild/m7642-out/m7642-rec-73-emmc.img      # a4479e336f3b4b4ac7fa5ca1aad46887
-./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img a4479e336f3b4b4ac7fa5ca1aad46887
+md5sum ~/Debian/m7642-build/out/m7642-rec-73-emmc.img      # a4479e336f3b4b4ac7fa5ca1aad46887
+./run-cmd17.sh ~/Debian/m7642-build/out/m7642-rec-73-emmc.img a4479e336f3b4b4ac7fa5ca1aad46887
 ```
 
 `run-cmd17.sh` 起 Android 后读三处，并和内核自己
@@ -117,7 +117,7 @@ md5sum ~/kbuild/m7642-out/m7642-rec-73-emmc.img      # a4479e336f3b4b4ac7fa5ca1a
 ```sh
 cd ~/Debian/m7642/probes/fcie
 ./build-boot.sh
-./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 9f071ae8ff512a1843396e8849633531
+./run-cmd17.sh ~/Debian/m7642-build/out/m7642-rec-73-emmc.img 9f071ae8ff512a1843396e8849633531
 ```
 
 写路径（CMD24/CMD25）仍未做，继续冻结。

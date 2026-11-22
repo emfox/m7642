@@ -3,7 +3,7 @@
 # Stops at the first "no return" (that checkpoint is the hang site).
 set -u
 D=$(cd "$(dirname "$0")" && pwd)
-B=$HOME/kbuild/m7642-out
+B=$HOME/Debian/m7642-build/out
 ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 mark(){
 	$ADB connect 192.168.10.60:5555 >/dev/null 2>&1; sleep 1

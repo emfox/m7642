@@ -4,6 +4,11 @@
 （拔电源线 → 插回 → 按一下电源键）。boot 槽是厂值 `6272b10dcaf5e9efa40491d87f2c1289`，
 `misc` 的 BCB 已被 `recoverycmd` 里的 `mmc erase.p misc` 擦掉，断电后不会锁 recovery。
 
+> **2026-11-22 11:0x 环境变更**：`~/kbuild/` 已清理并迁到 `~/Debian/m7642-build/`
+> （16 GB → 6.6 GB，布局见该目录 `README.md` 与 `paths.md` §1）。4.19 树已删除。
+> `out/` 里的 27 张上机镜像已按源码重建并逐一比过 md5，全部一致。
+> 设备当前是活的（adb 可达），上一发 `ps1` 的挂死已由拔插恢复。
+
 ## 0. 必读的上一条结论（§I.33）
 
 NEXT-SESSION 上一版 A 的三张镜像**按原样不可能回来**：桩在 `Image+0x1400000`（PA `0x21680000`），
@@ -29,12 +34,12 @@ NEXT-SESSION 上一版 A 的三张镜像**按原样不可能回来**：桩在 `I
   ⟹ 卡点是 **`br x8` 跳内核 VA / `__primary_switched` 第一条**。
   判别镜像 `kva`(`3b220ef4e31cc357c65f08a547021732`) 在 `0x4555b0` 记录 `x8` 并用内核 VA
   读 `_text`/目标页/tramp 页。**设备当前挂死，先拔插**，然后：
-  `./run-postmmu.sh ~/kbuild/m7642-out/m7642-rec-73-kva.img 3b220ef4e31cc357c65f08a547021732 kva`
+  `./run-postmmu.sh ~/Debian/m7642-build/out/m7642-rec-73-kva.img 3b220ef4e31cc357c65f08a547021732 kva`
 
 
   ```bash
   cd ~/Debian/m7642/probes/handoff
-  ./run-postmmu.sh ~/kbuild/m7642-out/m7642-rec-73-mk1.img 371627c1fd729baa16723a3912bcbe1a mk1
+  ./run-postmmu.sh ~/Debian/m7642-build/out/m7642-rec-73-mk1.img 371627c1fd729baa16723a3912bcbe1a mk1
   # mk2 50a5f07f / mk3 3b7dac45 / mk4 83cb6f29 / mk5 5d567f3a / mk6 893a2274
   ```
 
@@ -53,7 +58,7 @@ $ADB -s 192.168.10.60:5555 exec-out su -c "dd if=/dev/block/by-name/misc bs=32 c
 
 ```bash
 cd ~/Debian/m7642/probes/handoff
-./run-postmmu.sh ~/kbuild/m7642-out/m7642-rec-73-mmuon.img 7f309a473a77abafe894a0636c91b1c2 mmuon
+./run-postmmu.sh ~/Debian/m7642-build/out/m7642-rec-73-mmuon.img 7f309a473a77abafe894a0636c91b1c2 mmuon
 ```
 
 - 检查点 = `__enable_mmu+0x38`（`0x455548`，`msr sctlr_el1` 之后）：MMU 刚开、PC 仍是 PA，
@@ -88,11 +93,11 @@ cd ~/Debian/m7642/probes/handoff
 
 ```bash
 cd ~/Debian/m7642
-python3 tools/host/mk-mainline-abort.py --image ~/kbuild/linux-main/arch/arm64/boot/Image \
+python3 tools/host/mk-mainline-abort.py --image ~/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image \
   --at 0x465e80 --stub probes/handoff/abort-rung.bin --nop 0x46804c \
-  --out ~/kbuild/m7642-out/m7642-rec-73-rung-0x465e80.img
+  --out ~/Debian/m7642-build/out/m7642-rec-73-rung-0x465e80.img
 # 取输出里的 md5，然后：
-probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-rung-0x465e80.img <md5> 0x465e80
+probes/handoff/run-rung.sh ~/Debian/m7642-build/out/m7642-rec-73-rung-0x465e80.img <md5> 0x465e80
 ```
 
 先重跑 `0x465E80`（**带 nop**，与已验证档一致），再往 `map_range` 入口 `0x465CC8` 推。
@@ -104,13 +109,13 @@ probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-rung-0x465e80.img <md
 
   ```bash
   # 1) 只读模块复核 34+2 个寄存器（零风险），check-dump 期望 diff 0
-  adb push ~/kbuild/fcie-build/fcie.ko /data/local/tmp/
+  adb push ~/Debian/m7642-build/build/fcie-build/fcie.ko /data/local/tmp/
   adb shell su -c "/vendor/bin/busybox rmmod fcie 2>/dev/null; /vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie"
   adb exec-out su -c "cat /data/local/tmp/fcie.out" > /tmp/fcie.out
   ~/Debian/m7642/probes/fcie/check-dump.sh /tmp/fcie.out
   # 2) CMD17：code1 处读 LBA 0，与内核 dd 的同一扇区逐字节对比
   cd ~/Debian/m7642/probes/fcie
-  ./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img a4479e336f3b4b4ac7fa5ca1aad46887
+  ./run-cmd17.sh ~/Debian/m7642-build/out/m7642-rec-73-emmc.img a4479e336f3b4b4ac7fa5ca1aad46887
   ```
 
   判据：心跳 `rc=0` + `R1` 的 CURRENT_STATE=4/READY_FOR_DATA=1 + 512 B 与 `dd` 一致。

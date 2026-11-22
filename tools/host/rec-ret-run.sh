@@ -9,7 +9,7 @@
 set -u
 ADB=${ADB:-/home/emfox/Debian/tv/adb/platform-tools/adb}
 TV=${TV:-192.168.10.60:5555}
-IMG=${IMG:-/home/emfox/kbuild/m7642-out/m7642-rec-handoff1-ret.img}
+IMG=${IMG:-/home/emfox/Debian/m7642-build/out/m7642-rec-handoff1-ret.img}
 T=/home/emfox/Debian/m7642/tools/host/envtool.py
 W=/data/local/tmp
 IMG_MD5=3a950d5064b4569f47df1d4337faa2f6

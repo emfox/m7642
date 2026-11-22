@@ -106,7 +106,7 @@ assert steps == 1, "expected 1 STEP immediate, patched %d" % steps
 ## 五、产物
 
 ```
-~/kbuild/m7642-out/m7642-419-wdt.img
+~/Debian/m7642-build/out/m7642-419-wdt.img
 21,618,688 B   md5 d73b328258bb30d517cd661b3a78ca8e
 kernel_size 0xd3fea8   blob 392 B   step 0x190
 rungs @ +0xd3fa00 / +0xd3fb90 / +0xd3fd20
@@ -124,7 +124,7 @@ rungs @ +0xd3fa00 / +0xd3fb90 / +0xd3fd20
 env 离线版（**未写设备**）：
 
 ```
-~/kbuild/emmcboot/now/env-wdt.bin        crc 69f350e1   （基础是重启后读回的 env-pr-1.bin）
+~/Debian/m7642-build/ref/emmcboot/now/env-wdt.bin        crc 69f350e1   （基础是重启后读回的 env-pr-1.bin）
 ```
 
 逐行 diff：只有 `recoverycmd` 与 `crc` 两行不同，128 条变量一条没丢。
@@ -361,7 +361,7 @@ adb shell 'head -c 32 /sys/fs/pstore/console-ramoops | od -A n -t x1'
 blob 392 → **424 字节**，`step 0x190 → 0x1b0`。
 
 ```
-~/kbuild/m7642-out/m7642-419-pstore.img
+~/Debian/m7642-build/out/m7642-419-pstore.img
 21,618,688 B   md5 7047387799c19444798060782d1ae4ca
 kernel_size 0xd3ff08
 rungs @ +0xd3fa00 / +0xd3fbb0 / +0xd3fd60   (STEP 1 / 2 / 3)
@@ -600,7 +600,7 @@ DT 里只有一个节点 `ramoops@42300000`，`reg = 0x42300000, size 0x100000`�
 **注意**：这个注入点在 `0xfa0000` 之前，x0..x5 是 mboot 留下的，**不是** arm64 的 boot
 参数（那是 vendor stub 里才设的）。要读"内核真正拿到什么"得把探针挂到 stub 之后。
 
-镜像 `~/kbuild/m7642-out/m7642-boot-handoff.img`，33,554,432 B，
+镜像 `~/Debian/m7642-build/out/m7642-boot-handoff.img`，33,554,432 B，
 md5 `af4467af6103e24775666f2d810f1f3b`，
 `code1 144b527f -> kernel+0x12d4a00`，尾字 `17f32d51 -> 0xfa0000`。
 
@@ -674,7 +674,7 @@ logo 停约 40 秒 -> 回待机      （正常是 logo 5~6 秒 -> Android）
 
 **位置：无 `mrs`、无 `dc cvac`。** 剩下全部是指令类别与 paint3 相同的 `movz/movk/str`。
 
-镜像 `~/kbuild/m7642-out/m7642-boot-handoff1.img`，33,554,432 B，
+镜像 `~/Debian/m7642-build/out/m7642-boot-handoff1.img`，33,554,432 B，
 md5 `3a950d5064b4569f47df1d4337faa2f6`，
 `code1 144b527f -> kernel+0x12d4a00`，尾字 `17f32d68 -> 0xfa0000`。
 记录 `size=72`（8 B 标记 + 7 × 8 B）。
@@ -800,7 +800,7 @@ recoverycmd = mmc erase.p misc; mmc read.p 0x23000000 dtb 0x00100000;
 | 路径 | 说明 | 校验 |
 |---|---|---|
 | `probes/handoff/handoff2.S` / `.bin` | 90 条指令，8 × 64 B 记录 | 360 B |
-| `~/kbuild/m7642-out/m7642-boot-handoff2.img` | boot 槽版（用后已还原厂值） | 33,554,432 B · md5 `eed03941e51f3f30ba4884fdc887965f` · `code1 144b527f` · 尾字 `17f32d27` → `0xfa0000` |
+| `~/Debian/m7642-build/out/m7642-boot-handoff2.img` | boot 槽版（用后已还原厂值） | 33,554,432 B · md5 `eed03941e51f3f30ba4884fdc887965f` · `code1 144b527f` · 尾字 `17f32d27` → `0xfa0000` |
 
 ### 5. 更正 §十四.6 的标记
 

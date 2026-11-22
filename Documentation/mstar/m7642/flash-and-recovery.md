@@ -71,7 +71,7 @@ header[0:16]        16   "#-------------US"
 | `m7642-recovery-stock.bin` | 32 MB | 恢复原厂 `recovery` + 原厂 `misc` | 彻底还原本地改动 | 低 |
 
 它们都**不碰** `boot` / `dtb` / `userdata` / `system`，所以不会丢数据、不会变砖。
-产物位置：`/home/emfox/kbuild/rescue/partial/`。
+产物位置：`/home/emfox/Debian/m7642-build/backups/rescue/partial/`。
 
 ## 四、mboot 到底怎么启动内核（从官方脚本里读出来的）
 
@@ -299,7 +299,7 @@ mk-partial.py --src V8-T652T03-LF1V147.bin --keep recovery,set_config -o out.bin
 mk-partial.py --src V8-T652T03-LF1V147.bin --keep recovery --dry-run   # 只打印脚本
 ```
 
-已生成（`/home/emfox/kbuild/rescue/partial/`，payload 与源包逐字节一致，md5 同源段）：
+已生成（`/home/emfox/Debian/m7642-build/backups/rescue/partial/`，payload 与源包逐字节一致，md5 同源段）：
 
 | 包 | 段 | 大小 | header CRC |
 |---|---|---|---|
@@ -470,9 +470,9 @@ pm list packages                 projengmenu + fdroid 都在
 
 | 项 | 值 |
 |---|---|
-| 产物 | `~/kbuild/backup/fix/rescue-fast.bin` |
+| 产物 | `~/Debian/m7642-build/backups/fix/rescue-fast.bin` |
 | 大小 / md5 | 47,263,776 B / `7e8ef7a725e163672af7fb824b066abc` |
-| 生成工具 | `~/kbuild/backup/mkrescue.py` |
+| 生成工具 | `~/Debian/m7642-build/backups/mkrescue.py` |
 | 覆盖 | p6 misc（擦）、p12 dtb、p7 recovery、p8 boot、`bootcmd`/`recoverycmd`/`WDT_ENABLE` |
 | 不覆盖 | system / vendor / userdata / optee / tvservice / factory_a |
 | 尾部 | `crc32(header)=0xc773300f`，常量 `0xb74aabba`，`hdr[:16]` 一致 |
@@ -524,7 +524,7 @@ U-Boot 环境变量只有两种状态：**存在**或**不存在**。不存在�
 
 ### 2. 这台机器上它不是"不存在"，而是明确等于 0
 
-2026-11-18 22:48 从设备 dump 的 env（`~/kbuild/mpool3.bin`，主备两份副本）都是：
+2026-11-18 22:48 从设备 dump 的 env（`~/Debian/m7642-build/diag/mpool3.bin`，主备两份副本）都是：
 
 ```
 MstarUpgrade_complete=0
@@ -566,7 +566,7 @@ setenv force_upgrade
 一度担心：不设的语义是"保持 env 现值"，而官方全量包末尾 `setenv MstarUpgrade_complete 1`，
 那么全量包刷完之后再用不设的包，会继承 1 从而 wipe。**这个担心被实测否掉了。**
 
-把本机 24 个自制包的脚本全扫一遍（`~/kbuild/scan_pkgs.py`），结果只有一个包设过这个变量：
+把本机 24 个自制包的脚本全扫一遍（`~/Debian/m7642-build/scripts/scan_pkgs.py`），结果只有一个包设过这个变量：
 
 | 包 | `MstarUpgrade_complete` | 刷后结果 |
 |---|---|---|

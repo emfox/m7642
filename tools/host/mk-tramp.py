@@ -10,8 +10,8 @@ primary_entry so the kernel actually runs.
 import struct
 import os
 
-OUT = os.path.expanduser("~/kbuild/m7642-out")
-IMAGE = os.path.expanduser("~/kbuild/linux-main/arch/arm64/boot/Image")
+OUT = os.path.expanduser("~/Debian/m7642-build/out")
+IMAGE = os.path.expanduser("~/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image")
 SLOT = 0xFA0000
 PRIMARY = 0x429038           # primary_entry, from System.map
 

@@ -20,10 +20,10 @@ import os
 import struct
 import subprocess
 
-OUT = os.path.expanduser("~/kbuild/m7642-out")
-IMAGE = os.path.expanduser("~/kbuild/linux-main/arch/arm64/boot/Image")
-SYSMAP = os.path.expanduser("~/kbuild/linux-main/System.map")
-SRC = os.path.expanduser("~/kbuild/rec/recovery_full.bin")
+OUT = os.path.expanduser("~/Debian/m7642-build/out")
+IMAGE = os.path.expanduser("~/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image")
+SYSMAP = os.path.expanduser("~/Debian/m7642-build/kernel/linux-main/System.map")
+SRC = os.path.expanduser("~/Debian/m7642-build/backups/partitions/rec/recovery_full.bin")
 TAG = os.environ.get("TAG", "probe-mainline.img")
 ENTRY = 0xFA0000
 MOV_X0_DTB = struct.pack("<I", 0xD2A46000)	# mov x0, #0x23000000

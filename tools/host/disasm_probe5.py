@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 OUT = "/home/emfox/Debian/tv/kernel-lab/disasm"
-OBJDUMP = "/home/emfox/kbuild/aarch64--glibc--stable-2018.11-1/bin/aarch64-linux-objdump"
+OBJDUMP = "/home/emfox/Debian/m7642-build/toolchain/gcc13/bin/aarch64-buildroot-linux-gnu-objdump"
 
 src = sys.argv[1] if len(sys.argv) > 1 else "/home/emfox/Debian/tv/kernel-lab/probe5.out"
 os.makedirs(OUT, exist_ok=True)

@@ -208,7 +208,7 @@ P0 是真机动作，用户不在家做不了；P1 是本机动作，**已经做
 
 ## 9. P0 上机操作卡（回家后按这个做，全程只读）
 
-`mioreg` 在 `~/kbuild/tools/mioreg`（aarch64 静态链接，649 KB）。
+`mioreg` 原先在 `~/kbuild/tools/mioreg`（aarch64 静态链接，649 KB）；该静态二进制随 2026-11-22 的 kbuild 清理一起删掉了，需要时按同一节的方法现场编一个（或直接用 `probeRW` 读物理地址）。
 读模式是 32 位、4 字节步进，`WINDOW = 0x1000`（按 4 KB 对齐映射），
 **每个寄存器只占低 16 位**，所以看低半字就行。
 
@@ -216,7 +216,7 @@ P0 是真机动作，用户不在家做不了；P1 是本机动作，**已经做
 # 1. 推动作 + 工具（adb 的 server 会随上一个 shell 结束而死，
 #    connect 和动作要写在同一个调用里 —— 见 index.md 的实验纪律）
 adb connect <tv-ip>:5555
-adb push ~/kbuild/tools/mioreg /data/local/tmp/mioreg
+adb push <编出来的 m ioreg> /data/local/tmp/mioreg
 adb shell chmod 755 /data/local/tmp/mioreg
 
 # 2. 最关键的一条：mboot 到底把驱动版本号写成了什么

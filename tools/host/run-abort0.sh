@@ -3,7 +3,7 @@ set -u
 ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 TV=192.168.10.60:5555
 T=/home/emfox/Debian/m7642/tools/host/envtool.py
-IMG=/home/emfox/kbuild/m7642-out/m7642-rec-abort0.img
+IMG=/home/emfox/Debian/m7642-build/out/m7642-rec-abort0.img
 IMD5=a7017731cfb6fa5493997520ec05870e
 RC='mmc erase.p misc; mmc read.p 0x23000000 dtb 0x00100000; mmc read.p 0x25000000 recovery 0x02000000; mmc read.p 0x28000000 boot 0x02000000; wdt_enable 10; bootm 0x25000000'
 root(){ $ADB -s $TV exec-out su -c "$1"; }
@@ -11,7 +11,7 @@ $ADB connect $TV >/dev/null 2>&1
 [ "$(root 'getprop sys.boot_completed' | tr -d '\r')" = 1 ] || { echo "not in Android"; exit 1; }
 echo "-- backup live env"
 root "dd if=/dev/block/mmcblk0 bs=4096 skip=2528 count=32 2>/dev/null" > /tmp/env-before-abort.bin
-cp /tmp/env-before-abort.bin /home/emfox/kbuild/env-before-abort.bin
+cp /tmp/env-before-abort.bin /home/emfox/Debian/m7642-build/diag/env-before-abort.bin
 python3 - /tmp/env-before-abort.bin "$RC" "$T" <<'PY'
 import subprocess, sys, hashlib
 src, rc, tool = sys.argv[1:4]

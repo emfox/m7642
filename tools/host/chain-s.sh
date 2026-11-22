@@ -30,7 +30,7 @@ run(){
   echo "RESULT $tag: RETURNED (reached $off)"
   return 0
 }
-B=$HOME/kbuild/m7642-out
+B=$HOME/Debian/m7642-build/out
 run S1 $B/m7642-rec-73-fixS1.img 1f0e271f0e4102a4ca6d38c94a176020 0x465cbc || exit $?
 run S2 $B/m7642-rec-73-fixS2.img e997e52e33c1de7caf2c2ebaab2ffbca 0x465d7c || exit $?
 run S3 $B/m7642-rec-73-fixS3.img 0a44d8d9d42bc466484f328c4e761aad 0x465d94 || exit $?

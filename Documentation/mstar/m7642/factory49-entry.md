@@ -3,7 +3,7 @@
 > 2026-11-19 夜。来源：`shenzong168/android_device_tcl_tcl_m7642` 仓库的
 > `prebuilt/kernel`（19,749,376 B，md5 `c7eca76f50b905462788607ad011f01d`）。
 > 裸 ARM64 Image（带 EFI stub），`file` 认作 `ARM64 boot executable Image`。
-> 本地副本 `~/kbuild/m7642-dt/xx/.../prebuilt/kernel`。
+> 本地副本 `~/Debian/m7642-build/ref/m7642-dt/xx/.../prebuilt/kernel`。
 
 ## 0. 这份 Image 是不是同一台机器
 

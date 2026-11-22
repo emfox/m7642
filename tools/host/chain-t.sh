@@ -10,7 +10,7 @@ for i in $(seq 1 24); do
 done
 [ "$(root 'getprop sys.boot_completed' 2>/dev/null | tr -d '\r')" = 1 ] || { echo "device not ready"; exit 9; }
 IMD5=b05fcbc26e1aea2da1bfaacc2ed2227a
-$ADB -s $TV push $HOME/kbuild/m7642-out/m7642-rec-73-fixT1.img /data/local/tmp/t1.img >/dev/null
+$ADB -s $TV push $HOME/Debian/m7642-build/out/m7642-rec-73-fixT1.img /data/local/tmp/t1.img >/dev/null
 o=$(root "dd if=/data/local/tmp/t1.img of=/dev/block/by-name/recovery bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/recovery" | tr -d '\r' | cut -d' ' -f1)
 [ "$o" = "$IMD5" ] || { echo "slot mismatch $o"; exit 1; }
 echo "=== T1 armed (map_range entry 0x465cb8) at $(date +%H:%M:%S)"

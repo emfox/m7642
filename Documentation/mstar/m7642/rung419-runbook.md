@@ -8,7 +8,7 @@
 
 | 项 | 值 |
 |---|---|
-| 镜像 | `~/kbuild/m7642-out/m7642-419-rung0.img` |
+| 镜像 | `~/Debian/m7642-build/out/m7642-419-rung0.img` |
 | 大小 | 21,618,688 B（`2048 + kernel 13,893,632 + ramdisk 7,723,008`） |
 | md5 | `c8bca13a1935bbcbd9a45833bda67885` |
 | 目标槽 | `recovery`（`mmcblk0p7`），32 MB，用掉 21.6 MB |
@@ -42,7 +42,7 @@ ramdisk_size / ramdisk_addr / tags_addr / page_size / os_version` 全部一致�
 
 ```bash
 adb connect <电视IP>:5555
-~/kbuild/tvrun.sh ~/kbuild/precheck.sh
+~/Debian/m7642-build/scripts/tvrun.sh ~/Debian/m7642-build/scripts/precheck.sh
 ```
 
 必须确认三件事，任何一条不对就**停**：
@@ -56,7 +56,7 @@ adb connect <电视IP>:5555
 ## 3 刷入（风险从这里开始）
 
 ```bash
-IMG=~/kbuild/m7642-out/m7642-419-rung0.img ~/Debian/m7642/tools/host/boottest.sh arm
+IMG=~/Debian/m7642-build/out/m7642-419-rung0.img ~/Debian/m7642/tools/host/boottest.sh arm
 ```
 
 它会：push → **设备上重算 md5 比对** → 备份槽头 21,618,688 B 到 `/data/local/tmp/rec.head.bin`

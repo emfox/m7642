@@ -68,7 +68,7 @@ mmc write.p <addr> misc     0x00800000     # 预先做好的、command = boot-re
 ```
 上电 → 自动进 recovery 槽 → 跑我们的内核。**失败时插 A 盘上电即可回滚。**
 
-## 四、payload 已经有了（`/home/emfox/kbuild/backup/`）
+## 四、payload 已经有了（`/home/emfox/Debian/m7642-build/backups/`）
 
 | 文件 | 大小 | md5 |
 |---|---|---|

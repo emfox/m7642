@@ -197,14 +197,14 @@ MStar 版 `__create_page_tables` 先 `__inval_dcache_area(0x217CD000, 0x217D2000
 
 ## F 内核构建
 
-**7.3**（`~/kbuild/linux-main`，仓库 `~/Debian/m7642`）
+**7.3**（`~/Debian/m7642-build/kernel/linux-main`，仓库 `~/Debian/m7642`）
 
 - 只走 `tools/build-mstar-kernel.sh`；梯级独立汇编 ⟹ 改梯级零内核重编。
 - 卡点：`0x455038` 之后、`__primary_switch` 之前，绿 → 暗紫蓝 `0x4210`
   = 死在 `create_init_idmap` 体内（`0x465eb8`，**4 次栈写之后**）⟹ **栈真的不可写**；
   另一个检查点 `0x465ef0` 打 `0x8410`，在 text 段 `map_range` **之后**，从未到达。
 
-**4.19**（`~/kbuild/tcl-419`，源自 `Thedemon007/realme_Smart_TV_4K-kernel-source`）
+**4.19**（原 `~/kbuild/tcl-419`，源自 `Thedemon007/realme_Smart_TV_4K-kernel-source`；**2026-11-22 已随 kbuild 清理删除**——post-MMU 检查点仪器与 eMMC 读通道打通后，4.19 这条绕行路线不再需要；本节保留作为历史结论）
 
 - **⚠️ 没有 `mstar2/`**（HAL 被 `mstarKernelRelease.sh` 剥掉，gitlink 且无 `.gitmodules`），
   需自行补齐约 63 个文件。
@@ -654,7 +654,7 @@ stagecmd    = mmc read.p 0x30000000 boot 0x2000000
   与「DDR 内、必然可写」的推断冲突，需要重新审视 `sp` 的来源（`primary_entry` 的
   `mov sp, x1 = 0x206ED000`）
 
-**镜像已备**：`~/kbuild/m7642-out/m7642-rec-73-fixU-0x465ec8.img`
+**镜像已备**：`~/Debian/m7642-build/out/m7642-rec-73-fixU-0x465ec8.img`
 （`md5 830f37c49668d3a3541ac24d203913cd`，跑法见 `tools/host/run-u2.sh`）。
 
 ### 19. 交接时刻的真实 CPU 状态（2026-11-21 19:08，实测三次一致）
@@ -1238,8 +1238,8 @@ System RAM 都 ≥ `0x20200000`；而 `0x01639680 + 0x20000000 = 0x21639680` 正
 ```sh
 cd ~/Debian/m7642/probes/fcie
 ./build.sh bare     # 交叉编译两个 freestanding 目标文件，打印 size
-./build.sh ko       # 走 ~/kbuild/build-probe.sh（厂商树不能正常 make modules）
-adb push ~/kbuild/fcie-build/fcie.ko /data/local/tmp/
+./build.sh ko       # 走 ~/Debian/m7642-build/scripts/build-probe.sh（厂商树不能正常 make modules）
+adb push ~/Debian/m7642-build/build/fcie-build/fcie.ko /data/local/tmp/
 adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie; cat /data/local/tmp/fcie.out'
 ```
 
@@ -1390,7 +1390,7 @@ emmc `8d5dd03356029548c6aba05f62514d64`。先跑 emmc；若仍挂，再用 setup
 修法：`emmc_read.S` 入口先把 `x0..x5` 存到 `0x230aff00`，交接前恢复 `x0/x1/x2/x5`，
 `x3/x4` 仍清 0（ramdisk），`sp` 回 0。
 
-实测（`~/kbuild/m7642-out/m7642-rec-73-emmc.img`，md5 `9f071ae8ff512a1843396e8849633531`）：
+实测（`~/Debian/m7642-build/out/m7642-rec-73-emmc.img`，md5 `9f071ae8ff512a1843396e8849633531`）：
 
 | 项 | 读数 |
 |---|---|
@@ -1483,3 +1483,27 @@ emmc `8d5dd03356029548c6aba05f62514d64`。先跑 emmc；若仍挂，再用 setup
 - 判别镜像 **`m7642-rec-73-kva.img`**（md5 `3b220ef4e31cc357c65f08a547021732`）：在
   `0x4555b0` 处用自定义桩记录 `x8`，并**用内核 VA 读** `_text`、目标页、tramp 页
   （`0x23090000[0..3]`）。它挂 ⟹ 内核 VA 读不了（(a)）；它回来 ⟹ 看读到什么再定 (b)。
+
+### 34.1 构建环境迁移与镜像可重建性（2026-11-22 11:0x）
+
+`~/kbuild/`（16 GB）清理后迁到 `~/Debian/m7642-build/`（6.6 GB），布局见该目录的 `README.md`
+与 `paths.md` §1。**4.19 退役**：`tcl-419/`（2.8 GB）与 `tcl-src/` 已删除——post-MMU 检查点
+仪器与 eMMC 读通道打通后，那条绕行路线不再需要。
+
+清理过程中 `out/`（原 `m7642-out/`，5.1 GB 历史镜像）被连带清空，**用源码全量重建后逐张比 md5**：
+
+| 组 | 结果 |
+|---|---|
+| `mmuon` `emap` `prsw` `skmain` | `7f309a47` / `f0ca4aa2` / `b8651fd2` / `2eac39d1` **全部一致** |
+| `mk1`–`mk6`、`ps0`、`ps1`、`kva` | `371627c1`…`893a2274` / `f6dd1e79` / `e4f36379` / `3b220ef4` **全部一致** |
+| `emmc` `setup` `cpath` `ctl` | `9f071ae8` / `2c1d230a` / `484e1a01` / `097140f5` **全部一致** |
+| `regs` `wr1` `wt1`–`wt5` `clk` `cpa` `cpb` | `a2e76b78` / `c9698a39` / `bfe218f8`…`6b0b33ee` / `466d5d61` / `2c24eada` / `62026122` **全部一致** |
+
+⟹ **镜像确实只是源码 + Image 的确定性函数**，删掉不损失信息；有 md5 就能判定重建是否等价。
+
+附带两张补记：
+- `m7642-rec-73-cmin.img`（md5 `b84c7384a4899bd6eb16cb62def6f719`）：C 路径的最小对照
+  （只调一个返回 `0x42` 的 C 函数），用来把「C 代码本身能不能在 code1 跑」和
+  「C 代码踩了 x0..x5」分开；已有结论见 §32.8。
+- `probes/handoff/build-postmmu.sh` 现在也产出 `abort-rung.bin`（md5
+  `4960cf196c358b408633541291d131a4`），`ctl`/`paint` 系列镜像不再依赖手工编的 stub。

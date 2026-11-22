@@ -12,7 +12,7 @@ for i in $(seq 1 50); do
   sleep 6
 done
 [ -z "$ready" ] && { echo "device never came up"; exit 9; }
-$ADB -s $TV push $HOME/kbuild/m7642-out/m7642-rec-73-fixU-0x465e80.img /data/local/tmp/u1.img >/dev/null
+$ADB -s $TV push $HOME/Debian/m7642-build/out/m7642-rec-73-fixU-0x465e80.img /data/local/tmp/u1.img >/dev/null
 o=$(root "dd if=/data/local/tmp/u1.img of=/dev/block/by-name/recovery bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/recovery" | tr -d '\r' | cut -d' ' -f1)
 [ "$o" = "$IMD5" ] || { echo "slot mismatch $o"; exit 1; }
 echo "=== U1 armed (checkpoint right after the ldrb, 0x465e80) at $(date +%H:%M:%S)"

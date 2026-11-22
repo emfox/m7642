@@ -25,7 +25,7 @@
 **规则：raw binary 上 `--start-address` 无效**（见 discipline.md）。复算方式：
 
 ```sh
-~ /kbuild/toolchain-gcc13/bin/aarch64-buildroot-linux-gnu-objdump \
+~/Debian/m7642-build/toolchain/gcc13/bin/aarch64-buildroot-linux-gnu-objdump \
     -D -b binary -m aarch64 --adjust-vma=<上表地址> <文件>
 ```
 

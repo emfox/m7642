@@ -19,8 +19,8 @@ branch) plus a bare branch at 0xFA0000, so the screen separates three cases:
 import struct
 import os
 
-OUT = os.path.expanduser("~/kbuild/m7642-out")
-IMAGE = os.path.expanduser("~/kbuild/linux-main/arch/arm64/boot/Image")
+OUT = os.path.expanduser("~/Debian/m7642-build/out")
+IMAGE = os.path.expanduser("~/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image")
 PRIMARY = 0x429038
 SLOT_A = 0x600000
 SLOT_B = 0xFA0000

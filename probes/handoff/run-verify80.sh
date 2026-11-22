@@ -8,7 +8,7 @@ root(){ $ADB -s $TV exec-out su -c "$1"; }
 ready(){ $ADB connect $TV >/dev/null 2>&1; [ "$(root 'getprop sys.boot_completed' 2>/dev/null | tr -d '\r')" = 1 ]; }
 for w in $(seq 1 40); do ready && break; sleep 5; done
 ready || { echo "not ready"; exit 9; }
-$ADB -s $TV push $HOME/kbuild/m7642-out/m7642-rec-73-verify80.img /data/local/tmp/v.img >/dev/null
+$ADB -s $TV push $HOME/Debian/m7642-build/out/m7642-rec-73-verify80.img /data/local/tmp/v.img >/dev/null
 o=$(root "dd if=/data/local/tmp/v.img of=/dev/block/by-name/recovery bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/recovery" | tr -d '\r' | cut -d' ' -f1)
 [ "$o" = "$IMD5" ] || { echo "slot mismatch ($o)"; exit 1; }
 echo "=== verify80 armed $(date +%H:%M:%S)"

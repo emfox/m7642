@@ -29,10 +29,10 @@ import struct
 import subprocess
 import sys
 
-OUT = os.path.expanduser("~/kbuild/m7642-out")
-IMAGE = os.path.expanduser("~/kbuild/linux-main/arch/arm64/boot/Image")
-SYSMAP = os.path.expanduser("~/kbuild/linux-main/System.map")
-SRC = os.path.expanduser("~/kbuild/rec/recovery_full.bin")
+OUT = os.path.expanduser("~/Debian/m7642-build/out")
+IMAGE = os.path.expanduser("~/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image")
+SYSMAP = os.path.expanduser("~/Debian/m7642-build/kernel/linux-main/System.map")
+SRC = os.path.expanduser("~/Debian/m7642-build/backups/partitions/rec/recovery_full.bin")
 HERE = os.path.dirname(os.path.abspath(__file__))
 # BLUE/YELLOW point at a different pair when the rung was assembled with
 # -DHALT=1: that build loops forever after the fill, so its trailing branch to

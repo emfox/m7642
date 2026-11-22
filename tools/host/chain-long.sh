@@ -25,7 +25,7 @@ run(){
   echo "RESULT $tag: NO RETURN after 300s"
   return 4
 }
-B=$HOME/kbuild/m7642-out
+B=$HOME/Debian/m7642-build/out
 run U1 $B/m7642-rec-73-fixU-0x465e80.img b3b797bd8c50abe03da836de782f7f4a 0x465e80 || exit $?
 run V1 $B/m7642-rec-73-fixV1.img cd8b47abb5a30ec66226161cdec07b62 0x465e94 || exit $?
 echo "BOTH REACHED"

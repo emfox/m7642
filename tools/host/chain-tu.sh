@@ -17,7 +17,7 @@ run(){
   [ -z "$ok" ] && { echo "RESULT $tag: NO RETURN"; return 4; }
   echo "RESULT $tag: RETURNED (reached $off)"; return 0
 }
-B=$HOME/kbuild/m7642-out
+B=$HOME/Debian/m7642-build/out
 run T1r $B/m7642-rec-73-fixT1.img b05fcbc26e1aea2da1bfaacc2ed2227a 0x465cb8 || exit $?
 run U2  $B/m7642-rec-73-fixU-0x465ec8.img 830f37c49668d3a3541ac24d203913cd 0x465ec8 || exit $?
 echo "BOTH REACHED"

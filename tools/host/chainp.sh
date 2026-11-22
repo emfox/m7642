@@ -26,7 +26,7 @@ run(){
   echo "RESULT $tag: RETURNED (reached $off)"
   return 0
 }
-run P2 "$HOME/kbuild/m7642-out/m7642-rec-73-fixP2.img" ba363859109f76e55bf417a3c9aef61b 0x455058 || exit $?
-run P3 "$HOME/kbuild/m7642-out/m7642-rec-73-fixP3.img" d61966294659e462034688b8ce09d538 0x455074 || exit $?
-run P4 "$HOME/kbuild/m7642-out/m7642-rec-73-fixP4.img" 064a10ad4bec0749c239f3bbfd32f5bd 0x455090 || exit $?
+run P2 "$HOME/Debian/m7642-build/out/m7642-rec-73-fixP2.img" ba363859109f76e55bf417a3c9aef61b 0x455058 || exit $?
+run P3 "$HOME/Debian/m7642-build/out/m7642-rec-73-fixP3.img" d61966294659e462034688b8ce09d538 0x455074 || exit $?
+run P4 "$HOME/Debian/m7642-build/out/m7642-rec-73-fixP4.img" 064a10ad4bec0749c239f3bbfd32f5bd 0x455090 || exit $?
 echo "ALL P REACHED"

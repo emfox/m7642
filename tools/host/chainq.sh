@@ -30,7 +30,7 @@ run(){
   echo "RESULT $tag: RETURNED (reached $off)"
   return 0
 }
-run Q1 "$HOME/kbuild/m7642-out/m7642-rec-73-fixQ1.img" f9f7d794752a702f7085c175dc505533 0x465e50 || exit $?
-run Q2 "$HOME/kbuild/m7642-out/m7642-rec-73-fixQ2.img" 071cc4ecee70f409b602dc8febfef61c 0x465e78 || exit $?
-run Q3 "$HOME/kbuild/m7642-out/m7642-rec-73-fixQ3.img" 92607ce2fb8b95fa9e61ebd7ae53a5aa 0x465ecc || exit $?
+run Q1 "$HOME/Debian/m7642-build/out/m7642-rec-73-fixQ1.img" f9f7d794752a702f7085c175dc505533 0x465e50 || exit $?
+run Q2 "$HOME/Debian/m7642-build/out/m7642-rec-73-fixQ2.img" 071cc4ecee70f409b602dc8febfef61c 0x465e78 || exit $?
+run Q3 "$HOME/Debian/m7642-build/out/m7642-rec-73-fixQ3.img" 92607ce2fb8b95fa9e61ebd7ae53a5aa 0x465ecc || exit $?
 echo "ALL Q REACHED (map_range returned)"

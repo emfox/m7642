@@ -6,7 +6,7 @@ IMD5=8ffc1242eee442425823e4690e652ad4
 root(){ $ADB -s $TV exec-out su -c "$1"; }
 $ADB connect $TV >/dev/null 2>&1
 [ "$(root 'getprop sys.boot_completed' | tr -d '\r')" = 1 ] || { echo "not in Android"; exit 1; }
-$ADB -s $TV push $HOME/kbuild/m7642-out/m7642-rec-abort3.img /data/local/tmp/abort3.img >/dev/null
+$ADB -s $TV push $HOME/Debian/m7642-build/out/m7642-rec-abort3.img /data/local/tmp/abort3.img >/dev/null
 o=$(root "dd if=/data/local/tmp/abort3.img of=/dev/block/by-name/recovery bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/recovery" | tr -d '\r' | cut -d' ' -f1)
 echo "-- slot $o"; [ "$o" = "$IMD5" ] || exit 1
 echo "=== reboot recovery at $(date +%H:%M:%S)"

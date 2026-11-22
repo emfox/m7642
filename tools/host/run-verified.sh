@@ -29,6 +29,6 @@ run(){
   fi
   echo "RESULT $tag: INCONCLUSIVE/NO RETURN (stash empty -> checkpoint never ran)"; return 4
 }
-B=$HOME/kbuild/m7642-out
+B=$HOME/Debian/m7642-build/out
 run U1 $B/m7642-rec-73-fixU-0x465e80.img b3b797bd8c50abe03da836de782f7f4a 0x465e80 || exit $?
 run Q2 $B/m7642-rec-73-fixQ2.img 071cc4ecee70f409b602dc8febfef61c 0x465e78 || exit $?

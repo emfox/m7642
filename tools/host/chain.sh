@@ -28,8 +28,8 @@ run(){
   echo "RESULT $tag: RETURNED  x30=$x30 (want $(printf '%08x' $((0x20280000+off+4))))"
   return 0
 }
-run N1 "$HOME/kbuild/m7642-out/m7642-rec-73-fixN1.img" 7bfd4780002454200596d9a87c5c8a81 0x465e4c || exit $?
-run N2 "$HOME/kbuild/m7642-out/m7642-rec-73-fixN2.img" 55604f65a31507ca9b81d4cf56c45303 0x4550a4 || exit $?
-run N3 "$HOME/kbuild/m7642-out/m7642-rec-73-fixN3.img" 2355a659f086e34e2e115efeba68def0 0x45580c || exit $?
-run N4 "$HOME/kbuild/m7642-out/m7642-rec-73-fixN4.img" 27339fc9358be52066738cc0dcfee6c0 0x455580 || exit $?
+run N1 "$HOME/Debian/m7642-build/out/m7642-rec-73-fixN1.img" 7bfd4780002454200596d9a87c5c8a81 0x465e4c || exit $?
+run N2 "$HOME/Debian/m7642-build/out/m7642-rec-73-fixN2.img" 55604f65a31507ca9b81d4cf56c45303 0x4550a4 || exit $?
+run N3 "$HOME/Debian/m7642-build/out/m7642-rec-73-fixN3.img" 2355a659f086e34e2e115efeba68def0 0x45580c || exit $?
+run N4 "$HOME/Debian/m7642-build/out/m7642-rec-73-fixN4.img" 27339fc9358be52066738cc0dcfee6c0 0x455580 || exit $?
 echo "ALL REACHED up to __primary_switch"

@@ -11,7 +11,7 @@ for i in $(seq 1 50); do
   sleep 6
 done
 [ "$(root 'getprop sys.boot_completed' 2>/dev/null | tr -d '\r')" = 1 ] || { echo "device never came up"; exit 9; }
-$ADB -s $TV push $HOME/kbuild/m7642-out/m7642-rec-73-fixU-0x465ec8.img /data/local/tmp/u2.img >/dev/null
+$ADB -s $TV push $HOME/Debian/m7642-build/out/m7642-rec-73-fixU-0x465ec8.img /data/local/tmp/u2.img >/dev/null
 o=$(root "dd if=/data/local/tmp/u2.img of=/dev/block/by-name/recovery bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/recovery" | tr -d '\r' | cut -d' ' -f1)
 [ "$o" = "$IMD5" ] || { echo "slot mismatch $o"; exit 1; }
 echo "=== U2 (checkpoint at the bl itself, 0x465ec8) at $(date +%H:%M:%S)"

@@ -17,11 +17,11 @@
 #   kva 0x4555b0  custom stub: record x8, read kernel VAs
 set -eu
 cd "$(dirname "$0")"
-KERNEL=${KERNEL:-/home/emfox/kbuild/linux-main}
+KERNEL=${KERNEL:-/home/emfox/Debian/m7642-build/kernel/linux-main}
 IMAGE=${IMAGE:-$KERNEL/arch/arm64/boot/Image}
-OUT=${OUT:-/home/emfox/kbuild/m7642-out}
+OUT=${OUT:-/home/emfox/Debian/m7642-build/out}
 MK=../../tools/host/mk-mainline-abort.py
-CROSS=${CROSS:-$HOME/kbuild/toolchain-gcc13/bin/aarch64-buildroot-linux-gnu-}
+CROSS=${CROSS:-$HOME/Debian/m7642-build/toolchain/gcc13/bin/aarch64-buildroot-linux-gnu-}
 TRAMP_AT=0x36c000
 FDT_SHIM=$((TRAMP_AT + 0xc0))
 

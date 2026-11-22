@@ -6,7 +6,7 @@ TV=192.168.10.60:5555
 IMD5=54bd15b0e8b41b768bd4be8feb0d9cf5
 root(){ $ADB -s $TV exec-out su -c "$1"; }
 $ADB connect $TV >/dev/null 2>&1
-$ADB -s $TV push $HOME/kbuild/m7642-out/m7642-boot-paint24e.img /data/local/tmp/paint24e.img >/dev/null
+$ADB -s $TV push $HOME/Debian/m7642-build/out/m7642-boot-paint24e.img /data/local/tmp/paint24e.img >/dev/null
 o=$(root "dd if=/data/local/tmp/paint24e.img of=/dev/block/by-name/boot bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/boot" | tr -d '\r' | cut -d' ' -f1)
 echo "boot slot -> $o"; [ "$o" = "$IMD5" ] || { echo FAIL; exit 1; }
 echo "=== reboot at $(date +%H:%M:%S)"; $ADB -s $TV reboot; sleep 10

@@ -25,7 +25,7 @@
 
 ## 镜像
 
-`~/kbuild/m7642-out/m7642-ladder.img`（24,111,104 字节，md5 `635ff73ef8a0b2883a28ec17a8ec2e12`）
+`~/Debian/m7642-build/out/m7642-ladder.img`（24,111,104 字节，md5 `635ff73ef8a0b2883a28ec17a8ec2e12`）
 
 三级梯子，每级颜色不同，任何一级跑过都会在面板上留下痕迹：
 
@@ -86,7 +86,7 @@ ADB=~/Debian/tv/adb/platform-tools/adb TV=192.168.10.60:5555 \
 ### 1. 装镜像（只写 recovery 槽，不碰 boot）
 
 ```
-IMG=~/kbuild/m7642-out/m7642-ladder.img ~/Debian/m7642/tools/host/boottest.sh arm
+IMG=~/Debian/m7642-build/out/m7642-ladder.img ~/Debian/m7642/tools/host/boottest.sh arm
 ~/Debian/m7642/tools/host/boottest.sh reboot
 ```
 
@@ -161,8 +161,8 @@ Android 正常起来后：
 
 ```
 cd ~/Debian/m7642/probes/ladder
-CC=~/kbuild/toolchain-gcc13/bin/aarch64-buildroot-linux-gnu-gcc
-OC=~/kbuild/toolchain-gcc13/bin/aarch64-buildroot-linux-gnu-objcopy
+CC=~/Debian/m7642-build/toolchain/gcc13/bin/aarch64-buildroot-linux-gnu-gcc
+OC=~/Debian/m7642-build/toolchain/gcc13/bin/aarch64-buildroot-linux-gnu-objcopy
 $CC -c -DCOLOUR=0x001f -DSTEP=1 -o blue.o ladder.S   && $OC -O binary -j .text blue.o blue.bin
 $CC -c -DCOLOUR=0xffe0 -DSTEP=2 -o yellow.o ladder.S && $OC -O binary -j .text yellow.o yellow.bin
 cd ~/Debian/m7642 && python3 tools/host/mk-ladder.py

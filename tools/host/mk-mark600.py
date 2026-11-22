@@ -15,9 +15,9 @@ import os
 import struct
 import subprocess
 
-OUT = os.path.expanduser("~/kbuild/m7642-out")
-IMAGE = os.path.expanduser("~/kbuild/linux-main/arch/arm64/boot/Image")
-SRC = os.path.expanduser("~/kbuild/rec/recovery_full.bin")
+OUT = os.path.expanduser("~/Debian/m7642-build/out")
+IMAGE = os.path.expanduser("~/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image")
+SRC = os.path.expanduser("~/Debian/m7642-build/backups/partitions/rec/recovery_full.bin")
 PROBE = os.path.expanduser("~/Debian/m7642/probes/mark600/probe.bin")
 TAG = os.environ.get("TAG", "probe-mark600.img")
 PROBE_AT = 0x600000

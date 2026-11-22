@@ -10,7 +10,7 @@
 # power-on.  That also means a bad image is a bad boot -- the way back is the
 # rescue stick (rescue-fast.bin rewrites boot), not a warm reset.
 #
-#   IMG=~/kbuild/m7642-out/m7642-boot-beacon.img tools/host/bootarm.sh arm
+#   IMG=~/Debian/m7642-build/out/m7642-boot-beacon.img tools/host/bootarm.sh arm
 #   tools/host/bootarm.sh verify
 #   tools/host/bootarm.sh reboot
 #
@@ -71,7 +71,7 @@ verify)
     need_su
     say "boot 槽头部"
     A shell "/system/bin/su -c 'dd if=$PART bs=1 count=12 2>/dev/null | od -A n -t x1'" | tr -d '\r'
-    find "$HOME/kbuild" -maxdepth 2 -name 'boot-stock-backup.bin' 2>/dev/null | head -1 |
+    find "$HOME/Debian/m7642-build" -maxdepth 4 -name 'boot-stock-backup.bin' 2>/dev/null | head -1 |
         while read -r f; do echo "厂值备份 $f  $(md5sum "$f" | cut -d' ' -f1)"; done
     ;;
 reboot)

@@ -47,10 +47,10 @@
 ## 复现
 
 ```sh
-~/kbuild/score-drivers.sh            # 全部
-~/kbuild/score-drivers.sh gpio mspi  # 指定驱动
-# 日志落在 ~/kbuild/score/<driver>.log，统计：
-grep "error:" ~/kbuild/score/mmc.log | grep -c "drivers/mstar2/"
+~/Debian/m7642-build/scripts/score-drivers.sh            # 全部
+~/Debian/m7642-build/scripts/score-drivers.sh gpio mspi  # 指定驱动
+# 日志落在 ~/Debian/m7642-build/diag/score/<driver>.log，统计：
+grep "error:" ~/Debian/m7642-build/diag/score/mmc.log | grep -c "drivers/mstar2/"
 ```
 
 ## 下一步建议

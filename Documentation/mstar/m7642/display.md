@@ -156,7 +156,7 @@ bank 2 是 8 个值的两遍重复（`fc 88 f2 75 1b fe f7 49`），像色彩键
 
 ```sh
 # 1. 构建（设备原始 .config + 合成的 Module.symvers）
-CROSS=$HOME/kbuild/aarch64--glibc--stable-2018.11-1/bin/aarch64-linux-
+CROSS=$HOME/Debian/m7642-build/toolchain/gcc13/bin/aarch64-buildroot-linux-gnu-
 make -s -C kernel_mstar-main O=$PWD/modtest2/out ARCH=arm64 CROSS_COMPILE=$CROSS \
      M=$PWD/probe8 modules
 
@@ -363,7 +363,7 @@ RGB565 = 0xF81F   ARGB8888 = 0xFF00FF
 
 ### 11.1 原厂 boot 镜像的两条实测
 
-读 `~/kbuild/boot-stock-backup.bin`（32 MiB，`mmcblk0p8` 的备份）：
+读 `~/Debian/m7642-build/backups/partitions/boot-stock-backup.bin`（32 MiB，`mmcblk0p8` 的备份）：
 
 ```
 code0  91005a4d   add x13, x18, #0x16      <- 不是分支
@@ -391,7 +391,7 @@ code1   144b527f -> 0x12d4a00        ✓
 tail    17f32d13 -> 0xfa0000         ✓
 ```
 
-镜像 `~/kbuild/m7642-out/m7642-boot-beacon.img`，33,554,432 B（= 分区大小），
+镜像 `~/Debian/m7642-build/out/m7642-boot-beacon.img`，33,554,432 B（= 分区大小），
 md5 `caaccfa8f46b14d86944a35a7d475b30`。
 
 探针本体是 `probes/ladder` 的 `blue-hold.bin`（`FREEZE=0 HOLD=8`）：
@@ -458,7 +458,7 @@ mrs x11, CNTFRQ_EL0 / mrs x12, CNTVCT_EL0 / madd deadline
 ```
 
 不碰 GOP、不写内存、不用栈，只读两个系统寄存器。产物
-`~/kbuild/m7642-out/m7642-boot-delay10.img`（md5 `3a2ee924e22a0277de63389db084535f`）。
+`~/Debian/m7642-build/out/m7642-boot-delay10.img`（md5 `3a2ee924e22a0277de63389db084535f`）。
 
 | 现象 | 含义 |
 |---|---|

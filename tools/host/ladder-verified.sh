@@ -4,7 +4,7 @@
 set -u
 ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 TV=192.168.10.60:5555
-B=$HOME/kbuild/m7642-out
+B=$HOME/Debian/m7642-build/out
 root(){ $ADB -s $TV exec-out su -c "$1"; }
 ready(){ $ADB connect $TV >/dev/null 2>&1; [ "$(root 'getprop sys.boot_completed' 2>/dev/null | tr -d '\r')" = 1 ]; }
 run(){

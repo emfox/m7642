@@ -1,6 +1,6 @@
 # mboot 环境变量(ENV):位置、格式、启动路径
 
-> 2026-11-19 19:4x 实测。数据来自 eMMC 前 64 MB 转储(`~/kbuild/emmcboot/e64.bin`),
+> 2026-11-19 19:4x 实测。数据来自 eMMC 前 64 MB 转储(`~/Debian/m7642-build/ref/emmcboot/e64.bin`),
 > 备份 `env-primary.bin` / `env-backup.bin`,工具 `tools/host/envtool.py`。
 
 ## 一、位置

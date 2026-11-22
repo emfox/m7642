@@ -28,11 +28,11 @@ set -u
 
 ADB=${ADB:-/home/emfox/Debian/tv/adb/platform-tools/adb}
 TV=${TV:-192.168.10.60:5555}
-IMG=${IMG:-/home/emfox/kbuild/m7642-out/m7642-boot.img}
+IMG=${IMG:-/home/emfox/Debian/m7642-build/out/m7642-boot.img}
 # Full rescue (misc + dtb + recovery + boot), and a 20 KB package that only
 # wipes misc -- enough to break the BCB loop in about one second.
-RESCUE=${RESCUE:-/home/emfox/kbuild/backup/fix/rescue-fast.bin}
-UNSTICK=${UNSTICK:-/home/emfox/kbuild/rescue/partial/m7642-misc-stock.bin}
+RESCUE=${RESCUE:-/home/emfox/Debian/m7642-build/backups/fix/rescue-fast.bin}
+UNSTICK=${UNSTICK:-/home/emfox/Debian/m7642-build/backups/rescue/partial/m7642-misc-stock.bin}
 STICK_NAME=V8-T652T03-LF1V147.bin
 W=/data/local/tmp
 MISC=/dev/block/by-name/misc

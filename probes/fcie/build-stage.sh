@@ -7,11 +7,11 @@
 #
 # Usage: build-stage.sh
 set -eu
-CROSS=${CROSS:-$HOME/kbuild/toolchain-gcc13/bin/aarch64-buildroot-linux-gnu-}
+CROSS=${CROSS:-$HOME/Debian/m7642-build/toolchain/gcc13/bin/aarch64-buildroot-linux-gnu-}
 D=$(cd "$(dirname "$0")" && pwd)
-W=$HOME/kbuild/fcie-build
-IMG=${IMG:-$HOME/kbuild/linux-main/arch/arm64/boot/Image}
-OUT=${OUT:-$HOME/kbuild/m7642-out}
+W=$HOME/Debian/m7642-build/build/fcie-build
+IMG=${IMG:-$HOME/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image}
+OUT=${OUT:-$HOME/Debian/m7642-build/out}
 mkdir -p "$W"
 
 "$D/build.sh" bare

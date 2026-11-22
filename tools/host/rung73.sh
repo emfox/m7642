@@ -6,18 +6,18 @@ ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 TV=192.168.10.60:5555
 R=${1:?usage: rung73.sh A|B|C|D|E}
 case $R in
-  A) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungA.img; IMD5=1cb41a671c70b1b83f9cc668fcbe8217; OFF=0x4;;
-  B) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungB.img; IMD5=75efe3cf0669f6f0aad9ee8b24335e6b; OFF=0x455038;;
-  C) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungC.img; IMD5=d5ddfa21086f47ce83d2b03d1d2ae62c; OFF=0x465e5c;;
-  D) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungD.img; IMD5=b977e569c7e172914e437e3b571b33e0; OFF=0x465eb8;;
-  E) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungE.img; IMD5=ffbfd7349d44d3b753b6eca19d8f51ce; OFF=0x465ef0;;
-  F) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungF.img; IMD5=8ae0ca762e6c2424530a7608fb1ca5cc; OFF=0x4550a4;;  # init_kernel_el
-  G) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungG.img; IMD5=c9eb73b2c99671a41074b0eb6139e5dc; OFF=0x455580;;  # __primary_switch
-  H) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungH.img; IMD5=d7cb736466dba7111a3c76ba2b3c9199; OFF=0x465e4c;;  # __pi_create_init_idmap
-  I) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungI.img; IMD5=9fc045e8126c9a2b738f8681e916e875; OFF=0x45580c;;  # __cpu_setup
-  J) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungJ.img; IMD5=e206dc683fb1b5d913367e5584b2617a; OFF=0x46801c;;  # preserve_boot_args
-  K) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungK.img; IMD5=1eb9c148f7af0d86c00c761a3b685d10; OFF=0x455048;;  # after sp setup
-  L) IMG=$HOME/kbuild/m7642-out/m7642-rec-73-rungL.img; IMD5=2db32db930eb031595c870454be74083; OFF=0x467fd0;;  # record_mmu_state
+  A) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungA.img; IMD5=1cb41a671c70b1b83f9cc668fcbe8217; OFF=0x4;;
+  B) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungB.img; IMD5=75efe3cf0669f6f0aad9ee8b24335e6b; OFF=0x455038;;
+  C) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungC.img; IMD5=d5ddfa21086f47ce83d2b03d1d2ae62c; OFF=0x465e5c;;
+  D) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungD.img; IMD5=b977e569c7e172914e437e3b571b33e0; OFF=0x465eb8;;
+  E) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungE.img; IMD5=ffbfd7349d44d3b753b6eca19d8f51ce; OFF=0x465ef0;;
+  F) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungF.img; IMD5=8ae0ca762e6c2424530a7608fb1ca5cc; OFF=0x4550a4;;  # init_kernel_el
+  G) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungG.img; IMD5=c9eb73b2c99671a41074b0eb6139e5dc; OFF=0x455580;;  # __primary_switch
+  H) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungH.img; IMD5=d7cb736466dba7111a3c76ba2b3c9199; OFF=0x465e4c;;  # __pi_create_init_idmap
+  I) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungI.img; IMD5=9fc045e8126c9a2b738f8681e916e875; OFF=0x45580c;;  # __cpu_setup
+  J) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungJ.img; IMD5=e206dc683fb1b5d913367e5584b2617a; OFF=0x46801c;;  # preserve_boot_args
+  K) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungK.img; IMD5=1eb9c148f7af0d86c00c761a3b685d10; OFF=0x455048;;  # after sp setup
+  L) IMG=$HOME/Debian/m7642-build/out/m7642-rec-73-rungL.img; IMD5=2db32db930eb031595c870454be74083; OFF=0x467fd0;;  # record_mmu_state
   *) echo "unknown rung"; exit 1;;
 esac
 root(){ $ADB -s $TV exec-out su -c "$1"; }

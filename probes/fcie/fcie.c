@@ -16,8 +16,8 @@
 // Verified 2026-11-22 against 32-bit physical reads of 0x1F222640 / 0x1F22262C
 // / 0x1F222634 / 0x1F247E68 through mioreg: all four matched.
 //
-// Build (hand-rolled module link, see ~/kbuild/build-probe.sh):
-//   ~/kbuild/build-probe.sh fcie
+// Build (hand-rolled module link, see ~/Debian/m7642-build/scripts/build-probe.sh):
+//   ~/Debian/m7642-build/scripts/build-probe.sh fcie
 // Run:
 //   busybox rmmod fcie 2>/dev/null
 //   busybox insmod /data/local/tmp/fcie.ko

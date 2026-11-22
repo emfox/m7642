@@ -10,8 +10,8 @@ import argparse, struct, hashlib
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", default="/home/emfox/kbuild/rec/recovery_full.bin")
-    ap.add_argument("--image", default="/home/emfox/kbuild/tcl-419/arch/arm64/boot/Image")
+    ap.add_argument("--src", default="/home/emfox/Debian/m7642-build/backups/partitions/rec/recovery_full.bin")
+    ap.add_argument("--image", default="/home/emfox/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image")
     ap.add_argument("--stub", required=True)
     ap.add_argument("--out", required=True)
     a = ap.parse_args()

@@ -20,7 +20,7 @@ runonce(){
   done
   return 4
 }
-B=$HOME/kbuild/m7642-out
+B=$HOME/Debian/m7642-build/out
 for spec in "U1:0x465e80:b3b797bd8c50abe03da836de782f7f4a" "V1:0x465e94:cd8b47abb5a30ec66226161cdec07b62"; do
   tag=${spec%%:*}; rest=${spec#*:}; off=${rest%%:*}; md5=${rest##*:}
   if [ "$tag" = U1 ]; then img=$B/m7642-rec-73-fixU-0x465e80.img; else img=$B/m7642-rec-73-fix${tag}.img; fi

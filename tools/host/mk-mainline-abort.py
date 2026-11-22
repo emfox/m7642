@@ -15,8 +15,8 @@ import argparse, struct, hashlib
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", default="/home/emfox/kbuild/rec/recovery_full.bin")
-    ap.add_argument("--image", default="/home/emfox/kbuild/tcl-419/arch/arm64/boot/Image")
+    ap.add_argument("--src", default="/home/emfox/Debian/m7642-build/backups/partitions/rec/recovery_full.bin")
+    ap.add_argument("--image", default="/home/emfox/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image")
     ap.add_argument("--at", type=lambda x: int(x, 0), default=None,
                     help="Image offset to patch with `bl` (default: code1 at 4)")
     ap.add_argument("--nop", type=lambda x: int(x, 0), action="append", default=[],

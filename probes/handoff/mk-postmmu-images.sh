@@ -13,10 +13,10 @@
 #   m7642-rec-73-mmuon   __enable_mmu after msr  _start      (MMU just on, still at PA)
 set -eu
 cd "$(dirname "$0")"
-KERNEL=${KERNEL:-/home/emfox/kbuild/linux-main}
+KERNEL=${KERNEL:-/home/emfox/Debian/m7642-build/kernel/linux-main}
 IMAGE=${IMAGE:-$KERNEL/arch/arm64/boot/Image}
 SYSMAP=${SYSMAP:-$KERNEL/System.map}
-OUT=${OUT:-/home/emfox/kbuild/m7642-out}
+OUT=${OUT:-/home/emfox/Debian/m7642-build/out}
 MK=../../tools/host/mk-mainline-abort.py
 TRAMP_AT=0x36c000
 FDT_SHIM=$((TRAMP_AT + 0xc0))

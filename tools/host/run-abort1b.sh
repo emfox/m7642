@@ -2,7 +2,7 @@
 set -u
 ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 TV=192.168.10.60:5555
-IMG=/home/emfox/kbuild/m7642-out/m7642-rec-abort1b.img
+IMG=/home/emfox/Debian/m7642-build/out/m7642-rec-abort1b.img
 IMD5=d6012ab138fb4a33a3015ac103f4d478
 root(){ $ADB -s $TV exec-out su -c "$1"; }
 $ADB connect $TV >/dev/null 2>&1

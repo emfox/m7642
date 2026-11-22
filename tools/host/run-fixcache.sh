@@ -6,7 +6,7 @@ IMD5=e3371ae4b626ffd11fcc3baac7818b5a
 root(){ $ADB -s $TV exec-out su -c "$1"; }
 $ADB connect $TV >/dev/null 2>&1
 [ "$(root 'getprop sys.boot_completed' | tr -d '\r')" = 1 ] || { echo "not in Android"; exit 1; }
-$ADB -s $TV push $HOME/kbuild/m7642-out/m7642-rec-73-fixcacheK.img /data/local/tmp/fix.img >/dev/null
+$ADB -s $TV push $HOME/Debian/m7642-build/out/m7642-rec-73-fixcacheK.img /data/local/tmp/fix.img >/dev/null
 o=$(root "dd if=/data/local/tmp/fix.img of=/dev/block/by-name/recovery bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/recovery" | tr -d '\r' | cut -d' ' -f1)
 [ "$o" = "$IMD5" ] || { echo "slot mismatch $o"; exit 1; }
 echo "=== armed (nop @0x46803c + checkpoint @0x455048) at $(date +%H:%M:%S)"

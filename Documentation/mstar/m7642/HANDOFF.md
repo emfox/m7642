@@ -2,7 +2,7 @@
 
 > **写给接手的新对话。** 日期 2026-11-21 11:41，交接人：小布。
 > 本地目录和文件全部不变，新对话直接在 `/home/emfox/Debian/m7642/` 和
-> `~/kbuild/` 上继续。本文只交接**脑子里的东西**：项目在哪、什么被证过、什么被否过、
+> `~/Debian/m7642-build/` 上继续（原 `~/kbuild/`，2026-11-22 迁移，布局见 paths.md §1）。本文只交接**脑子里的东西**：项目在哪、什么被证过、什么被否过、
 > 什么绝对不能做、下一步第一个动作是什么。
 >
 > **读完本文，再按 §2 的顺序读那 5 份。** 不要跳过 §5「已否定」。
@@ -59,7 +59,7 @@
 | 项 | 实测值 | 判读 |
 |---|---|---|
 | adb | `192.168.10.60:5555` → `device` | 通，`su -c id` 返回 root |
-| boot 槽 `mmcblk0p8` | md5 `6272b10dcaf5e9efa40491d87f2c1289` | **与 `~/kbuild/boot-stock-backup.bin` 逐字节相同**，探针已清 |
+| boot 槽 `mmcblk0p8` | md5 `6272b10dcaf5e9efa40491d87f2c1289` | **与 `~/Debian/m7642-build/backups/partitions/boot-stock-backup.bin` 逐字节相同**，探针已清 |
 | `bootcmd` | `mmc read.p 0x23000000 dtb 0x00100000; mmc read.p 0x25000000 boot 0x02000000; bootm 0x25000000` | 厂方原文，**不带 `wdt_enable`** |
 | `recoverycmd` | 同上，把 `boot` 换成 `recovery` | 厂方原文，**不带 `mmc erase.p misc`、不带 `wdt_enable`** |
 | `WDT_ENABLE` | `1` | 前置条件在（`wdt_enable` 命令本体要求它非空） |
@@ -155,14 +155,14 @@ dd if=env-write.bin of=/dev/block/mmcblk0 bs=4096 seek=2528 count=32   # 写
 # ⚠️ toybox dd 不支持 conv=notrunc（报 "conv option disabled"），去掉即可
 
 # env 工具（CRC 自动重算，主备两份要写一样）
-~/kbuild/... envtool.py list/get/set/verify <block>
+envtool.py list/get/set/verify <block>（env 快照在 ~/Debian/m7642-build/diag/）
 
 # 交叉工具链前缀是 aarch64-buildroot-linux-gnu-（不是 aarch64-linux-gnu-）
-export PATH=~/kbuild/toolchain-gcc13/bin:$PATH
+export PATH=~/Debian/m7642-build/toolchain/gcc13/bin:$PATH
 
 # 构建 boot 槽探针镜像（把 blob 接到原厂内核尾部，code1 跳过去，尾字跳回 0xfa0000）
-python3 tools/host/mk-boot-beacon.py --src ~/kbuild/boot-stock-backup.bin \
-    --blob probes/handoff/handoff1.bin --out ~/kbuild/m7642-out/xxx.img
+python3 tools/host/mk-boot-beacon.py --src ~/Debian/m7642-build/backups/partitions/boot-stock-backup.bin \
+    --blob probes/handoff/handoff1.bin --out ~/Debian/m7642-build/out/xxx.img
 
 # 编译裸探针
 aarch64-buildroot-linux-gnu-gcc -c x.S -o x.o
@@ -223,7 +223,7 @@ aarch64-buildroot-linux-gnu-objcopy -O binary --only-section=.text x.o x.bin
 记录 `size=72`（8 B 标记 + 7 × 8 B）。
 
 现成的 boot 槽版镜像（**已作废，只作参考**）：
-`~/kbuild/m7642-out/m7642-boot-handoff1.img`，33,554,432 B，
+`~/Debian/m7642-build/out/m7642-boot-handoff1.img`，33,554,432 B，
 md5 `3a950d5064b4569f47df1d4337faa2f6`，`code1 144b527f`，尾字 `17f32d68`。
 
 ### 8.3 上一发为什么挂（嫌疑清单，**没有逐条二分，别当已知**）
@@ -273,16 +273,16 @@ md5 `3a950d5064b4569f47df1d4337faa2f6`，`code1 144b527f`，尾字 `17f32d68`。
 
 | 路径 | 是什么 | 校验 |
 |---|---|---|
-| `~/kbuild/boot-stock-backup.bin` | **厂值 boot，救砖/回滚的基准** | 33,554,432 B · md5 `6272b10dcaf5e9efa40491d87f2c1289` |
-| `~/kbuild/rec/recovery_full.bin` | 厂值 recovery 全槽 32 MB | 33,554,432 B |
-| `~/kbuild/rec/rec.head.factory.bin` | 厂值 recovery 槽前 21,618,688 B | md5 `0f6e1705f077935e1c3018973e658bfa` |
-| `~/kbuild/backup/fix/rescue-fast.bin` | **救砖包（唯一能修 boot 的 47 MB 包）** | md5 `7e8ef7a725e163672af7fb824b066abc` |
-| `~/kbuild/backup/fix/rescue-norecovery.bin` | ⚠️ **同名同尺寸，但修不了 boot** | md5 `326132c7…` |
-| `~/kbuild/env-after-rescue.bin` | 救砖后 env 快照（主备两份，131072 B；单份 md5 `8111a0f4…`） | 只读存档 |
-| `~/kbuild/env-write.bin` | **当前设备上那份**（含 `MstarUpgrade_complete=1`，主备两份） | 131072 B · md5 `b6dee2daaa9019f6c9d6596692005620` |
-| `~/kbuild/emmcboot/now/env-wdt.bin` | 旧 WDT 配置快照 —— ⚠️ **已被救砖重置，仅存档，不要直接写回** | 64 KiB |
-| `~/kbuild/m7642-out/m7642-419-pstore.img` | 4.19 镜像，ladder 已改成写 ramoops 签名 | 21,618,688 B · md5 `7047387799c19444798060782d1ae4ca` |
-| `~/kbuild/m7642-out/m7642-boot-handoff1.img` | 第一档探针的 boot 槽版（**作废，只作参考**） | md5 `3a950d5064b4569f47df1d4337faa2f6` |
+| `~/Debian/m7642-build/backups/partitions/boot-stock-backup.bin` | **厂值 boot，救砖/回滚的基准** | 33,554,432 B · md5 `6272b10dcaf5e9efa40491d87f2c1289` |
+| `~/Debian/m7642-build/backups/partitions/rec/recovery_full.bin` | 厂值 recovery 全槽 32 MB | 33,554,432 B |
+| `~/Debian/m7642-build/backups/partitions/rec/rec.head.factory.bin` | 厂值 recovery 槽前 21,618,688 B | md5 `0f6e1705f077935e1c3018973e658bfa` |
+| `~/Debian/m7642-build/backups/fix/rescue-fast.bin` | **救砖包（唯一能修 boot 的 47 MB 包）** | md5 `7e8ef7a725e163672af7fb824b066abc` |
+| `~/Debian/m7642-build/backups/fix/rescue-norecovery.bin` | ⚠️ **同名同尺寸，但修不了 boot** | md5 `326132c7…` |
+| `~/Debian/m7642-build/diag/env-after-rescue.bin` | 救砖后 env 快照（主备两份，131072 B；单份 md5 `8111a0f4…`） | 只读存档 |
+| `~/Debian/m7642-build/diag/env-write.bin` | **当前设备上那份**（含 `MstarUpgrade_complete=1`，主备两份） | 131072 B · md5 `b6dee2daaa9019f6c9d6596692005620` |
+| `~/Debian/m7642-build/ref/emmcboot/now/env-wdt.bin` | 旧 WDT 配置快照 —— ⚠️ **已被救砖重置，仅存档，不要直接写回** | 64 KiB |
+| `~/Debian/m7642-build/out/m7642-419-pstore.img` | 4.19 镜像，ladder 已改成写 ramoops 签名 | 21,618,688 B · md5 `7047387799c19444798060782d1ae4ca` |
+| `~/Debian/m7642-build/out/m7642-boot-handoff1.img` | 第一档探针的 boot 槽版（**作废，只作参考**） | md5 `3a950d5064b4569f47df1d4337faa2f6` |
 | `~/Debian/m7642/probes/handoff/handoff1.{S,bin}` | 第一档探针源码 + 100 B blob | — |
 | `~/Debian/m7642/tools/host/mk-boot-beacon.py` | 注入器（把 blob 接到内核尾部 + patch code1 + 尾字） | — |
 | `~/Debian/m7642/tools/host/envtool.py` | env 解析 / 改 / CRC 重算 | — |

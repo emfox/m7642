@@ -5,7 +5,7 @@ set -u
 ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 TV=192.168.10.60:5555
 T=/home/emfox/Debian/m7642/tools/host/envtool.py
-IMG=/home/emfox/kbuild/m7642-out/m7642-rec-handoff1-hang.img
+IMG=/home/emfox/Debian/m7642-build/out/m7642-rec-handoff1-hang.img
 IMD5=4cdbc794195c44bf964639d0eaf0c9fd
 RC='mmc erase.p misc; mmc read.p 0x23000000 dtb 0x00100000; mmc read.p 0x25000000 recovery 0x02000000; wdt_enable 10; bootm 0x25000000'
 dev() { $ADB -s $TV shell "$@"; }

@@ -8,11 +8,11 @@
 #
 # Usage: build-boot.sh [out.img]
 set -eu
-CROSS=${CROSS:-$HOME/kbuild/toolchain-gcc13/bin/aarch64-buildroot-linux-gnu-}
+CROSS=${CROSS:-$HOME/Debian/m7642-build/toolchain/gcc13/bin/aarch64-buildroot-linux-gnu-}
 D=$(cd "$(dirname "$0")" && pwd)
-W=$HOME/kbuild/fcie-build
-IMG=${IMG:-$HOME/kbuild/linux-main/arch/arm64/boot/Image}
-OUT=${1:-$HOME/kbuild/m7642-out/m7642-rec-73-emmc.img}
+W=$HOME/Debian/m7642-build/build/fcie-build
+IMG=${IMG:-$HOME/Debian/m7642-build/kernel/linux-main/arch/arm64/boot/Image}
+OUT=${1:-$HOME/Debian/m7642-build/out/m7642-rec-73-emmc.img}
 mkdir -p "$W"
 
 "$D/build.sh" bare

@@ -8,7 +8,7 @@ root(){ $ADB -s $TV exec-out su -c "$1"; }
 ready(){ $ADB connect $TV >/dev/null 2>&1; [ "$(root 'getprop sys.boot_completed' 2>/dev/null | tr -d '\r')" = 1 ]; }
 for n in 1 2 3; do
   ready || { echo "run$n: device not ready, stopping"; exit 9; }
-  $ADB -s $TV push $HOME/kbuild/m7642-out/m7642-rec-abort1.img /data/local/tmp/a1.img >/dev/null
+  $ADB -s $TV push $HOME/Debian/m7642-build/out/m7642-rec-abort1.img /data/local/tmp/a1.img >/dev/null
   o=$(root "dd if=/data/local/tmp/a1.img of=/dev/block/by-name/recovery bs=4096 2>/dev/null; sync; md5sum /dev/block/by-name/recovery" | tr -d '\r' | cut -d' ' -f1)
   [ "$o" = "$IMD5" ] || { echo "run$n: slot mismatch ($o)"; exit 1; }
   t0=$(date +%s); echo "=== run$n $(date +%H:%M:%S)"

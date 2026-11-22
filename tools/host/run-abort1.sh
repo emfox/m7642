@@ -3,7 +3,7 @@ set -u
 ADB=/home/emfox/Debian/tv/adb/platform-tools/adb
 TV=192.168.10.60:5555
 T=/home/emfox/Debian/m7642/tools/host/envtool.py
-IMG=/home/emfox/kbuild/m7642-out/m7642-rec-abort1.img
+IMG=/home/emfox/Debian/m7642-build/out/m7642-rec-abort1.img
 IMD5=7aaef778634ddd654da4e802071a6b70
 RC='mmc erase.p misc; mmc read.p 0x23000000 dtb 0x00100000; mmc read.p 0x25000000 recovery 0x02000000; bootm 0x25000000'
 root(){ $ADB -s $TV exec-out su -c "$1"; }

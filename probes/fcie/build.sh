@@ -4,9 +4,9 @@
 #   $1 = "bare"  -> freestanding object  (for the checkpoint/bare-metal blob)
 #   $1 = "all"
 set -e
-CROSS=${CROSS:-$HOME/kbuild/toolchain-gcc13/bin/aarch64-buildroot-linux-gnu-}
+CROSS=${CROSS:-$HOME/Debian/m7642-build/toolchain/gcc13/bin/aarch64-buildroot-linux-gnu-}
 D=$(cd "$(dirname "$0")" && pwd)
-W=$HOME/kbuild/fcie-build
+W=$HOME/Debian/m7642-build/build/fcie-build
 mkdir -p "$W"
 
 bare() {
@@ -24,8 +24,8 @@ bare() {
 ko() {
 	# The vendor tree cannot build modules the normal way (see
 	# probes/README.md); build-probe.sh replays probe8's recorded command.
-	HOME=$HOME "$HOME/kbuild/build-probe.sh" fcie >/dev/null
-	cp "$HOME/kbuild/fcie/fcie.ko" "$W/fcie.ko"
+	"$HOME/Debian/m7642-build/scripts/build-probe.sh" fcie >/dev/null
+	cp "$HOME/Debian/m7642-build/build/modules/fcie/fcie.ko" "$W/fcie.ko"
 	ls -l "$W/fcie.ko"
 }
 

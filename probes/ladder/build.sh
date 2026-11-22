@@ -3,7 +3,7 @@
 # 32-bit COLOUR fails at compile time instead of on the panel.
 set -e
 cd "$(dirname "$0")"
-PATH="$PATH:$HOME/kbuild/toolchain-gcc13/bin"
+PATH="$PATH:$HOME/Debian/m7642-build/toolchain/gcc13/bin"
 CC=aarch64-buildroot-linux-gnu-gcc
 OC=aarch64-buildroot-linux-gnu-objcopy
 
