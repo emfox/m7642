@@ -55,6 +55,13 @@ typedef unsigned long long u64;
 #define R_NC_FUN_CTL     0x63   /* bit0 nc_en: FCIE owned by NAND path if set        */
 #define R_CMDFIFO(n)     (0x20 + (n))  /* 9 x 16-bit command/response FIFO            */
 
+/* Diagnostic stage: 0 = full CMD17, 1 = register setup only (no command at
+ * all -- no SD_MODE/FIFO write, no SD_CTRL, no DMA job).  Stage 1 tells a
+ * hanging register write apart from a hanging command/DMA. */
+#ifndef FCIE_STAGE
+#define FCIE_STAGE 0
+#endif
+
 /* ---- bits ------------------------------------------------------------- */
 #define EV_DMA_END   0x0001
 #define EV_CMD_END   0x0002
@@ -208,6 +215,11 @@ int fcie_read_block(u64 fcie_base, u32 lba, u64 dst_pa, u64 *diag)
 	/* 4. R1 response, 5 bytes; command size field stays 5 from mboot. */
 	fwr(fcie_base, R_CMD_RSP_SIZE,
 	    (frd(fcie_base, R_CMD_RSP_SIZE) & ~0x003F) | 5);
+
+#if FCIE_STAGE == 1
+	rc = 0;
+	goto out;		/* diagnostic: setup done, nothing armed */
+#endif
 
 	/* 5. command bytes: {0x40|cmd, arg[31:24], arg[23:16], arg[15:8], arg[7:0]}
 	 *    packed as the vendor does:

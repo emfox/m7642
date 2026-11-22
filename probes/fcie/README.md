@@ -94,18 +94,23 @@ md5sum ~/kbuild/m7642-out/m7642-rec-73-emmc.img      # a4479e336f3b4b4ac7fa5ca1a
 
 ### 2026-11-22 07:43 第一次上机：NO_RETURN
 
-489 s 无 Android、设备挂死（需物理断电）。失败是盲的，所以先跑两张更小的诊断镜像：
+489 s 无 Android、设备挂死（需物理断电）。失败是盲的，所以按「不碰 → 只读 → 只写 →
+全量」四级定位，每一级回来（Android 起）就不再需要断电：
 
 | 镜像 | md5 | 做什么 |
 |---|---|---|
 | `m7642-rec-73-ctl.img` | `097140f576ef6e34b467b66ced09ab59` | code1 只写记录 + 交接，**完全不碰 eMMC**（对照：证明这套镜像布局的交接没问题） |
 | `m7642-rec-73-regs.img` | `a2e76b787061b803c56bccc96686c973` | code1 **只读** 34 个 FCIE + 2 个 PLL 寄存器（不写、不发命令），存到 `0x23090000 + idx*4` / `0x23090400`，标记在 `0x23090800` |
+| `m7642-rec-73-setup.img` | `32897a40ccf8b08de2e1e2b7a4d02c59` | code1 **只做寄存器设置**（`-DFCIE_STAGE=1`：到 `CMD_RSP_SIZE` 就返回，不写 SD_MODE/FIFO、不写 SD_CTRL、不起 DMA），心跳照写 |
+| `m7642-rec-73-emmc.img` | `a4479e336f3b4b4ac7fa5ca1aad46887` | 全量 CMD17 |
 
 ```sh
 cd ~/Debian/m7642/probes/fcie
-./build-extra.sh                                   # 重建 ctl + regs
+./build-extra.sh; ./build-stage.sh; ./build-boot.sh      # 重建四张
 ~/Debian/m7642/probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-ctl.img 097140f576ef6e34b467b66ced09ab59 0x4
 ./run-regs.sh ~/kbuild/m7642-out/m7642-rec-73-regs.img a2e76b787061b803c56bccc96686c973
+./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-setup.img 32897a40ccf8b08de2e1e2b7a4d02c59   # 只关心心跳，MATCH 无意义
+./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img  a4479e336f3b4b4ac7fa5ca1aad46887
 ```
 
 判读：ctl 回来 ⟹ 交接没问题；regs 回来 ⟹ code1 能安全读 FCIE（并把 mboot 刚用完
