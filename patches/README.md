@@ -29,21 +29,15 @@ git am --keep-cr patches/series/*.patch
 
 **已验证**：按序 `git am` 到干净 `v7.3` 上，得到的树与本地 `m7642` 分支**完全一致（0 差异）**。
 
-## 完整恢复（含 8 个提交的历史）
-
-`kernel-m7642.bundle`（114 KB，带 prerequisite，需要一个含 `c03c1a145` 的仓库才能恢复）：
-
-```sh
-git bundle verify patches/kernel-m7642.bundle
-git clone --depth 1 --branch v7.3 <upstream> tmp && cd tmp
-git fetch ~/Debian/m7642/patches/kernel-m7642.bundle "refs/*:refs/remotes/bundle/*"
-```
 
 ## 为什么不把整棵内核树推到 GitHub
 
-内核树 `.git` 约 **297 MB**，其中 99.9% 与上游重复；而 `series/` + bundle 合计约 **670 KB**，
-可读、可 review、可重放。需要"能浏览的整树 + 分支"时，另建 `torvalds/linux` 的 **fork**
-（GitHub 侧共享对象，零存储成本），只上传我们新增的几十个 blob。
+内核树 `.git` 约 **297 MB**，其中 99.9% 与上游重复；`series/` 只有约 560 KB，
+可读、可 review、可重放。
+
+**按内核惯例，这里只存补丁系列**：补丁进仓库（或邮件列表）就是归档形态；想要"远端持久化的
+git 分支"，惯例是推一个公开的树（如 `torvalds/linux` 的 fork，GitHub 侧共享对象、零存储成本，
+只需上传我们新增的 blob），而不是在仓库里塞 git bundle——bundle 是气隙传输用的，不是归档格式。
 
 ## 历史
 
@@ -59,11 +53,3 @@ DTS 后续修改，且 0004 已无法干净应用。现由内核 git 树（分�
 | 2026-11-23 | **`v7.3.5` 753f54c3** | **9 个补丁重放零冲突、零差异**；构建通过；函数地址整体位移（`setup_arch` +8、`__primary_switched` +0x14、符号 +21 个），**函数内相对偏移不变** |
 
 升级后偏移由 `tools/host/ckpt.py` 按"符号+delta"重新解析，不再有任何手工写死的偏移。
-
-## patch 与 bundle 的分工（2026-11-23 实测）
-
-- **patch 系列**：人能读、能 review、能 grep，`git am` 到同版本源码树即可重建；
-  实测恢复后 **树对象完全一致**，但**提交 SHA 不同**（committer/时间变了）。
-- **bundle**（115 KB）：真实的 git 对象，恢复后**提交 SHA 也一致**；不受 diff 上下文漂移影响，
-  二进制/模式/符号链接完整保留。在不方便 review 的场合没用，但它是"能证明完全一致"的归档。
-- 两者都需要上游 base：patch 要 base 源码，bundle 要 base 的 commit 对象。
