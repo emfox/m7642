@@ -23,7 +23,7 @@
 - **洋红来源不明**：曾经以为 mboot 进 recovery 会画洋红底 `boot_recovery.jpg`，但 2026-11-20
   实测 `find / -xdev -iname "*boot_recovery*"` 零命中、`/tclconfig` 下只有 5 个品牌 `boot0.jpg`
   ⟹ 该图**不存在**，那句 `run_command("bootlogo … boot_recovery.jpg")` 必然失败。
-  所以停在洋红**既不能判"内核没跑"，也不能判"跑到第几级"**。见 `boot-test.md` §三 更正块。
+  所以停在洋红**既不能判"内核没跑"，也不能判"跑到第几级"**。见 [display.md](display.md) §九。
 - `0x4210` 是**暗紫蓝 RGB(66,65,132)**，不是中性灰。真灰是 `0x4208` / `0x8410`。
 - 哨兵色必须避开 `0xCCCC` / 白 / 红 / 绿 / 黄 / `0x4210` / `0x8410`。
 

@@ -20,3 +20,15 @@ __pycache__/
 .fixrefs.sh
 .gitinit.sh
 ref/mstar-mboot/
+
+# ---- 2026-11-22: 产物与原始数据不入库（见 Documentation/mstar/m7642/paths.md §0）
+*.elf
+*.img
+*.bin
+*.dump
+*.tar
+*.out
+*.bak-*
+*.old
+artifacts/probe-out/
+!probes/device-config.gz

@@ -3,11 +3,28 @@
 > **本文件是必读**（找不到东西时先看这里）。
 > 纪律在 [discipline.md](discipline.md)，事实在 [confirmed-facts.md](confirmed-facts.md)。
 
+## 0 仓库收什么（2026-11-22 定）
+
+**入库**：文档（结论 + 方法论）、可复用源码（`.c/.h/.S/.dts/.dtsi`）、脚本（`.sh/.py`）、
+补丁、`Makefile`/`README`，以及少量必需的参照数据（`probes/expect.tsv`、
+`probes/device-config.gz`、活体设备树、反汇编清单）。
+
+**不入库**：设备分区原始导出（`*-part-full-*.bin`、`*.img`）、构建与运行产物
+（`.bin/.elf/.ko/.o/.out/.tar/.dump`）、一次性实验代码、作废的读数日志。
+
+这些文件没有删除，统一平移到 `~/Debian/m7642-attic/<原相对路径>`，
+清单是 `~/Debian/m7642-attic/ATTIC.md`。文档里对它们的引用（例如
+`artifacts/probe-out/…`、`probes/ladder/blue.bin`）都按原相对路径去那里找。
+
+目标：仓库只留"能重跑出结论的东西"，体积从 56 MB 降到个位数，
+并且**不把厂商二进制和本机 dump 发到公网**。
+
 ## 1 代码仓库
 
 | 路径 | 是什么 | 备注 |
 |---|---|---|
-| `~/Debian/m7642/` | **本项目主仓库**（git，分支 `master`，**无远端**，本地历史） | 文档 / 补丁 / 探针 / 主机侧工具 / 刷机包工具 |
+| `~/Debian/m7642/` | **本项目主仓库**（git，分支 `master`，远端 `git@github.com:emfox/m7642.git`） | 文档 / 补丁 / 探针源码 / 脚本 / 刷机包工具 |
+| `~/Debian/m7642-attic/` | **仓库外留存区**：原始导出、构建产物、一次性实验、作废读数日志 | 不进 git；清单见其 `ATTIC.md` |
 | `~/kbuild/linux-main/` | **7.3 编译树**（Linux 7.3.0） | 只用于编译，不在这里写文档 |
 | `~/kbuild/tcl-419/` | **4.19 工作副本**（官方 fork） | 编译入口见 §3 |
 | `~/kbuild/tcl-src/` | 4.19 **原树**（未改动，对照用） | 被 `mstarKernelRelease.sh` 剥掉了 `mstar2/` |
@@ -54,8 +71,6 @@ bring-up beacon 要经线性映射写），不要拿它们当构建源。
 
 | 文件 | 内容 |
 |---|---|
-| [ladder6-readout.md](ladder6-readout.md) ~ [ladder9-readout.md](ladder9-readout.md) | 第 6–9 次梯级的实测读out |
-| [boot-test.md](boot-test.md) | 启动路径、boot image 参数、分区、可观察性（最大的一份） |
 | [online-test-ladder.md](online-test-ladder.md) | 在线验证的阶梯：从空模块到真探针 |
 | [remote-testing.md](remote-testing.md) | 不插 U 盘、不按键的远程验证路径 |
 | [ramoops.md](ramoops.md) | 跨崩溃日志通道、覆盖范围与盲区 |

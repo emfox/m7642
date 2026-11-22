@@ -43,7 +43,6 @@ mboot/GPU 竞争（谁最后写赢随机），项目在 2026-11-18 就把判据�
 | [hdmi.md](hdmi.md) | HDMI RX/TX 盘点（两条链路都零源码） |
 | [smp.md](smp.md) | 多核启动协议（非标准 spin-table） |
 | [remote-testing.md](remote-testing.md) | 不插 U 盘、不按键的远程验证路径 |
-| [boot-test.md](boot-test.md) | 启动路径：实测 boot image 参数、分区、可观察性 |
 | [ir-and-recovery.md](ir-and-recovery.md) | 红外救不了砖（解码在内核里）、mboot 的启动模式与远程恢复边界 |
 | [mboot-bootmode.md](mboot-bootmode.md) | mboot 镜像结构、内置 env、`update_mode` 命令，以及为什么没有纯软件救砖路径 |
 | [emmc.md](emmc.md) | eMMC 移植：FCIE 寄存器全表、五个依赖的解法、`while(1)` 版本门槛、P1 已编译通过 |
@@ -55,8 +54,13 @@ mboot/GPU 竞争（谁最后写赢随机），项目在 2026-11-18 就把判据�
 | [rung419-runbook.md](rung419-runbook.md) | **4.19 上机操作卡**：三级颜色判读、刷入、回滚、救砖 |
 | [wdt-beacon.md](wdt-beacon.md) | **★ WDT 信标**：用 mboot 自带的 `wdt_enable` 让设备自己重启，靠 DDR 标记分级 —— 颜色通道废掉之后的替代判据 |
 | [factory49-entry.md](factory49-entry.md) | 原厂 4.9 入口 `+0xFA0000` 判读卡、段界表、厂值 cmdline |
-| [ladder6-readout.md](ladder6-readout.md) ~ [ladder9-readout.md](ladder9-readout.md) | 第 6–9 次梯级的实测读out |
 | [misc-bcb-readout.md](misc-bcb-readout.md) | BCB 布局与实测（`boot-recovery` 非消费式） |
+
+> **早期原始记录不在仓库里**：`boot-test.md`（5600 行的启动路径研究日志）、
+> `ladder6`–`ladder9-readout.md`（已作废的颜色判据读out）已移出，见
+> [paths.md](paths.md) §0。它们的结论都已并入 `confirmed-facts.md`、
+> `factory49-entry.md`、`display.md`。
+
 | [prior-art.md](prior-art.md) | **同类案例与官方契约**：无串口时别人用什么信标（含我们已否证的两条）、ARM 板接屏的接口族、`simple-framebuffer` / `simpledrm` 绑定硬条款 |
 
 ## 可背下来的几条

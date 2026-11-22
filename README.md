@@ -5,6 +5,7 @@
 目标：在最新主线上跑起这台机器 —— 面板显示、HDMI、蓝牙遥控、WiFi 可用，并能承载 Android TV。
 
 本仓库存放移植过程的研究结论、可复现的取证工具和图树就绪的产物（DTS / 文档 / 补丁）。
+远端：`git@github.com:emfox/m7642.git`（`master`）。
 **不是内核源码树**：这里只放"会被提交到上游的那部分"，以及支撑结论的证据。
 
 ## 结构
@@ -14,12 +15,24 @@ Documentation/mstar/m7642/     研究文档（按子系统一份，结论 + 证�
 arch/arm64/boot/dts/mstar/     板级 DTS
 drivers/                       计划中的移植代码（当前只有占位说明）
 patches/                       git format-patch 序列
-probes/                        内核探针模块源码 + 构建输入
+probes/                        探针与注入器的源码（.c/.S），不带构建产物
 tools/host/                    开发机上跑的脚本
 tools/device/                  推到电视上跑的脚本
-artifacts/                     取证产物：反汇编、寄存器基线、活体 DTS、探针输出
+artifacts/                     少量参照物：反汇编清单、活体设备树、GOP 基线
 fw/                            固件（.bin）分析脚本
 ```
+
+### 这个仓库收什么、不收什么
+
+- **收**：结论与方法论、可复用源码、脚本、补丁、DTS，以及少量必需的参照数据。
+- **不收**：设备分区导出的 `.bin`/`.img`、构建产物（`.elf`/`.ko`/`.o`/`.out`）、
+  一次性实验代码、作废的读数日志。
+- 不收的东西**没有删**，平移到仓库外的 `~/Debian/m7642-attic/<原路径>`，
+  清单在 `~/Debian/m7642-attic/ATTIC.md`。文档里的这类引用按原相对路径去那里找。
+
+理由：仓库要能公开推送到 `github.com/emfox/m7642`，既不该带厂商二进制和本机 dump，
+也该保持"能重跑出结论"的最小集合。规则细节见
+`Documentation/mstar/m7642/paths.md` §0。
 
 命名与分层尽量对齐内核树（`Documentation/<vendor>/<soc>/`、`arch/arm64/boot/dts/<vendor>/`、
 `drivers/<子系统>/`、`tools/`、`patches/`），这样将来 `git format-patch` 出来的东西可以直接往上游送。
