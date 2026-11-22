@@ -87,7 +87,7 @@ probes/handoff/run-rung.sh ~/kbuild/m7642-out/m7642-rec-73-rung-0x465e80.img <md
   ~/Debian/m7642/probes/fcie/check-dump.sh /tmp/fcie.out
   # 2) CMD17：code1 处读 LBA 0，与内核 dd 的同一扇区逐字节对比
   cd ~/Debian/m7642/probes/fcie
-  ./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 12c117c1b0b642e7aec1bdfd97d75282
+  ./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img a4479e336f3b4b4ac7fa5ca1aad46887
   ```
 
   判据：心跳 `rc=0` + `R1` 的 CURRENT_STATE=4/READY_FOR_DATA=1 + 512 B 与 `dd` 一致。

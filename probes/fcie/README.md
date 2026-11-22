@@ -80,8 +80,8 @@ adb exec-out su -c "cat /data/local/tmp/fcie.out" > /tmp/fcie.out
 ```sh
 cd ~/Debian/m7642/probes/fcie
 ./build-boot.sh
-md5sum ~/kbuild/m7642-out/m7642-rec-73-emmc.img      # 12c117c1b0b642e7aec1bdfd97d75282
-./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img 12c117c1b0b642e7aec1bdfd97d75282
+md5sum ~/kbuild/m7642-out/m7642-rec-73-emmc.img      # a4479e336f3b4b4ac7fa5ca1aad46887
+./run-cmd17.sh ~/kbuild/m7642-out/m7642-rec-73-emmc.img a4479e336f3b4b4ac7fa5ca1aad46887
 ```
 
 `run-cmd17.sh` 起 Android 后读三处，并和内核自己

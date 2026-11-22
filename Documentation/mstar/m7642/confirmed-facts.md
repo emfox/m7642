@@ -1257,7 +1257,7 @@ adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie;
    **2026-11-22 07:43 第一次上机：NO_RETURN**（489 s 无 Android，设备挂死、需物理断电）。
    失败是盲的，因此把探针里所有等待改成**双上限**（CNTPCT 截止 + 2e9 次迭代 `SPIN_CAP`），
    这样即使系统计数器停走也只是返回错误码而不是静默死等；全量镜像 md5 改为
-   `12c117c1b0b642e7aec1bdfd97d75282`。另做两张更小的诊断镜像：
+   `a4479e336f3b4b4ac7fa5ca1aad46887`。另做两张更小的诊断镜像：
    `ctl`（code1 只写记录+交接，完全不碰 eMMC）md5 `097140f576ef6e34b467b66ced09ab59`、
    `regs`（code1 只读 34 个 FCIE + 2 个 PLL 寄存器，不写不发命令）md5
    `a2e76b787061b803c56bccc96686c973`。顺序：ctl → regs → 全量 CMD17。

@@ -281,7 +281,10 @@ out:
 		diag[2] = ev;
 		diag[3] = miu;
 	}
-	/* leave the controller as we found it: events cleared, clock off */
+	/* Leave the controller as we found it: drop any armed job (a timed-out
+	 * command or DMA must not stay pending across the handover), clear the
+	 * events and turn the clock off. */
+	fwr(fcie_base, R_SD_CTRL, 0);
 	fwr(fcie_base, R_EVENT, EV_ALL_CARD);
 	fwr(fcie_base, R_SD_MODE, frd(fcie_base, R_SD_MODE) & ~0x0001);
 	return rc;
