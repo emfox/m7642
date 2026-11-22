@@ -9,9 +9,20 @@
 |---|---|
 | `probeG/` | **参数化探针**（主力）：`sym=` dump 代码、`addr=` dump 内存、`csym=` 调函数 |
 | `probeS/` | GOP 全量快照（扫 idx × bank × offset） |
-| `probeD/`、`probe1..8.c` | 早期一次性探针，保留作参考 |
+| `probeRW/` | 读物理内存（`op=r addr= len=`），code1 记录的标准读出工具 |
+| `wdtdump/` | 按符号 dump 代码（`sym=`），取证反汇编用 |
+| `fcie/` | eMMC/FCIE：18 步 CMD17 读通道 + 各级诊断镜像 |
+| `handoff/` | post-MMU 检查点仪器（tramp + handover + 运行脚本） |
+| `ladder/` | pre-MMU 梯级 stub（`-DCOLOUR= -DSTEP= -DHALT=`） |
+| `feat/`、`pmbase/`、`rstcall/`、`panicmod/`、`hangmod/`、`mark600/`、`pstub/`、`tramp/`、`pmsg/` | 专题小工具 |
 | `expect.tsv` | 设备内核的符号 CRC 表，用来合成 `Module.symvers`，保证 vermagic/CRC 对齐 |
 | `device-config.gz` | 设备 `/proc/config.gz`，模块必须按它编 |
+
+早期一次性探针（`probeD/`、`probe1..8.c`、颜色期与入口期的 `paint*/`、
+`entry2/`、`entry-race/`、`factory-hook/` 等）已移到仓库外
+`~/Debian/m7642-attic/probes/`；本目录只留仍在使用的源码。
+
+构建产物（`.bin`/`.elf`/`.ko`/`.o`）一律不入库，用各目录的 `build*.sh` 现生成。
 
 ## 用法
 

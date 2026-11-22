@@ -6,6 +6,8 @@
 
 原始数据：`artifacts/probe-out/probeD.out`（864 条非零，格式 `idx bank off value`）。
 
+> ⚠️ **原始数据不在仓库里**：本文引用的 `artifacts/probe-out/` 下 dump 已移到仓库外 `~/Debian/m7642-attic/`（原因见 [paths.md](paths.md) §0，清单见该目录的 `ATTIC.md`）。
+
 ## 一、覆盖面与分布
 
 | idx | bank0 | bank1 | bank2 | bank3 | bank4 | bank5 | bank6 | bank7 | 合计 |
