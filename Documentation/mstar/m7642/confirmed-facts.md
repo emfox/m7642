@@ -2161,3 +2161,25 @@ QEMU bench 是**按符号**跳到 `_start_kva` 的（日志里写 `entering tram
 
 镜像：`u1` = `d7fdf887…`（`0x463978`，world A，入口与 `f1` 逐条相同）、
 `u2` = `f55c5439…`（`0x4639c0`，world B）。
+
+### 34.22 厂内核设备树与厂 cmdline（2026-11-17 采集，2026-11-23 入库）
+
+来源：厂内核运行时 `/proc/device-tree` 的整棵 dump（212 个节点），以及 `dtc -I fs` 的反编译。
+
+| 项 | 值 |
+|---|---|
+| `compatible` | `"arm,foundation-aarch64"`, `"arm,m7642"` |
+| `model` | `M7642` |
+| **`chosen/bootargs`** | **`root=/dev/ram0 rw init=/sbin/init ip=dhcp console=ttyS0,38400,LX_MEM=0x03000000`** |
+| 内存节点 | `memory@20200000` |
+| 中断节点 | 212 个里有大量具名中断：`acpu_int`、`AUDMA_V2_INTR`、`AU_SPDIF_TX_CS_INT0/1`、`aia_*`、`aesdma_s_int` …… |
+
+**归档位置**：
+
+- 文本：`Documentation/mstar/m7642/reference/m7642-factory.dts`（26 KB，machine 输出，未改动）
+- 原始 fs dump：`~/Debian/m7642-build/diag/factory-devtree-fs.tar.gz`
+- 二进制 DTB：`~/Debian/m7642-build/diag/live.dtb`（64 KB，反编译结果与上面同树）
+
+**为什么记**：厂 cmdline 之前没有任何文档记录，而它含 `LX_MEM=0x03000000` 与
+`console=ttyS0,38400`——后者说明厂内核**打开了串口控制台**（我们这个板子上是否有可用焊点另说，
+但至少说明这条通路在厂方案里是被使用的）。中断节点表是写我们自己的 DTS 时的直接参考。
