@@ -34,6 +34,18 @@
 > - **挂了之后能不能自动回来**：不能。屏幕停 logo（AP 带电）= 只能人工拔电；
 >   屏幕黑（进了待机）= 红外一次可救。
 
+**2026-11-23 晚 ★★★★★ world B 解锁；卡点 = `kmem_cache_init()` 内部**
+
+- 基线已升到 **Linux 7.3.5**（内核 git 分支 `m7642-7.3.5`，构建树 `linux-735-out`）；
+  `f1` 真机验证通过（+8 位移，其余记录字段与 7.3 完全一致）。
+- **world B（拆 idmap 之后）现在可观测**：`mk-multi.sh <tag> d0=save <ckpt>=restore`
+  —— d0 处存 `TCR_EL1`/`TTBR0_EL1` 并返回内核，目标检查点处还回去再走老路。
+- 已确认通过：`c1` `c2` `b1` `b1b` `start_kernel` `build_all_zonelists` `pre_mmcore`
+  `mm1..mm4`（`build_all_zonelists`/`memblock_free_all`/`mem_init` 全部 OK）。
+- **卡点：`kmem_cache_init()` 内部**（`mm5` 挂）。四档 `kc1..kc4` 镜像已建好，见 §34.23。
+- 设备当前挂死，**需物理拔插**后继续。
+
+
 ## 停下点（2026-11-22 15:1x）
 
 设备**硬挂**，需要一次物理拔插（红外救不回，见 §34.9 的退化说明）。
