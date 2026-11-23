@@ -67,6 +67,13 @@ LADDER = {
     "kc2":          ("kmem_cache_init", 0xe4, "at bl create_kmalloc_caches"),
     "kc3":          ("kmem_cache_init", 0xe8, "after create_kmalloc_caches"),
     "kc4":          ("kmem_cache_init", 0x298, "at bl __cpuhp_setup_state"),
+    # 0x4774b8 = kmem_cache_init+0x238: the "Out of memory when creating
+    # kmem_cache %s" panic setup.  A checkpoint here fires ONLY if kmalloc(48)
+    # returned NULL, i.e. if we are about to panic.
+    "panicpath":    ("kmem_cache_init", 0x238, "OOM panic setup (kmalloc returned NULL)"),
+    # 0x477410 = after the first __kmalloc_cache_node() in the cache-creation loop
+    "firstalloc":   ("kmem_cache_init", 0x190, "after the loop's first kmalloc returns"),
+    "oom":          ("out_of_memory", 0x0, "out_of_memory entry (fires only if OOM)"),
     "sched_init":   ("sched_init", 0x0, "sched_init entry"),
     "console_init": ("console_init", 0x0, "console_init entry"),
 }

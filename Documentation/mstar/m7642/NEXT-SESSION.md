@@ -46,6 +46,17 @@
 - 设备当前挂死，**需物理拔插**后继续。
 
 
+**2026-11-23 深夜：卡点在 `kmem_cache_init()` 的分配循环（既不返回也不 panic）**
+
+- world B 继续可用：`mk-multi.sh <tag> d0=save <ckpt>=restore`。
+- 已确认通过：`c1`/`c2`/`b1`/`b1b`/`start_kernel`/`build_all_zonelists`/`pre_mmcore`/`mm1..mm4`。
+- **`combo` 镜像（`d7b98d68…`）证明**：既没走 slub 的 OOM panic（`0x4774b8`），也没走完循环
+  （`0x477518`）⟹ 卡在循环内的分配上，分配器"既不返回也不失败"。
+- **明天第一发**：`combo2` = `b82ba978…`（`d0=save` + `firstalloc 0x477410` + `oom out_of_memory`），
+  三态判读见 `confirmed-facts.md` §34.24。
+- 设备挂死，**需物理拔插**。
+
+
 ## 停下点（2026-11-22 15:1x）
 
 设备**硬挂**，需要一次物理拔插（红外救不回，见 §34.9 的退化说明）。
