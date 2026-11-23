@@ -28,9 +28,21 @@ print("-DBOOT_ARGS_PA=%#x -DIMAGE_START_PA=%#x -DIMAGE_END_PA=%#x "
        text - kaddr, pa("primary_entry")))
 PY
 )
+# SAVE_VA lives in the image; the handover stub runs with the MMU off, so it
+# needs the physical address.  PA = VA - KIMAGE_OFFSET.
+SAVE_VA=${SAVE_VA:-0xffffffc080603000}
+SAVE_PA=$(python3 -c "print(hex($SAVE_VA - ${DEFS##*-DKIMAGE_OFFSET=}))" 2>/dev/null || echo 0x20883000)
+SYMDEFS=""
+i=0
+for spec in ${READOUT_SYMS:-}; do
+	SYMDEFS="$SYMDEFS -DSYM${i}_VA=$spec"
+	i=$((i+1))
+	[ $i -ge 8 ] && break
+done
+DEFS="$DEFS -DSAVE_PA=$SAVE_PA $SYMDEFS"
 echo "defs: $DEFS  WORLD_VA=${WORLD_VA:-0}"
 aarch64-buildroot-linux-gnu-gcc $DEFS -DWORLD_VA=${WORLD_VA:-0} -c tramp-postmmu.S -o tramp-postmmu.o
-aarch64-buildroot-linux-gnu-gcc -c abort-postmmu.S -o abort-postmmu.o
+aarch64-buildroot-linux-gnu-gcc -DSAVE_PA=${SAVE_PA:-0x20883000} -c abort-postmmu.S -o abort-postmmu.o
 # abort-rung.bin is the plain record+handover stub the fcie build scripts
 # patch in for the ctl/paint images; it needs no kernel constants.
 aarch64-buildroot-linux-gnu-gcc -c abort-rung.S -o abort-rung.o

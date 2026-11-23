@@ -18,6 +18,24 @@ TAG=$1; shift
 [ $# -ge 1 ] || { echo "need at least one spec" >&2; exit 1; }
 
 resolve() { python3 ../../tools/host/ckpt.py --sysmap "$SYSMAP" --env "$1" | cut -d= -f2; }
+# readout symbols: "name" or "name+delta", comma or space separated
+syms_to_vas() {
+	python3 - "$SYSMAP" "$1" <<'PY'
+import sys
+syms = {}
+for line in open(sys.argv[1]):
+    p = line.split()
+    if len(p) >= 3: syms[p[2]] = int(p[0], 16)
+out = []
+for spec in sys.argv[2].replace(",", " ").split():
+    name, _, delta = spec.partition("+")
+    if name in syms: out.append(hex(syms[name] + (int(delta, 0) if delta else 0)))
+    else: sys.stderr.write("no such symbol: %s\n" % name)
+print(" ".join(out))
+PY
+}
+READOUT_SYMS=$(syms_to_vas "${READOUT_SYMS:-memblock+16 memblock+32 memblock+56 memblock+72 max_pfn min_low_pfn}")
+export READOUT_SYMS
 KADDR=0x20280000 KERNEL="$KERNEL" ./build-postmmu.sh >/dev/null
 . ./tramp-entries.env
 
@@ -30,6 +48,7 @@ for spec in "$@"; do
 	kva)     tgt=$TRAMP_KVA_ENTRY ;;
 	save)    tgt=$(( TRAMP_AT + 0x400 )) ;;
 	restore) tgt=$(( TRAMP_AT + 0x500 )) ;;
+	readout) tgt=$(( TRAMP_AT + 0x600 )) ;;
 	*) echo "bad entry '$ent'" >&2; exit 1 ;;
 	esac
 	echo "  $ck -> $(printf %#x $off) : bl $(printf %#x $tgt)"

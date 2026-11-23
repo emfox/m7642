@@ -2300,3 +2300,50 @@ QEMU bench 是**按符号**跳到 `_start_kva` 的（日志里写 `entering tram
 | 两处都不触发 | 慢路径自旋但没 OOM | 在 `__alloc_pages_noprof`（`0x112070`）内部分档 |
 
 设备当前**挂死**，需物理拔插。
+
+### 34.25 新仪器：world B 内「读内核变量」的 readout 入口（零断电风险）
+
+`combo` 证明卡在 `kmem_cache_init` 的分配循环里"既不返回也不失败"。为了**不靠断电试探**，
+新增了一个**必定返回**的探针：在任意 world-B 检查点上先把 `TCR_EL1`/`TTBR0_EL1` 还回去
+（复刻 `_start_restore` 的动作），再**通过内核 VA 读若干个变量**，存进镜像 `.bss` 的 SAVE 页；
+交接桩在 32 MB 拷贝**之前**把这 8 个 qword 抄进记录（记录由 `0xB0` 扩到 **`0xF0`**）。
+
+| 项 | 值 |
+|---|---|
+| 入口 | `_start_readout` = blob `0x600`（`Image+0x36c600`） |
+| 符号传法 | 构建期 `-DSYM0_VA..SYM7_VA`（链接 VA = 运行时 VA） |
+| 落位 | SAVE 页 +0x40…+0x78（PA = `SAVE_VA - KIMAGE_OFFSET` = `0x20883000`） |
+| 记录槽 | `+0xB0..+0xEF`，`+0x08` 的 size 写 `0xF0` |
+| 构建 | `WORLD_VA=0 READOUT_SYMS="memblock+16 memblock+32 ..." ./mk-multi.sh <tag> d0=save mm4=readout` |
+| 解码 | `tools/host/decode-record.py` 会自动打印这 8 个槽 |
+
+**默认符号集**（`struct memblock` 布局已核对：`memory` 在 +16、`reserved` 在 +56；
+`memblock_type` 内 `cnt`=+0、`total_size`=+16）：
+
+| 槽 | 符号 | 含义 |
+|---|---|---|
+| 0 | `memblock+16` | `memory.cnt`（内核认到几段 RAM） |
+| 1 | `memblock+32` | `memory.total_size`（认到多少字节） |
+| 2 | `memblock+56` | `reserved.cnt`（保留了几段） |
+| 3 | `memblock+72` | `reserved.total_size`（保留多少字节） |
+| 4 | `max_pfn` | 最高页号 |
+| 5 | `min_low_pfn` | 最低页号 |
+
+（`totalram_pages` 在 7.x 已不是普通符号，故不用。）
+
+#### 明天第一发（零风险，会返回）
+
+```
+镜像：m7642-ro2.img  md5 e5eb8c14f8582eebfb079c6baff0387e
+配置：d0=save  +  mm4(0x473448, bl kmem_cache_init)=readout
+```
+
+**为什么是这一点**：`mm4` 在 `mem_init` 之后、`kmem_cache_init` 之前，**已验证会返回**；
+它给出"内核在进入 slab init 之前到底有多少可用内存"。
+
+**判读**：
+
+| `memblock.memory.total_size` | 结论 | 下一步 |
+|---|---|---|
+| ≈ 2.7 GB 且 `reserved` 很小 | 内存充足 ⟹ **不是内存耗尽**，卡点是锁/自旋/数据结构问题 | 转向 `__alloc_pages_noprof` 内部分档（静态先选出 1 个点） |
+| 只有几百 MB 或 `reserved` ≈ `memory` | 内存被大量保留 ⟹ 分配进 direct reclaim，而**调度器尚未初始化**（`mm_core_init` 在 `init/main.c:1049`，`sched_init` 在 1062） | 直接查是谁保留了内存（memblock 各段的来源） |

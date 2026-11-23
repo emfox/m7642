@@ -73,6 +73,22 @@ handover_phys:
 	str	x17, [x6, #160]
 	mrs	x17, mpidr_el1
 	str	x17, [x6, #168]
+#ifdef SAVE_PA
+	/* The readout probe parked kernel variables here; the 32 MB copy below
+	 * overwrites the whole image, so rescue them into the record first. */
+	movz	x16, #(SAVE_PA & 0xffff)
+	movk	x16, #((SAVE_PA >> 16) & 0xffff), lsl #16
+	ldp	x17, x18, [x16, #0x40]
+	stp	x17, x18, [x6, #0xb0]
+	ldp	x17, x18, [x16, #0x50]
+	stp	x17, x18, [x6, #0xc0]
+	ldp	x17, x18, [x16, #0x60]
+	stp	x17, x18, [x6, #0xd0]
+	ldp	x17, x18, [x16, #0x70]
+	stp	x17, x18, [x6, #0xe0]
+	mov	w7, #0xf0
+	str	w7, [x6, #8]
+#endif
 	dsb	sy
 
 	movz	x6, #0x3000
