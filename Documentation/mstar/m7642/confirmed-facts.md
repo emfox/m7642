@@ -2950,3 +2950,42 @@ head.S → start_kernel → setup_arch（含我们修的对齐问题）
 → free_initmem（修复后通过）→ mark_rodata_ro → rcu_end_inkernel_boot
 → run_init_process("/init") → kernel_execve → begin_new_exec → EL0 ✅
 ```
+
+## 34.38 ★★★★ 用户态 ↔ 我们 的双向通道建立（2026-11-25 05:3x）
+
+### 报告通道（用户态 → 我们）
+
+用户态没有任何 console/UART/网络，所以建立这条通道：
+
+```
+/init 把结果写进 PA 0x23081000（交接只覆盖 0x20280000..0x21554A00，不碰这里）
+  → /init 触发 SysRq 崩溃（CONFIG_MAGIC_SYSRQ=y）
+  → panic 探针（d0=save + panic=0x02a22c）交接
+  → Android 起来后用 probeRW 读 0x23081000 ⟹ 拿到用户态的结果
+```
+
+读取：`insmod probeRW.ko addr=0x23081000 len=0x70 op=r`，用 `tools/host/` 里的解码逻辑解 `struct report`。
+
+### 首个实测结果（`m7642-pv.img`）
+
+| 项 | 值 |
+|---|---|
+| `mount` devtmpfs/proc/sysfs | `0/0/0`（全成功） |
+| `open("/dev/mem")` | `0` |
+| `mmap(fb 0x2D100000, 8 MB)` | 成功（errno 0） |
+| fb 原内容 px[0]/px[mid] | `0x0` / `0x8beb5403` ⟹ **0x2D100000 是真 framebuffer** |
+| 写入 `0x0000FF00` 后读回 | `0xff00`（首/中/末一致）**painted=1** |
+
+⟹ 用户态**能**通过 `/dev/mem` 控制这块 framebuffer。
+
+### 一个致命的 initramfs 细节（踩过）
+
+initramfs 里必须**自带 `/dev` `/proc` `/sys` 目录**，否则 `mount()` 全是 ENOENT，
+`/dev/mem`、`/proc/sysrq-trigger` 都不存在，`/init` 会静默走到 `pause()`
+（表现为"没有 panic、也没有任何效果"）。`mk_initrd.sh` 必须 `mkdir -p $IR/{dev,proc,sys,tmp,run}`。
+
+### 显示仍未闭环
+
+`painted=1` 后屏幕上能看到**绿色闪一下**然后回到 logo ⟹ 内存写入生效，但面板的扫描源/叠加层
+不在（或不止）`0x2D100000`，或者 mboot/PM51 之后又重画。**属于显示驱动问题，另行处理**（不要再用
+"屏幕颜色"当用户态是否运行的证据；用 34.37 的探针链和本节报告通道）。
