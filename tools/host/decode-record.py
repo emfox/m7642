@@ -142,18 +142,6 @@ def main():
               % (mmfr0, mmfr0 & 0xF, PARANGE.get(mmfr0 & 0xF, "?"),
                  (mmfr0 >> 28) & 0xF, (mmfr0 >> 20) & 0xF))
 
-    # readout slots (only present when the record is 0xF0: the "readout" entry
-    # parked kernel variables in the SAVE page and the stub rescued them)
-    labels = ["memblock.memory.cnt", "memblock.memory.total_size",
-              "memblock.reserved.cnt", "memblock.reserved.total_size",
-              "max_pfn", "min_low_pfn", "SYM6", "SYM7"]
-    vals = [(labels[i], q(b, 0xB0 + 8 * i)) for i in range(8)]
-    if any(v is not None and v != 0 for _, v in vals):
-        print("  readout:")
-        for name, v in vals:
-            if v is not None:
-                print("    %-28s = %#x (%d)" % (name, v, v))
-
     mpidr = q(b, 0xA8)
     if mpidr is not None:
         print("  MPIDR_EL1               = %#x  Aff0=%d Aff1=%d"

@@ -70,6 +70,18 @@
   `1043054088`，工具 `tools/host/socket.sh`，**仅在最后手段使用**）。
 
 
+**2026-11-24 深夜：卡点 = `kmem_cache_alloc_node_noprof`（首次触及新分配页）**
+
+- 阶梯：`ckB`(hash_pointers_finalize 后) ✓ → `p1`(create_boot_cache #1 后) ✗
+  → 进入 `do_kmem_cache_create`：`d1`(0x1202f4) ✓、`d2`(bl pcpu_alloc) ✓、`d3`(bl kmem_cache_alloc_node) ✗
+- **插座是 `did 2188570626`「电视插座」，不是 `1043054088`「墙壁插座」**（之前控错了）；
+  设备列表是缓存，用 `tools/host/refresh_tokens.py` 刷新
+- 控制只能用 Toggle action（有 1–8 秒延迟）⟹ 读状态→需要才 toggle→轮询确认
+- 恢复时序：**断电 → 10 秒 → 上电 → 3 秒 → 单次红外**（`socket.sh recover` 已实现）
+- **跑长任务前先 `job_list` 清残留**（曾有一个每秒按红外的残留 job 把 Android 反复按回待机）
+- 下一步：去掉 DTB 里 `memory@180000000` 重编，跑 `kc4`(0x477518) 验证"第 6 GB 段不可用"
+
+
 ## 停下点（2026-11-22 15:1x）
 
 设备**硬挂**，需要一次物理拔插（红外救不回，见 §34.9 的退化说明）。
