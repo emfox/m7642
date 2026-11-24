@@ -12,6 +12,11 @@
 # Switching OFF while Android is *running* is an unclean cut, so it is refused
 # unless --force is given.
 #
+# !! CURRENTLY UNUSABLE: this socket is a Bluetooth Mesh 2.0 device.  mihome-ctl
+# has no mesh/gateway support, the cloud rejects prop-set with -704220043 and the
+# LAN path resolves a bogus public IP.  Toggle it in the Mi Home app, or by voice.
+# Kept for when a cloud/gateway route works.  See confirmed-facts.md §34.27.
+#
 #   socket.sh status          read Switch Status (never switches)
 #   socket.sh on              switch ON  (safe: it is already off)
 #   socket.sh off             switch OFF, only if Android is NOT up

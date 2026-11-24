@@ -39,7 +39,7 @@ for spec in ${READOUT_SYMS:-}; do
 	i=$((i+1))
 	[ $i -ge 8 ] && break
 done
-DEFS="$DEFS -DSAVE_PA=$SAVE_PA $SYMDEFS"
+DEFS="$DEFS -DSAVE_PA=$SAVE_PA -DCOUNT_N=${COUNT_N:-1} $SYMDEFS"
 echo "defs: $DEFS  WORLD_VA=${WORLD_VA:-0}"
 aarch64-buildroot-linux-gnu-gcc $DEFS -DWORLD_VA=${WORLD_VA:-0} -c tramp-postmmu.S -o tramp-postmmu.o
 aarch64-buildroot-linux-gnu-gcc -DSAVE_PA=${SAVE_PA:-0x20883000} -c abort-postmmu.S -o abort-postmmu.o

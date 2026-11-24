@@ -49,6 +49,7 @@ for spec in "$@"; do
 	save)    tgt=$(( TRAMP_AT + 0x400 )) ;;
 	restore) tgt=$(( TRAMP_AT + 0x500 )) ;;
 	readout) tgt=$(( TRAMP_AT + 0x600 )) ;;
+	count)   tgt=$(( TRAMP_AT + 0x700 )) ;;
 	*) echo "bad entry '$ent'" >&2; exit 1 ;;
 	esac
 	echo "  $ck -> $(printf %#x $off) : bl $(printf %#x $tgt)"
