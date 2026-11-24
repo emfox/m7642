@@ -2607,3 +2607,40 @@ Image 内嵌 FDT `memory@` 出现 3 次（size `0xfb5`）。
 `0x474dd0`、`BUG_ON(!slab)`→`0x12078c`），下一发打 `0x120350`。
 
 **纪律**：每批**先打 `ctl` 对照**；对照 ❌ 则本批全部作废（历史上已有 3 条 ❌ 被追溯为仪器问题）。
+
+## 34.31 卡点推进到页分配器快路径（2026-11-24 深夜，全部带对照探针）
+
+修好仪器后（§34.30），用"**每批先打 `ctl` 对照**"的方式重打，结果如下（7.3.5 真机，每发 10–11 s 返回）。
+
+| 检查点 | 地址 / 含义 | 结果 |
+|---|---|---|
+| `ctl` | `0x4772b4`（对照，必须返回） | ✅ |
+| `ns1` | `0x1204fc` = `bl new_slab`（`early_kmem_cache_node_alloc` 内） | ✅ |
+| `na` | `0x1169a4` = `bl __alloc_frozen_pages_noprof`（`new_slab` 内第一次页分配） | ✅ |
+| `nb` | `0x116aa0` = `mod_node_page_state`（分配返回后） | ❌ |
+| `pa` | `0x110ddc` = `bl get_page_from_freelist`（`__alloc_frozen_pages_noprof` 内） | ✅ |
+| `pb` | `0x110e54` = `bl __next_zones_zonelist` | ❌ |
+| `pw` | `0x10fad8` = `bl __zone_watermark_ok`（`get_page_from_freelist` 内第一个调用） | ❌ |
+
+⟹ **第一次真正的物理页分配就挂死，而且卡在 `get_page_from_freelist` 入口到水位检查之间**。
+那一段是**内联的 `for_next_zone_zonelist_nodemask` 遍历**（该函数的前 0x120 字节里没有别的调用）。
+
+两种可能，外部表现相同：
+
+1. **zonelist 没有正确终止**（缺 `zone == NULL` 哨兵）⟹ 无限循环；
+2. 遍历取到**坏 zone 指针** ⟹ 读 `zone->...` 时 fault ⟹ 静默挂死。
+
+关键新事实（推翻了此前的很多猜测）：
+- 与"内存不足/回收"无关——**连第一次分配都没走出快路径**，还没进慢路径/reclaim；
+- 与 `mm_core_init` 早于 `sched_init` 无关（那时还在快路径，`preempt_schedule` 在 `0x10fb9c`，未到达）；
+- 与第 6 GB 内存段无关（已用 `kc4b` 证伪）。
+
+### 下一步（静态优先）
+
+1. **静态**：把 `get_page_from_freelist` 前 0x120 字节的循环还原出来，找出回跳目标（循环头）与
+   `z->_zonerefs[]` 的步进方式；再对照 `build_all_zonelists`（`mm/page_alloc.c`）确认
+   本机内存布局（单 node、两 zone、带大洞）下 `_zonerefs` 的终止条件是否成立。
+2. **打点**：在**循环头**放计数型返回探针（`_start_count`，N=1）——
+   能返回 ⟹ 循环在正常迭代（不是卡在第一项）；挂死 ⟹ 卡在第一项或取指针即 fault。
+3. 若确认是 zonelist 问题：检查 `CONFIG_NUMA=n` 下 `contig_page_data` 与
+   `build_all_zonelists_init()` 的交互，以及 `system_state` 在该调用点是否为 `SYSTEM_BOOTING`。
