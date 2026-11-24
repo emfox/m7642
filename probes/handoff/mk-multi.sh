@@ -15,7 +15,9 @@ OUT=${OUT:-$HOME/Debian/m7642-build/out}
 SYSMAP=$KERNEL/System.map
 IMAGE=$KERNEL/arch/arm64/boot/Image
 TAG=$1; shift
-[ $# -ge 1 ] || { echo "need at least one spec" >&2; exit 1; }
+# PLAIN=1 (or no specs) builds a boot-only image: alignment fix + entry shim,
+# no checkpoints, no hand-over.  Used to test a plain kernel boot.
+[ $# -ge 1 ] || [ "${PLAIN:-0}" = 1 ] || { echo "need at least one spec (or PLAIN=1)" >&2; exit 1; }
 
 resolve() { python3 ../../tools/host/ckpt.py --sysmap "$SYSMAP" --env "$1" | cut -d= -f2; }
 # readout symbols: "name" or "name+delta", comma or space separated

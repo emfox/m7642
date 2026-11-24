@@ -103,13 +103,20 @@ python3 - "$(dirname "$0")/tramp-postmmu.bin" "$SAVE_VA" <<'PY'
 import struct, sys
 bin_path, save_va = sys.argv[1], int(sys.argv[2], 0)
 d = open(bin_path, "rb").read()
-# _start_restore starts at blob offset 0x500 with movz/movk/movk/movk SAVE_VA
-off = 0x500
-words = struct.unpack_from("<4I", d, off)
+# _start_restore begins at 0x500.  It may start with daif masking, so scan the
+# first 12 words for the movz/movk/movk/movk sequence that builds SAVE_VA
+# instead of assuming a fixed offset.
 def imm(w): return (w >> 5) & 0xffff
-val = imm(words[0]) | (imm(words[1]) << 16) | (imm(words[2]) << 32) | (imm(words[3]) << 48)
-if val != save_va:
-    sys.exit("BUILD FAILED: blob encodes SAVE_VA=%#x but expected %#x "
-             "(stale tramp-postmmu.bin?)" % (val, save_va))
-print("post-build check: SAVE_VA %#x encoded correctly" % val)
+def is_movz(w): return (w & 0xff800000) == 0xd2800000
+def is_movk(w): return (w & 0xff800000) == 0xf2800000
+for off in range(0x500, 0x500 + 4 * 12, 4):
+    w = struct.unpack_from("<4I", d, off)
+    if is_movz(w[0]) and is_movk(w[1]) and is_movk(w[2]) and is_movk(w[3]):
+        val = imm(w[0]) | (imm(w[1]) << 16) | (imm(w[2]) << 32) | (imm(w[3]) << 48)
+        if val == save_va:
+            print("post-build check: SAVE_VA %#x encoded correctly at blob+%#x" % (val, off))
+            break
+else:
+    sys.exit("BUILD FAILED: no movz/movk sequence encoding SAVE_VA=%#x "
+             "found near _start_restore (stale tramp-postmmu.bin?)" % save_va)
 PY

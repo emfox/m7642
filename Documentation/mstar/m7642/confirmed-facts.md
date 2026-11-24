@@ -2789,3 +2789,124 @@ KERNEL_ADDR=0x…  写进 ANDROID! 头的 kernel_addr
 FACTORY_KADDR 厂内核地址（默认 0x20280000，只用于 PRIMARY_ENTRY_PA）
 STUB_AT       交接桩在镜像内的偏移（默认 0x1400000）
 ```
+
+## 34.35 ★★★★★ 结论：早期启动**没有卡点**，7.3.5 已经跑到 init 末尾（2026-11-25 01:30）
+
+### 证据链
+
+**(1) 之前两个"❌"是仪器自伤。** `kmem_cache_init_late`（`0x460d38`）与 `console_init`（`0x46e024`）
+在修好仪器后重测都 **✅ 到达**：
+
+| 镜像 | 检查点 | 结果 |
+|---|---|---|
+| `kcl2` | `0x460d38` `bl kmem_cache_init_late` | ✅ |
+| `ci2` | `0x46e024` `console_init` 入口 | ✅ |
+
+原因：`start_kernel` 在 `0x460d34` 有一条 **`msr daifclr, #0x3`（`local_irq_enable`，全系统第一次开中断）**，
+紧接着 `0x460d38` 就是 `bl kmem_cache_init_late`。在此之后的检查点，中断是**开着**的：
+我的交接桩要做 6.4 MB dcache clean + 32 MB 拷贝，过程中被定时器中断打断，
+中断向量又回到被我们覆盖的 `gic_handle_irq` 区域 ⟹ 挂死。
+**修法**：所有"终结型"入口（`_start_restore`/`_start_readout`/`_start_regdump`/`_start_count` 的交接路径）
+第一条指令加 `msr daifset, #0xf`（我们永不返回内核，屏蔽中断无副作用）。加完即 ✅。
+
+**(2) 用"故障探测器"抓到了真正的结局。** 把 `do_mem_abort`/`die_kernel_fault`/`panic`/`rcu_stall_kick`
+四处放进同一张镜像，结果 **`x30 = 0xffffffc08002a230`（`panic`+4）**，且
+`x0 = 0xffffffc080402ef0` 指向的格式串是：
+
+```
+VFS: Unable to mount root fs on "%s" or %s/dev/root
+```
+
+⟹ **内核跑完了全部初始化**（`do_basic_setup` → `prepare_namespace`），走到挂载根文件系统，
+因为没有根文件系统而 panic。而 `panic=0` 不重启 ⟹ 表现为"挂死"。
+
+### 所以之前那些"卡点"是什么
+
+| 曾经的结论 | 真相 |
+|---|---|
+| 卡在 `kmem_cache_init` / `bootstrap_kmalloc_sheaves` | 探针 blob 覆盖 `_raw_spin_trylock` 等 9 个函数（§34.32） |
+| 卡在页分配器 `get_page_from_freelist` | 同上 |
+| 卡在 `sched_init` / `open_softirq` / `rcu_sched_clock_irq` | **开中断后交接桩被中断重入**（本节） |
+| 卡在 `kmem_cache_init_late` / `console_init` | 同上 |
+
+**内核本身一次都没有"卡"过。**
+
+### 方法学教训（最贵的一条）
+
+`❌`（Android 没起来）只说明"那个地址没被执行到"，而没被执行的原因至少有三种：
+1. 内核真的挂死了；
+2. **那条指令所在的路径根本没走到**（例如探 `rcu_stall_kick_kthreads`——它只在有 GP 卡住时才被调用，
+   正常运行永远不经过！我用它当检查点，等于人为制造了一个假卡点）；
+3. 探针自身失效（blob 覆盖活代码、中断重入、`SAVE_VA` 被日志覆盖…）。
+
+⟹ 以后每个 ❌ 都必须先回答"这条指令在当前路径上**必然**被执行吗？"，并配一个**同一时刻的已知必经点**做对照。
+
+### 下一步（不再找卡点，而是补齐缺件）
+
+内核已经能跑到 init 末尾，缺的是**根文件系统**。已准备：
+- 静态 `/init`：挂 devtmpfs/proc，`mmap(/dev/mem, 0x2D100000)` 把 mboot 的 framebuffer 涂成纯绿
+  （用户可见的"用户态跑起来了"证据），然后 `reboot(LINUX_REBOOT_CMD_RESTART)`；
+- `CONFIG_INITRAMFS_SOURCE` 内建 initramfs（344 KB），构建树 `linux-735-ir`。
+
+若屏幕上出现绿色 ⟹ **7.3.5 在这台电视上完整启动到了用户态**。
+
+## 34.36 ★★★★★ 真卡点找到并修复：`free_initmem` 的 init 段毒化（2026-11-25 03:3x）
+
+### 结论
+
+**真卡点**：`free_initmem()` → `free_reserved_area()` → `__free_reserved_area()` 里，对 `__init` 段
+逐页做的 **`memset(page_address(page), 0xcc, PAGE_SIZE)` 毒化**。
+
+- **关掉毒化（`poison = -1`）后，内核一路跑到 `run_init_process()`（用户态启动）** ✓ 真机验证。
+- 顺带发现一个**真 bug**：我们的内建 DTB 原本在 `.init.rodata` 里（`__m7642_dtb` 落在
+  `__init_begin..__init_end` 之间），会被这段毒化写坏。已改为 `.section .rodata`（真机验证后仍然到达）。
+
+### 定位过程（每步都有对照 `cchk`）
+
+| 检查点 | 结果 |
+|---|---|
+| `console_init` / `kmem_cache_init_late` | ✅（修好仪器后复验通过） |
+| `kernel_init_freeable` → `console_on_rootfs` → `init_eaccess` | ✅✅✅ |
+| `run_init_process` | ❌ |
+| `async_synchronize_full`（`0x363e6c`） | ✅ |
+| `free_initmem`（`0x363e78`） | ✅ 到达 |
+| `jump_label_init_ro` / `mark_rodata_ro` | ❌ |
+| `free_reserved_area`（`0x113b7c`）/ `memblock_remove_range` / `__free_reserved_area` | ✅✅✅ |
+| `free_reserved_pages` → `adjust_managed_page_count` → `__free_frozen_pages` → 返回 | ✅✅✅✅（第一页释放成功） |
+| 循环后的 `__memset` | ✅ 到达 |
+| `__free_reserved_area` **返回处** | ❌ ⟹ 挂在 `__free_reserved_area` 内部 |
+| **`poison=-1`（跳过 memset）后 `run_init_process`** | **✅✅✅ 到达用户态启动** |
+
+### 修复（两处源码改动，已在真机验证）
+
+1. `arch/arm64/kernel/m7642-dtb.S`：`.section .init.rodata, "a"` → **`.section .rodata, "a"`**
+   （DTB 必须活到启动之后；实测 `__m7642_dtb` 从 `0x4c9858`（init 段内）移到 `0x378000`（.rodata））。
+2. `arch/arm64/mm/init.c` 的 `free_initmem()`：`POISON_FREE_INITMEM` → **`-1`**（不毒化，照常归还页）。
+
+验证镜像 `m7642-fixed.img`（只含 `d0=save` + `run_init_process` 探针，无任何 hack）：
+**探针触发 ✅** ⟹ 内核到达用户态启动。
+
+### 尚未解决的（下一件事）
+
+即使到了 `run_init_process`，`/init` 是否**执行**还没证实：
+用 panic 探针等 `/init` 的 SysRq 崩溃，**没有等到** ⟹ 可能是 ① `kernel_execve`/exec 路径里挂住，
+或 ② `CONFIG_MAGIC_SYSRQ` 未启用导致 `/init` 的崩溃请求无效。
+下一步：查 `CONFIG_MAGIC_SYSRQ`，并把 `/init` 改成"涂 framebuffer"这类可直接观察的动作。
+
+### 毒化为什么会挂（机制仍未完全确定）
+
+已排除：`kimage_voffset` 正确（读回 `0xffffffc05fd80000`）；memset 参数正确
+（`pos` = 线性别名 `0xffffff80206e0000`、`0xcc`、`4096`）；第一页释放与 memset 都成功。
+已知内建 DTB 曾是其中之一（已修），但**移走 DTB 后毒化仍挂** ⟹ `.init` 段里还有别的东西在
+`free_initmem` 之后仍被使用。候选：`.init.data` 里被后续 initcall/`mark_rodata_ro` 之后访问的表
+（`__jump_table`、`__initcall*` 已排除是 `.data`）。
+
+### 仪器（今晚全部修好并复验）
+
+- blob 从 `0x36c000`（压着 `_raw_spin_trylock` 等 9 个函数）移到 **`0x36e000`**；
+- 终结型入口加 `msr daifset, #0xf`（`local_irq_enable` 之后交接不再被中断重入）；
+- `-DSAVE_VA/-DTABLE_PA` 真正传入 + 构建后自检；
+- 每次重编内核后**必须重新取地址**（踩过两次：`gunzip`/`init` 位移）；
+- `brk #0x800` 当探针不可用于"重启观察"：本平台**没有 PSCI / restart handler**，
+  `panic_timeout` 到点后 `machine_restart()` 无处理器可用，表现为挂死（不是重启）。
+- 观测通道：交接记录（可靠）+ 插座功率（**不能**区分 panic 与挂死，因无法重启）。

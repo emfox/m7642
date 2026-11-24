@@ -142,6 +142,29 @@
 - **下一步**：先回到第 3 项（找真卡点：`open_softirq` → `console_init`），对齐收口可并行推进。
 
 
+**2026-11-25 01:35 ★★★★★ 早期启动没有卡点：内核已跑到 init 末尾（VFS panic = 没有根文件系统）**
+
+- 修好两处仪器自伤后，`kmem_cache_init_late` 与 `console_init` 均 **✅ 到达**：
+  ① blob 覆盖 `_raw_spin_trylock`（§34.32）；② **开中断后交接桩被定时器中断重入**（终结型入口加 `daifset`）。
+- "故障探测器"抓到 `panic`，格式串 = `VFS: Unable to mount root fs on "%s" or %s/dev/root`
+  ⟹ 内核跑完 `do_basic_setup`/`prepare_namespace`，只差根文件系统；`panic=0` 表现为挂死。
+- **下一步**：内建 initramfs（`linux-735-ir` 已构建），`/init` 把 framebuffer 涂绿 + 尝试 reboot。
+  屏幕变绿 = 7.3.5 在这台电视上完整启动到用户态。
+- 教训：`❌` 只代表"该地址没被执行"，必须确认该指令在路径上必然执行，并配已知必经点对照。
+
+
+**2026-11-25 03:40 ★★★★★ 真卡点找到并修复：`free_initmem` 的 init 段毒化**
+
+- 卡点 = `free_initmem` → `__free_reserved_area` 里 `memset(page_address(page), 0xcc, 4096)`。
+- **修复（真机验证）**：①`m7642-dtb.S` 从 `.init.rodata` 改到 `.rodata`（真 bug）；②`arm64/mm/init.c`
+  的 `free_initmem` 用 `-1` 代替 `POISON_FREE_INITMEM`。验证镜像 `m7642-fixed.img` 的
+  `run_init_process` 探针 **触发 ✅** ⟹ 内核到达用户态启动。
+- 待办：确认 `CONFIG_MAGIC_SYSRQ`；把 `/init` 改成涂 framebuffer 之类可直接观察的动作；
+  继续查毒化为何挂（`.init` 里还有别的东西被后续使用）。
+- 仪器经验（必读）：blob 位置 `0x36e000`；终结型入口加 `daifset`；**每次重编必须重取地址**；
+  本平台**没有 restart handler**，panic 不会重启（功率通道不能当 panic 证据）。
+
+
 ## 停下点（2026-11-22 15:1x）
 
 设备**硬挂**，需要一次物理拔插（红外救不回，见 §34.9 的退化说明）。

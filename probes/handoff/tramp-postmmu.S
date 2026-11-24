@@ -266,6 +266,7 @@ _start_save:
 	.org	0x500
 	.globl	_start_restore
 _start_restore:
+	msr	daifset, #0xf		/* DAIFMASK: never return to the kernel */
 	movz	x16, #(SAVE_VA & 0xffff)
 	movk	x16, #((SAVE_VA >> 16) & 0xffff), lsl #16
 	movk	x16, #((SAVE_VA >> 32) & 0xffff), lsl #32
@@ -303,6 +304,7 @@ _start_restore:
 	.org	0x600
 	.globl	_start_readout
 _start_readout:
+	msr	daifset, #0xf		/* DAIFMASK: never return to the kernel */
 	movz	x16, #(SAVE_VA & 0xffff)
 	movk	x16, #((SAVE_VA >> 16) & 0xffff), lsl #16
 	movk	x16, #((SAVE_VA >> 32) & 0xffff), lsl #32
@@ -424,6 +426,7 @@ _start_count:
 	dsb	sy
 	ret
 7:	/* hand over the way _start_restore does: world B -> world A addressable */
+	msr	daifset, #0xf		/* DAIFMASK */
 	ldr	x17, [x16, #0x18 - 0x78]	/* TCR_EL1 as saved by the d0 probe */
 	msr	tcr_el1, x17
 	isb
@@ -452,14 +455,15 @@ _start_count:
 	.org	0x800
 	.globl	_start_regdump
 _start_regdump:
+	msr	daifset, #0xf		/* DAIFMASK: never return to the kernel */
 	movz	x16, #(SAVE_VA & 0xffff)
 	movk	x16, #((SAVE_VA >> 16) & 0xffff), lsl #16
 	movk	x16, #((SAVE_VA >> 32) & 0xffff), lsl #32
 	movk	x16, #((SAVE_VA >> 48) & 0xffff), lsl #48
-	str	x23, [x16, #0x40]
-	str	x24, [x16, #0x48]
-	str	x25, [x16, #0x50]
-	str	x26, [x16, #0x58]
+	str	x0, [x16, #0x40]	/* slot0 */
+	str	x1, [x16, #0x48]	/* slot1 */
+	str	x2, [x16, #0x50]	/* slot2 */
+	str	x3, [x16, #0x58]	/* slot3 */	/* 4th slot: x7 (indirect call target) */
 	ldr	x17, [x16, #0x18]
 	msr	tcr_el1, x17
 	isb
