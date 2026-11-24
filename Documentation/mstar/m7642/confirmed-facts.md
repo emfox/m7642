@@ -2910,3 +2910,43 @@ VFS: Unable to mount root fs on "%s" or %s/dev/root
 - `brk #0x800` 当探针不可用于"重启观察"：本平台**没有 PSCI / restart handler**，
   `panic_timeout` 到点后 `machine_restart()` 无处理器可用，表现为挂死（不是重启）。
 - 观测通道：交接记录（可靠）+ 插座功率（**不能**区分 panic 与挂死，因无法重启）。
+
+## 34.37 ★★★★★ 7.3.5 在这台电视上启动到用户态（2026-11-25 05:1x）
+
+### 证据链（每发都带 `cchk` 对照，全部真机）
+
+| 检查点 | 结果 |
+|---|---|
+| `kernel_execve`（`0x133378`） | ✅ execve 被调用 |
+| `begin_new_exec`（`0x1328e4`） | ✅ ELF 已加载（initramfs 里的 `/init`） |
+| **`ret_to_user`（`0x011f34`）** | **✅ 返回 EL0 ⟹ 用户态开始执行** |
+
+⟹ **Linux 7.3.5 在这台 TCL/雷鸟 M7642 电视上完整启动到用户态。**
+
+### 两个观测失败的真正原因（都不是"没跑起来"）
+
+- `CONFIG_DEVMEM` **未开** ⟹ `/dev/mem` 不存在 ⟹ 之前那个"涂绿"的 `/init` 根本没法成功；
+- `CONFIG_MAGIC_SYSRQ` **未开** ⟹ `/init` 的 `/proc/sysrq-trigger` 崩溃请求无效 ⟹ 等不到 panic。
+两个都是配置问题，**不代表 `/init` 没执行**。
+
+### 现在的配置与 initramfs
+
+- 内核 `linux-735-ir`：`CONFIG_DEVMEM=y`、`# CONFIG_STRICT_DEVMEM is not set`、`CONFIG_MAGIC_SYSRQ=y`、
+  `CONFIG_DEVTMPFS=y`、`CONFIG_PANIC_TIMEOUT=5`、内建 initramfs（344 KB）。
+- `/init`：挂 devtmpfs/proc/sysfs → `mmap(/dev/mem, 0x2D100000, 8 MB)` 涂成**纯绿**（XRGB8888
+  `0x0000FF00`）→ 往 `/dev/kmsg` 写 `M7642: userspace reached` → `pause()` 常驻。
+- 验证镜像 `m7642-green.img` = `3daab60f37c5d5adf3a2fae6cda1b3b6`（纯启动，无探针）。
+
+**屏幕变绿 = 用户态跑起来的直接证据。**
+
+### 完整启动路径（里程碑）
+
+```
+head.S → start_kernel → setup_arch（含我们修的对齐问题）
+→ mm_core_init（kmem_cache_init / initramfs 解包…
+   ⚠ 这里的 free_initmem 毒化是真卡点，已修，见 §34.36）
+→ sched_init → … → init_IRQ → … → console_init
+→ kernel_init → kernel_init_freeable（initramfs 解包完成、/init 检查）
+→ free_initmem（修复后通过）→ mark_rodata_ro → rcu_end_inkernel_boot
+→ run_init_process("/init") → kernel_execve → begin_new_exec → EL0 ✅
+```

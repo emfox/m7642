@@ -165,6 +165,16 @@
   本平台**没有 restart handler**，panic 不会重启（功率通道不能当 panic 证据）。
 
 
+**2026-11-25 05:15 ★★★★★ 7.3.5 启动到用户态（真机确认）**
+
+- 探针证据：`kernel_execve` ✅ → `begin_new_exec` ✅ → **`ret_to_user` ✅（返回 EL0）**
+- 之前"涂绿失败/等不到 panic"的原因是配置：`CONFIG_DEVMEM` 与 `CONFIG_MAGIC_SYSRQ` 都没开，不是 `/init` 没跑。
+- 现在 `linux-735-ir` 已开 `DEVMEM/DEVTMPFS/MAGIC_SYSRQ`，`/init` 会**把屏幕涂成纯绿**并常驻。
+- 验证镜像：`m7642-green.img`（`3daab60f…`，无探针）。
+- 接下来（按优先级）：① 屏幕确认；② 让 `/init` 真正有用（挂 eMMC、起 shell、起网络）；
+  ③ 把 `free_initmem` 毒化挂死的原因收口（`.init` 里还有什么被后续使用）；④ 上游化 DTS/驱动。
+
+
 ## 停下点（2026-11-22 15:1x）
 
 设备**硬挂**，需要一次物理拔插（红外救不回，见 §34.9 的退化说明）。
