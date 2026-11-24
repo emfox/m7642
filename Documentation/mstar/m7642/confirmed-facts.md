@@ -2729,3 +2729,63 @@ __hyp_text_end == 0x36e000`、`_etext = 0x370000` ⟹ 中间是**真空闲的 8 
    打到这些地址等于人为触发 bug。打点前要确认目标地址是**正常指令**。
 3. `bl f()` 处的终结型探针会让 `f()` **完全不执行**；所以"到达该点"只证明调用前的一切 OK，
    **不证明该函数本身能跑**。要验证函数体，必须打到函数**内部**或它的返回点之后。
+
+## 34.34 NOP 判定 + 对齐问题的三步排查（2026-11-25 00:30）
+
+### A. 那个 dcache NOP **不需要**（已实测）
+
+`NO_NOP=1` 让 `mk-multi.sh` 不打 `preserve_boot_args+0x20` 的 NOP（那条指令实际是
+`b __pi_dcache_inval_poc`，即跳过 bootargs 的 dcache 失效）。三发全返回：
+
+| 镜像 | 内容 | 结果 |
+|---|---|---|
+| `cchk` | 带 NOP（基线） | ✅ |
+| `cnop` | 无 NOP，对照点 `0x4772b4` | ✅ |
+| `knop` | 无 NOP，深处 `0x477518`（`kmem_cache_init` 结束） | ✅ |
+
+⟹ **上线配方只剩"对齐修正"一个 4 字节补丁。**
+
+### B. mboot **确实读** `ANDROID!` 头里的 `kernel_addr`
+
+判别方法：只改 header 的 `kernel_addr`（`0x20280000 → 0x20400000`），其余配置与已知good完全相同。
+
+- 若 mboot 忽略该字段 ⟹ 行为应与 `cchk` 完全一致 ⟹ ✅；
+- 实测 **❌ 挂死** ⟹ **mboot 读它**，装载地址是我们能定的。
+
+（附带确认：我们的探针镜像本来就是 `ANDROID!` 容器——`kernel_size=0x1400800`、
+`kernel_addr=0x20280000`、`tags_addr=0x20280100`、`page_size=2048`、`hdr_ver=1`，
+`Image` 从文件偏移 `0x800` 开始。）
+
+### C. 但"装到 0x20200000 + 去掉对齐补丁"仍然失败，且暴露两个**真 bug**
+
+尝试 `al2/al4` = `kernel_addr=0x20200000`（2 MB 对齐）+ `NO_ALIGN=1` + `KADDR=0x20200000`：
+
+| 版本 | 失败原因 |
+|---|---|
+| `al1` | `PRIMARY_ENTRY_PA` 跟着 `KADDR` 变了 → 交接桩跳到 `0x20655038`（错）。**厂内核永远在 `0x20280000`**，这个常量必须绑厂地址 |
+| `al2` | 修了上面，但仍失败：`HANDOVER_PA`（tramp 里写死 `0x21680200`）没跟着装载地址走 → 桩入口变野地址 |
+| `al4` | 两处都修好（`HANDOVER_PA = KADDR + STUB_AT + 0x200`），**仍然失败** |
+
+已修的真 bug（与这次实验无关，属于长期正确性）：
+
+- `build-postmmu.sh` 里 `PRIMARY_ENTRY_PA` 改用 `FACTORY_KADDR`（默认 `0x20280000`）；
+- `HANDOVER_PA` 由 `KADDR + STUB_AT + 0x200` 推出，不再写死。
+
+**`al4` 仍失败的原因待查**，嫌疑：
+1. `tramp-postmmu.S` 里还有写死的 `IDMAP_PROBE_PA 0x20280000`（应随装载地址变）；
+2. mboot 可能对 `kernel_addr` 之外还有隐含约束（例如它自己也会校验/回退）；
+3. 装载到 `0x20200000` 时内核实际落在 RAM 起点，可能与我们 DTS 的某些保留区重叠。
+
+⟹ **结论：对齐补丁目前仍必须带着**。但我们现在有了"改装载地址"这个杠杆，
+后续可以继续收口（把上表 3 条逐一排除）。
+
+### D. 新增的构建开关（都已提交）
+
+```
+NO_NOP=1      不打 dcache NOP
+NO_ALIGN=1    不打 2 MB 对齐修正
+KADDR=0x…     我们的内核装载地址（推导 KIMAGE_OFFSET / IMAGE_START_PA / BOOT_ARGS_PA …）
+KERNEL_ADDR=0x…  写进 ANDROID! 头的 kernel_addr
+FACTORY_KADDR 厂内核地址（默认 0x20280000，只用于 PRIMARY_ENTRY_PA）
+STUB_AT       交接桩在镜像内的偏移（默认 0x1400000）
+```

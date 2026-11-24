@@ -12,7 +12,10 @@ SYSMAP=${SYSMAP:-$KERNEL/System.map}
 KADDR=${KADDR:-0x20280000}
 export PATH="$TC:$PATH"
 
-DEFS=$(python3 - "$SYSMAP" "$KADDR" <<'PY'
+# PRIMARY_ENTRY_PA belongs to the FACTORY kernel, which the handover stub always
+# copies to 0x20280000 -- it must not follow KADDR (our kernel's load address).
+FACTORY_KADDR=${FACTORY_KADDR:-0x20280000}
+DEFS=$(python3 - "$SYSMAP" "$KADDR" "$FACTORY_KADDR" <<'PY'
 import sys
 syms = {}
 for line in open(sys.argv[1]):
@@ -21,11 +24,12 @@ for line in open(sys.argv[1]):
         syms[p[2]] = int(p[0], 16)
 text = syms["_text"]
 kaddr = int(sys.argv[2], 16)
+fkaddr = int(sys.argv[3], 16)
 pa = lambda n: kaddr + syms[n] - text
 print("-DBOOT_ARGS_PA=%#x -DIMAGE_START_PA=%#x -DIMAGE_END_PA=%#x "
       "-DKIMAGE_OFFSET=%#x -DPRIMARY_ENTRY_PA=%#x" %
-      (pa("boot_args"), pa("_stext"), pa("_end"),
-       text - kaddr, pa("primary_entry")))
+      ((pa("boot_args"), pa("_stext"), pa("_end"),
+       text - kaddr, fkaddr + syms["primary_entry"] - text)))
 PY
 )
 # SAVE_VA lives in the image; the handover stub runs with the MMU off, so it
@@ -49,7 +53,9 @@ for spec in ${READOUT_SYMS:-}; do
 	i=$((i+1))
 	[ $i -ge 8 ] && break
 done
-DEFS="$DEFS -DSAVE_PA=$SAVE_PA -DSAVE_VA=$SAVE_VA -DTABLE_PA=$TABLE_PA -DTABLE_VA=$TABLE_VA -DCOUNT_N=${COUNT_N:-1} $SYMDEFS"
+STUB_AT=${STUB_AT:-0x1400000}
+HANDOVER_PA=$(python3 -c "print(hex($KADDR + $STUB_AT + 0x200))")
+DEFS="$DEFS -DHANDOVER_PA=$HANDOVER_PA -DSTUB_AT=$STUB_AT -DSAVE_PA=$SAVE_PA -DSAVE_VA=$SAVE_VA -DTABLE_PA=$TABLE_PA -DTABLE_VA=$TABLE_VA -DCOUNT_N=${COUNT_N:-1} $SYMDEFS"
 echo "defs: $DEFS  WORLD_VA=${WORLD_VA:-0}"
 aarch64-buildroot-linux-gnu-gcc $DEFS -DWORLD_VA=${WORLD_VA:-0} -c tramp-postmmu.S -o tramp-postmmu.o
 aarch64-buildroot-linux-gnu-gcc -DSAVE_PA=${SAVE_PA:-0x20883000} -c abort-postmmu.S -o abort-postmmu.o

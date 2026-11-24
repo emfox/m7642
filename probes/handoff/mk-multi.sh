@@ -36,10 +36,15 @@ PY
 }
 READOUT_SYMS=$(syms_to_vas "${READOUT_SYMS:-memblock+16 memblock+32 memblock+56 memblock+72 max_pfn min_low_pfn}")
 export READOUT_SYMS
-KADDR=0x20280000 KERNEL="$KERNEL" ./build-postmmu.sh >/dev/null
+KADDR=${KADDR:-0x20280000} KERNEL="$KERNEL" ./build-postmmu.sh >/dev/null
 . ./tramp-entries.env
 
-ARGS=("--word" "$(resolve zfix_align)=0xaa1f03f9" "--patch" "0x4=$TRAMP_FDT_ENTRY")
+# The 2 MB-alignment fix is only needed because the image is loaded at
+# 0x20280000 (base + 0x80000).  NO_ALIGN=1 builds without it, for the
+# experiment where mboot is asked (via --kernel-addr) to load us 2 MB aligned.
+ARGS=()
+[ "${NO_ALIGN:-0}" = 1 ] || ARGS+=("--word" "$(resolve zfix_align)=0xaa1f03f9")
+ARGS+=("--patch" "0x4=$TRAMP_FDT_ENTRY")
 for spec in "$@"; do
 	ck=${spec%%=*}; ent=${spec#*=}
 	case "$ck" in 0x*) off=$ck ;; *) off=$(resolve "$ck") ;; esac
@@ -56,7 +61,12 @@ for spec in "$@"; do
 	echo "  $ck -> $(printf %#x $off) : bl $(printf %#x $tgt)"
 	ARGS+=("--patch" "$off=$tgt")
 done
+# The dcache-invalid NOP at preserve_boot_args+0x20 has never been
+# proven necessary; NO_NOP=1 builds an image without it.
+if [ "${NO_NOP:-0}" != 1 ]; then
 ARGS+=("--nop" "$(resolve zfix_nop)")
+fi
 python3 ../../tools/host/mk-mainline-abort.py --image "$IMAGE" \
 	--stub abort-postmmu.bin --tramp tramp-postmmu.bin --tramp-at ${TRAMP_AT:-0x36e000} \
+	${KERNEL_ADDR:+--kernel-addr $KERNEL_ADDR} \
 	"${ARGS[@]}" --out "$OUT/m7642-$TAG.img"
