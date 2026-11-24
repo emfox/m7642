@@ -2989,3 +2989,60 @@ initramfs 里必须**自带 `/dev` `/proc` `/sys` 目录**，否则 `mount()` �
 `painted=1` 后屏幕上能看到**绿色闪一下**然后回到 logo ⟹ 内存写入生效，但面板的扫描源/叠加层
 不在（或不止）`0x2D100000`，或者 mboot/PM51 之后又重画。**属于显示驱动问题，另行处理**（不要再用
 "屏幕颜色"当用户态是否运行的证据；用 34.37 的探针链和本节报告通道）。
+
+## 34.39 内核日志通道 + 两条新线索 + 仪器漂移的教训（2026-11-25 05:2x–09:0x）
+
+### 内核日志通道（★★★ 从此有 console）
+
+`/init` 里 `syscall(SYS_syslog, 3, buf, N)`（SYSLOG_ACTION_READ_ALL）读整个 ring buffer，
+用 `/dev/mem` 写到 PA `0x23082000`（长度写在报告页 `0x23081000` 的偏移 32），然后 SysRq 崩溃 →
+panic 探针交接 → Android 起来后用 probeRW 读回。首份日志存为
+`logs/dmesg-7.3.5-boot1.log`（98 行，含完整 cmdline）。
+
+**关键日志事实**
+
+- cmdline：`console=tty0 console=ttyS0,115200n8 earlycon ignore_loglevel fbcon=nodefer maxcpus=1
+  ramoops.mem_address=0x42300000 ...` ⟹ 内核本来就想用屏幕当控制台；`maxcpus=1` 是 mboot 限的。
+- `earlycon: ns16550a0 MMIO32:0x1f201300` + `printk: legacy console [tty0] enabled` +
+  `printk: legacy console [ramoops-1] enabled` ⟹ 三个 console 都注册了。
+- `simple-framebuffer chosen:framebuffer@2d100000: probe with driver simple-framebuffer failed
+  with error -22`：**是 `drivers/firmware/sysfb.c` 的同名 shim**（dev_driver_string 为
+  "simple-framebuffer"），`sysfb_probe → sysfb_create_simplefb` 因 mboot 提供的 `screen_info`
+  像素格式非法而返回 -EINVAL。我们的 DT 节点属性（w/h/stride/format）是好的。
+- `eMMC: no SD 1006` ⟹ 厂 `mstar_mci` 的 `subsys_initcall` **确实执行了**（它先 ioremap
+  0x1f000000 的 RIU 窗口、读 FCIE_NC_FUN_CTL），只是没认出卡。
+- `Freeing unused kernel memory: 1280K` + `Run /init as init process` ⟹ 与 §34.36/34.37 互证。
+
+### 显示：写内存有效，但没有 fb 设备
+
+`/init` 用 `/dev/mem` mmap `0x2D100000`（8 MB）→ 写入 `0x0000FF00` → 读回一致（`painted=1`），
+屏幕上能看到绿色**闪一下**然后回到 logo ⟹ 面板扫描源/叠加层不在（或不止）这块区域。
+`CONFIG_FB_SIMPLE` 与 `CONFIG_DRM_SIMPLEDRM` 互斥；单独打开 `FB_SIMPLE` 的那几版内核出现
+新挂点（但见下节：那是我仪器的问题，结论需要重测）。
+
+### 仪器漂移（重要教训，必须记住）
+
+**症状**：05:30 起所有新构建的探针镜像都"挂死"，而 05:24 构建的旧镜像仍正常。
+
+**已排除**：内核源码（只有 4 个改动：`m7642-dtb.S`、`mm/init.c` 两个真修复；`Kconfig.platforms`、
+`vmlinux.lds.S` 两个被 guard 关掉的实验）；镜像补丁位点（shim/align/d0/panic/tramp 全部核对正确）；
+设备本身（旧镜像可跑）。
+
+**踩到的坑（都真实发生过）**
+
+1. `arch/arm64/boot/Image` 必须是 **ANDROID! 容器**（`mk-mainline-abort.py` 第一行就断言），
+   而 `make Image` 产出的是裸镜像 ⟹ 每次 `make Image` 之后**必须**用
+   `tools/host/mkbootimg.py -k Image -o Image` 重新包装。
+2. 探针 blob 位置**不能靠找零空隙**：`.text` 里的静态调用 trampoline 区就是零填充，写进去会
+   破坏运行期被打补丁的跳板。曾经用过的固定空位 `0x36e000` 也会随配置变化被真实数据占用。
+   在链接脚本 `.text` 末尾保留 `__m7642_probe_slot` 的尝试**失败**：那段落在 RX 段映射范围之外
+   （`_etext` 因 `ALIGN(SEGMENT_ALIGN)` 被推到下一个 64 KB 边界），运行到那里就取指异常。
+3. `.pi.text`（head.S 的早期代码）在 `System.map` 里**没有符号**，符号名会归到相邻函数上；
+   对齐指令只能按字节特征（`0x92405279`）搜。
+4. 解析工具输出被 `tail -3` 截断，导致我误判"d0 补丁没生成"；对比时又用了过期偏移。
+5. `CONFIG_FB_SIMPLE` / `CONFIG_DRM_SIMPLEDRM` / `CONFIG_FRAMEBUFFER_CONSOLE` 来回改过多次，
+   `olddefconfig` 会连带改掉依赖项，事后必须核对（本次最终已用
+   `linux-735-out/.config` 为基线重建）。
+
+**下一步（重基线）**：锁定一份 config 与内核提交 → 重新验证对照探针 → 再继续
+`FB_SIMPLE`（屏幕控制台）与 eMMC（`no SD 1006`）。

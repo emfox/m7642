@@ -1,0 +1,98 @@
+<6>[    0.000000] Booting Linux on physical CPU 0x0000000000 [0x411fd090]
+<5>[    0.000000] Linux version 7.3.5+ (emfox@emfox) (aarch64-buildroot-linux-gnu-gcc.br_real (Buildroot 2021.11-12449-g1bef613319) 13.3.0, GNU ld (GNU Binutils) 2.41) #16 SMP PREEMPT Wed Nov 25 05:23:10 CST 2026
+<6>[    0.000000] Machine model: TCL 65S535D Pro
+<6>[    0.000000] earlycon: ns16550a0 MMIO32:0x000000001f201300 (options '115200n8')
+<6>[    0.000000] printk: legacy bootconsole [ns16550a0] enabled
+<6>[    0.000000] printk: debug: ignoring loglevel setting.
+<6>[    0.000000] efi: UEFI not found.
+<6>[    0.000000] OF: reserved mem: 0x000000002d100000..0x000000002d8e8fff (8100 KiB) map non-reusable framebuffer@2d100000
+<3>[    0.000000] WARNING: x1-x3 nonzero in violation of boot protocol:
+<3>[    0.000000] 	x1: 000000000000001c
+<3>[    0.000000] 	x2: 0000000020200100
+<3>[    0.000000] 	x3: 0000000000000000
+<3>[    0.000000] This indicates a broken bootloader or old kernel
+<6>[    0.000000] Zone ranges:
+<6>[    0.000000]   DMA      [mem 0x0000000020200000-0x00000000ffffffff]
+<6>[    0.000000]   DMA32    empty
+<6>[    0.000000]   Normal   [mem 0x0000000100000000-0x00000001bfffffff]
+<6>[    0.000000] Movable zone start for each node
+<6>[    0.000000] Early memory node ranges
+<6>[    0.000000]   node   0: [mem 0x0000000020200000-0x00000000417fffff]
+<6>[    0.000000]   node   0: [mem 0x0000000054400000-0x000000009d9fffff]
+<6>[    0.000000]   node   0: [mem 0x0000000180000000-0x00000001bfffffff]
+<6>[    0.000000] Initmem setup node 0 [mem 0x0000000020200000-0x00000001bfffffff]
+<6>[    0.000000] On node 0, zone DMA: 512 pages in unavailable ranges
+<6>[    0.000000] On node 0, zone DMA: 44032 pages in unavailable ranges
+<6>[    0.000000] On node 0, zone Normal: 9728 pages in unavailable ranges
+<6>[    0.000000] percpu: Embedded 14 pages/cpu s25824 r0 d31520 u57344
+<7>[    0.000000] pcpu-alloc: s25824 r0 d31520 u57344 alloc=14*4096
+<7>[    0.000000] pcpu-alloc: [0] 0 [0] 1 [0] 2 [0] 3 
+<6>[    0.000000] Detected VIPT I-cache on CPU0
+<6>[    0.000000] CPU features: detected: Spectre-v4
+<6>[    0.000000] CPU features: detected: Spectre-BHB
+<6>[    0.000000] alternatives: applying boot alternatives
+<5>[    0.000000] Kernel command line: console=tty0 console=ttyS0,115200n8 earlycon ignore_loglevel fbcon=nodefer maxcpus=1 ramoops.mem_address=0x42300000 ramoops.mem_size=0x100000 ramoops.record_size=0x40000 ramoops.console_size=0x80000
+<6>[    0.000000] printk: log buffer data + meta data: 131072 + 458752 = 589824 bytes
+<6>[    0.000000] Dentry cache hash table entries: 524288 (order: 10, 4194304 bytes, linear)
+<6>[    0.000000] Inode-cache hash table entries: 262144 (order: 9, 2097152 bytes, linear)
+<6>[    0.000000] software IO TLB: area num 4.
+<6>[    0.000000] software IO TLB: mapped [mem 0x0000000099a00000-0x000000009da00000] (64MB)
+<6>[    0.000000] Built 1 zonelists, mobility grouping on.  Total pages: 699392
+<6>[    0.000000] mem auto-init: stack:all(zero), heap alloc:off, heap free:off
+<6>[    0.000000] SLUB: HWalign=64, Order=0-3, MinObjects=0, CPUs=4, Nodes=1
+<6>[    0.000000] rcu: Hierarchical RCU implementation.
+<6>[    0.000000] rcu: 	RCU restricting CPUs from NR_CPUS=512 to nr_cpu_ids=4.
+<6>[    0.000000] rcu: RCU calculated value of scheduler-enlistment delay is 25 jiffies.
+<6>[    0.000000] rcu: Adjusting geometry for rcu_fanout_leaf=16, nr_cpu_ids=4
+<6>[    0.000000] NR_IRQS: 64, nr_irqs: 64, preallocated irqs: 0
+<6>[    0.000000] Root IRQ handler: gic_handle_irq
+<6>[    0.000000] GIC: Using split EOI/Deactivate mode
+<6>[    0.000000] rcu: srcu_init: Setting srcu_struct sizes based on contention.
+<6>[    0.000000] clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+<6>[    0.000000] arch_timer: cp15 timer running at 12.00MHz (phys).
+<6>[    0.000000] clocksource: arch_sys_counter: mask: 0xffffffffffffff max_cycles: 0x2c47f4ee7, max_idle_ns: 440795202497 ns
+<6>[    0.000000] sched_clock: 56 bits at 12MHz, resolution 83ns, wraps every 4398046511096ns
+<6>[    0.008075] Console: colour dummy device 80x25
+<6>[    0.012530] printk: legacy console [tty0] enabled
+<6>[    0.017516] Calibrating delay loop (skipped), value calculated using timer frequency.. 24.00 BogoMIPS (lpj=48000)
+<6>[    0.027796] pid_max: default: 32768 minimum: 301
+<6>[    0.032554] Mount-cache hash table entries: 8192 (order: 4, 65536 bytes, linear)
+<6>[    0.039981] Mountpoint-cache hash table entries: 8192 (order: 4, 65536 bytes, linear)
+<6>[    0.048042] VFS: Finished mounting rootfs on nullfs
+<6>[    0.053757] rcu: Hierarchical SRCU implementation.
+<6>[    0.058568] rcu: 	Max phase no-delay instances is 1000.
+<6>[    0.063971] EFI services will not be available.
+<6>[    0.068625] smp: Bringing up secondary CPUs ...
+<6>[    0.073170] smp: Brought up 1 node, 1 CPU
+<6>[    0.077188] SMP: Total of 1 processors activated.
+<6>[    0.081899] CPU: All CPU(s) started at EL2
+<6>[    0.086001] CPU features: detected: 32-bit EL0 Support
+<6>[    0.091148] CPU features: detected: CRC32 instructions
+<6>[    0.096318] alternatives: applying system-wide alternatives
+<6>[    0.102181] Memory: 2654272K/2797568K available (3456K kernel code, 654K rwdata, 908K rodata, 1280K init, 429K bss, 140368K reserved, 0K cma-reserved)
+<6>[    0.115891] devtmpfs: initialized
+<6>[    0.119998] posixtimers hash table entries: 2048 (order: 3, 32768 bytes, linear)
+<6>[    0.127477] futex hash table entries: 1024 (65536 bytes on 1 NUMA nodes, total 64 KiB, linear).
+<6>[    0.136209] DMI: not present or invalid.
+<6>[    0.140463] DMA: preallocated 512 KiB GFP_KERNEL pool for atomic allocations
+<6>[    0.147661] DMA: preallocated 512 KiB GFP_KERNEL|GFP_DMA pool for atomic allocations
+<6>[    0.155436] ramoops: using module parameters
+<6>[    0.159863] printk: legacy console [ramoops-1] enabled
+<6>[    0.165259] pstore: Registered ramoops as persistent store backend
+<6>[    0.171450] ramoops: using 0x100000@0x42300000, ecc: 0
+<6>[    0.176726] ASID allocator initialised with 65536 entries
+<6>[    0.182180] Serial: AMBA PL011 UART driver
+<3>[    0.187077] eMMC: no SD 1006
+<6>[    0.226515] clocksource: Switched to clocksource arch_sys_counter
+<6>[    0.247353] workingset: timestamp_bits=62 (anon: 57) max_order=20 bucket_order=0 (anon: 0)
+<6>[    0.257642] Serial: 8250/16550 driver, 4 ports, IRQ sharing disabled
+<3>[    0.264570] simple-framebuffer chosen:framebuffer@2d100000: probe with driver simple-framebuffer failed with error -22
+<6>[    0.281872] clk: Disabling unused clocks
+<3>[    0.285870] Warning: unable to open an initial console.
+<6>[    0.291343] Freeing unused kernel memory: 1280K
+<6>[    0.296455] Run /init as init process
+<7>[    0.300132]   with arguments:
+<7>[    0.303108]     /init
+<7>[    0.305384]   with environment:
+<7>[    0.308532]     HOME=/
+<7>[    0.310898]     TERM=linux

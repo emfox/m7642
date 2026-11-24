@@ -38,14 +38,25 @@ PY
 }
 READOUT_SYMS=$(syms_to_vas "${READOUT_SYMS:-memblock+16 memblock+32 memblock+56 memblock+72 max_pfn min_low_pfn}")
 export READOUT_SYMS
-KADDR=${KADDR:-0x20280000} KERNEL="$KERNEL" ./build-postmmu.sh >/dev/null
+
+# Per-build constants come from the image itself (byte pattern for the early
+# head.S alignment instruction, reserved slot for the trampoline).  Symbol
+# names are not usable for .pi.text and config changes move code around.
+RESOLVED=$(python3 ../../tools/host/resolve-params.py "$IMAGE" "$SYSMAP") || {
+	echo "mk-multi: cannot resolve per-build constants" >&2; exit 1; }
+ALIGN_OFF=$(printf '%s\n' "$RESOLVED" | sed -n 's/^ALIGN_OFF=//p')
+SLOT_OFF=$(printf '%s\n' "$RESOLVED" | sed -n 's/^SLOT_OFF=//p')
+[ -n "$ALIGN_OFF" ] && [ -n "$SLOT_OFF" ] || { echo "mk-multi: bad resolve output" >&2; exit 1; }
+USER_TRAMP_AT=${TRAMP_AT:-}
+KADDR=${KADDR:-0x20280000} KERNEL="$KERNEL" TRAMP_AT=${USER_TRAMP_AT:-$SLOT_OFF} ./build-postmmu.sh >/dev/null
 . ./tramp-entries.env
+TRAMP_AT=${USER_TRAMP_AT:-$SLOT_OFF}
 
 # The 2 MB-alignment fix is only needed because the image is loaded at
 # 0x20280000 (base + 0x80000).  NO_ALIGN=1 builds without it, for the
 # experiment where mboot is asked (via --kernel-addr) to load us 2 MB aligned.
 ARGS=()
-[ "${NO_ALIGN:-0}" = 1 ] || ARGS+=("--word" "$(resolve zfix_align)=0xaa1f03f9")
+[ "${NO_ALIGN:-0}" = 1 ] || ARGS+=("--word" "$ALIGN_OFF=0xaa1f03f9")
 ARGS+=("--patch" "0x4=$TRAMP_FDT_ENTRY")
 for spec in "$@"; do
 	ck=${spec%%=*}; ent=${spec#*=}
@@ -69,6 +80,6 @@ if [ "${NO_NOP:-0}" != 1 ]; then
 ARGS+=("--nop" "$(resolve zfix_nop)")
 fi
 python3 ../../tools/host/mk-mainline-abort.py --image "$IMAGE" \
-	--stub abort-postmmu.bin --tramp tramp-postmmu.bin --tramp-at ${TRAMP_AT:-0x36e000} \
+	--stub abort-postmmu.bin --tramp tramp-postmmu.bin --tramp-at "$TRAMP_AT" \
 	${KERNEL_ADDR:+--kernel-addr $KERNEL_ADDR} \
 	"${ARGS[@]}" --out "$OUT/m7642-$TAG.img"
