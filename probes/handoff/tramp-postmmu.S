@@ -46,31 +46,33 @@
 #ifndef PRIMARY_ENTRY_PA
 #define PRIMARY_ENTRY_PA 0x206d5038
 #endif
+/* Kernel-image constants.  Every one of them can be overridden from the
+ * command line; build-postmmu.sh derives the real values from System.map and
+ * passes them as -D...  The defaults below are only a safety net -- if they
+ * ever disagree with the kernel, the post-build check in build-postmmu.sh
+ * fails loudly instead of silently producing a stale blob.
+ *
+ * SAVE_VA lives in the image's .bss (reachable through the kernel mapping
+ * whether or not the identity map is alive) and holds TCR_EL1/TTBR0_EL1 for
+ * the world-B probes.  It sits deep inside __log_buf on purpose: early boot
+ * prints only ~2.4 KB before kmem_cache_init, so the ring buffer cannot
+ * reach it before any checkpoint we use.
+ */
 #ifndef TABLE_PA
-#define TABLE_PA 0x20601000		/* a page inside .bss of the image */
+#define TABLE_PA 0x20881000
 #endif
 #ifndef TABLE_VA
-#define TABLE_VA 0xffffffc080601000	/* ... always mapped RW, so safe to write
-					 * in any mapping regime.  We never return
-					 * to the kernel, so clobbering it is fine;
-					 * reserved_pg_dir was a poor choice because
-					 * whether .rodata is already read-only at a
-					 * given checkpoint cannot be assumed. */
+#define TABLE_VA 0xffffffc080601000
 #endif
 #ifndef IDMAP_PROBE_PA
-#define IDMAP_PROBE_PA 0x20280000	/* _text's PA: inside the init idmap
-					 * iff that identity map still exists */
+#define IDMAP_PROBE_PA 0x20280000
 #endif
-/* Where the returning probe parks TCR_EL1/TTBR0_EL1 for the restore probe.
- * Inside the image (.bss), so it is reachable through the kernel mapping no
- * matter whether the identity map is still alive. */
 #ifndef SAVE_VA
-#define SAVE_VA 0xffffffc080603000
+#define SAVE_VA 0xffffffc08061a000
 #endif
 #ifndef HANDOVER_PA
 #define HANDOVER_PA 0x21680200
 #endif
-
 	.text
 	.globl	_start
 _start:

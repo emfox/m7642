@@ -30,8 +30,18 @@ PY
 )
 # SAVE_VA lives in the image; the handover stub runs with the MMU off, so it
 # needs the physical address.  PA = VA - KIMAGE_OFFSET.
-SAVE_VA=${SAVE_VA:-0xffffffc08060b000}
-SAVE_PA=$(python3 -c "print(hex($SAVE_VA - ${DEFS##*-DKIMAGE_OFFSET=}))" 2>/dev/null || echo 0x20883000)
+# SAVE_VA / TABLE_VA are kernel-image VAs and MUST be passed to the
+# assembler.  Pull KIMAGE_OFFSET out of DEFS as a clean token: using
+# ${DEFS##*-DKIMAGE_OFFSET=} drags the remaining defines along, the
+# arithmetic then fails and silently falls back to a stale constant.
+KOFF=$(printf '%s\n' $DEFS | sed -n 's/^-DKIMAGE_OFFSET=//p' | head -1)
+KOFF=${KOFF:-0xffffffc05fd80000}
+SAVE_VA=${SAVE_VA:-0xffffffc08061a000}
+TABLE_VA=${TABLE_VA:-0xffffffc080601000}
+SAVE_PA=$(python3 -c "print(hex($SAVE_VA - $KOFF))")
+TABLE_PA=$(python3 -c "print(hex($TABLE_VA - $KOFF))")
+printf 'save %s->%s  table %s->%s  (KOFF=%s)\n' \
+       $SAVE_VA $SAVE_PA $TABLE_VA $TABLE_PA $KOFF
 SYMDEFS=""
 i=0
 for spec in ${READOUT_SYMS:-}; do
@@ -39,7 +49,7 @@ for spec in ${READOUT_SYMS:-}; do
 	i=$((i+1))
 	[ $i -ge 8 ] && break
 done
-DEFS="$DEFS -DSAVE_PA=$SAVE_PA -DCOUNT_N=${COUNT_N:-1} $SYMDEFS"
+DEFS="$DEFS -DSAVE_PA=$SAVE_PA -DSAVE_VA=$SAVE_VA -DTABLE_PA=$TABLE_PA -DTABLE_VA=$TABLE_VA -DCOUNT_N=${COUNT_N:-1} $SYMDEFS"
 echo "defs: $DEFS  WORLD_VA=${WORLD_VA:-0}"
 aarch64-buildroot-linux-gnu-gcc $DEFS -DWORLD_VA=${WORLD_VA:-0} -c tramp-postmmu.S -o tramp-postmmu.o
 aarch64-buildroot-linux-gnu-gcc -DSAVE_PA=${SAVE_PA:-0x20883000} -c abort-postmmu.S -o abort-postmmu.o
@@ -70,3 +80,22 @@ EOT
 echo "entries: PA=$(printf %#x $(( TRAMP_AT + PA_ENTRY ))) KVA=$(printf %#x $(( TRAMP_AT + KVA_ENTRY ))) FDT=$(printf %#x $(( TRAMP_AT + FDT_ENTRY )))"
 ls -l tramp-postmmu.bin abort-postmmu.bin abort-rung.bin
 md5sum tramp-postmmu.bin abort-postmmu.bin abort-rung.bin
+
+# --- post-build check -------------------------------------------------------
+# Assemble can silently leave a stale .bin if an earlier step failed, and a
+# stale blob means every later measurement is meaningless.  Re-derive the
+# SAVE_VA load from the produced binary and compare.
+python3 - "$(dirname "$0")/tramp-postmmu.bin" "$SAVE_VA" <<'PY'
+import struct, sys
+bin_path, save_va = sys.argv[1], int(sys.argv[2], 0)
+d = open(bin_path, "rb").read()
+# _start_restore starts at blob offset 0x500 with movz/movk/movk/movk SAVE_VA
+off = 0x500
+words = struct.unpack_from("<4I", d, off)
+def imm(w): return (w >> 5) & 0xffff
+val = imm(words[0]) | (imm(words[1]) << 16) | (imm(words[2]) << 32) | (imm(words[3]) << 48)
+if val != save_va:
+    sys.exit("BUILD FAILED: blob encodes SAVE_VA=%#x but expected %#x "
+             "(stale tramp-postmmu.bin?)" % (val, save_va))
+print("post-build check: SAVE_VA %#x encoded correctly" % val)
+PY

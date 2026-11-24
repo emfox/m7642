@@ -35,7 +35,45 @@ LADDER = {
     "c1":           ("setup_arch", 0x1d4, "after efi_init"),
     "d1":           ("setup_arch", 0x1e8, "after arm64_memblock_init"),
     "c2":           ("setup_arch", 0x1f4, "after paging_init"),
-    "b1":           ("setup_arch", 0x368, "smp_init_cpus"),
+    "b1":           ("setup_arch", 0x368, "at bl smp_init_cpus"),
+    "b1b":          ("setup_arch", 0x36c, "after smp_init_cpus returns"),
+    "trap_init":    ("trap_init", 0x0, "trap_init entry"),
+    "zonelists":    ("build_all_zonelists", 0x0, "build_all_zonelists entry"),
+    "sort_extable": ("sort_main_extable", 0x0, "sort_main_extable entry"),
+    # start_kernel's tail: setup_log_buf -> vfs_caches_init_early ->
+    # sort_main_extable -> mm_core_init -> sched_init, all inlined in start_kernel
+    "pre_logbuf":   ("start_kernel", 0x3a4, "at bl setup_log_buf"),
+    "pre_vfsearly": ("start_kernel", 0x3a8, "at bl vfs_caches_init_early"),
+    "pre_sortext":  ("start_kernel", 0x3ac, "at bl sort_main_extable"),
+    "pre_mmcore":   ("start_kernel", 0x3b4, "at bl mm_core_init"),
+    "post_mmcore":  ("start_kernel", 0x3b8, "after mm_core_init returns"),
+    "pre_sched":    ("start_kernel", 0x3c0, "at bl sched_init"),
+    # inside mm_core_init(): arch_mm_preinit, arch_setup_zero_pages,
+    # build_all_zonelists, page_alloc_init_cpuhp, stack_depot_early_init,
+    # memblock_free_all, mem_init, kmem_cache_init, pgtable_cache_init,
+    # vmalloc_init, mm_cache_init ...
+    "mm1":          ("mm_core_init", 0x58, "after build_all_zonelists"),
+    "mm2":          ("mm_core_init", 0xc8, "at bl memblock_free_all"),
+    "mm3":          ("mm_core_init", 0xcc, "at bl mem_init"),
+    "mm4":          ("mm_core_init", 0xd0, "at bl kmem_cache_init"),
+    "mm5":          ("mm_core_init", 0xd4, "at bl pgtable_cache_init"),
+    "mm6":          ("mm_core_init", 0xdc, "at bl mm_cache_init"),
+    "mm7":          ("mm_core_init", 0xd8, "at bl vmalloc_init"),
+    "mm8":          ("mm_core_init", 0xe0, "after mm_cache_init, before ret"),
+    # inside kmem_cache_init(): hash_pointers_finalize, create_boot_cache x2,
+    # bootstrap x2, setup_kmalloc_cache_index_table, create_kmalloc_caches,
+    # kmalloc paths, panic() on alloc failure, __cpuhp_setup_state
+    "kc1":          ("kmem_cache_init", 0xc8, "at bl bootstrap"),
+    "kc2":          ("kmem_cache_init", 0xe4, "at bl create_kmalloc_caches"),
+    "kc3":          ("kmem_cache_init", 0xe8, "after create_kmalloc_caches"),
+    "kc4":          ("kmem_cache_init", 0x298, "at bl __cpuhp_setup_state"),
+    # 0x4774b8 = kmem_cache_init+0x238: the "Out of memory when creating
+    # kmem_cache %s" panic setup.  A checkpoint here fires ONLY if kmalloc(48)
+    # returned NULL, i.e. if we are about to panic.
+    "panicpath":    ("kmem_cache_init", 0x238, "OOM panic setup (kmalloc returned NULL)"),
+    # 0x477410 = after the first __kmalloc_cache_node() in the cache-creation loop
+    "firstalloc":   ("kmem_cache_init", 0x190, "after the loop's first kmalloc returns"),
+    "oom":          ("out_of_memory", 0x0, "out_of_memory entry (fires only if OOM)"),
     "sched_init":   ("sched_init", 0x0, "sched_init entry"),
     "console_init": ("console_init", 0x0, "console_init entry"),
 }

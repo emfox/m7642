@@ -82,6 +82,29 @@
 - 下一步：去掉 DTB 里 `memory@180000000` 重编，跑 `kc4`(0x477518) 验证"第 6 GB 段不可用"
 
 
+**2026-11-24 23:1x 状态（独立审计后更正）**
+
+- **卡点窗口**：`create_boot_cache(kmem_cache_node, …)` 内部，`[pcpu_alloc 开始 … new_slab)`。
+  已证实可达：`ckB 0x4772b4`、`d1 0x1202f4`、`d2 0x120348`。
+  **已作废**：`d3 0x120378 ❌` 是结构性假阴性（`slab_state==DOWN` 时走 `0x1204e0` 的
+  `early_kmem_cache_node_alloc`，那条 `bl` 永不执行）；"卡在 kmem_cache_alloc_node"不成立；
+  `0x1203d8` 别打（必然 ❌）。
+- **下一发**（镜像已备好 `out/`）：
+  - `ctl` = `8b4bcf72d8bd4f95163e2c5d945d1ff6`（`0x4772b4`，对照，必回）
+  - `ns1` = `1a0a04e4095f07ed379794a3b4d6bd11`（`0x1204fc` = `bl new_slab`）
+  - **先打 ctl 再打 ns1**；ctl ❌ 则整批作废。
+- **仪器已修**：`-DSAVE_VA/-DTABLE_PA/-DTABLE_VA` 真正传入 + 构建后自检（防旧 blob）；
+  `SAVE_VA=0xffffffc08061a000`；`TABLE_PA` 由 `TABLE_VA-KOFF` 算出（原硬编码差 0x280000）；
+  `ckpt.py`(47 条) / `decode-record.py`(readout) 已从 `eb0ff18^` 恢复。
+- **已知仪器缺陷（未修）**：blob 0x36c000 覆盖 9 个活符号（含 `queued_spin_lock_slowpath`、
+  `queued_read_lock_slowpath`）⟹ 锁竞争会跳进 blob 变成假挂死；记录区 `0x23080000` 未在 DT 保留；
+  `restore` 不关中断。
+- **构建陷阱**：改 DTS 后要删 `$O/arch/arm64/kernel/m7642-dtb.o`（不是 `dts/mstar/` 那个）再
+  `make Image`，否则内嵌 DTB 静默留旧。当前 DTS 已回滚，Image 内嵌 FDT 为 3 段内存。
+- **插座**：`did 2188570626`（`xiaomi.plug.mcn004`「电视插座」）；恢复流程
+  `tools/host/socket.sh recover` = 断电→10 s→上电→3 s→单次红外。
+
+
 ## 停下点（2026-11-22 15:1x）
 
 设备**硬挂**，需要一次物理拔插（红外救不回，见 §34.9 的退化说明）。

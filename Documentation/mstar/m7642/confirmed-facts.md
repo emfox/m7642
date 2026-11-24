@@ -2406,44 +2406,6 @@ pr_info("SLUB: HWalign=%d, ..., CPUs=%u, Nodes=%u\n", ...);               // 0x4
 **带空洞的多段内存**（TV 有 `0x41800000..0x54400000` 空洞 + 第 6 GB 区域）、
 MStar 时钟/定时器、以及 `ZONE_NORMAL` 里的实际页分布。
 
-#### 下一步（需上机，1 发，尽量让它返回）
-
-顺序代码没法用"互斥探针"压缩，最有效的仪器是**让挂死也能留下读数**：
-
-1. **优先**：把"计数型返回探针"加到 `bootstrap_kmalloc_sheaves` 的循环头
-   （`0x47738c`）——每次迭代把计数写进 SAVE 页并返回内核，**计数到 N 时才交接**。
-   N 从 1 开始递增（1 → 8 → 32 → …），每次"能返回"的发数**零断电成本**，
-   直到某一发开始挂死，就把死亡点锁在两次 N 之间。
-2. 若确认必然要"挂了也能读"，则解冻 **eMMC 写路径**（`emmc.md` §11.3 已离线实现并验证过逻辑），
-   让探针把每次迭代 append 到 eMMC——**一次挂死就能拿到精确位置**。
-
-### 34.27 智能插座是**蓝牙 Mesh 2.0**，`mihome-ctl` 控不了（2026-11-24）
-
-用户装的插座是「小米智能墙壁插座」`zimi.plug.zncz01`（米家名"电视插座"，did `1043054088`），
-**通过蓝牙 Mesh 2.0 接入米家，没有 WiFi 配网**——所以它在设备列表里显示的 IP（`211.90.237.255`）
-是无意义占位，控制必须经 **BLE mesh 网关**（如小爱音箱 Pro）。
-
-实测结论：
-
-| 操作 | 结果 |
-|---|---|
-| `prop-get --did … --siid 2 --piid 1`（云） | ✅ 返回 `True`（可能是缓存值） |
-| `prop-set … --value false/0`（云） | ❌ `code: 1` / `-704220043`（设备不可达） |
-| `prop-get/prop-set --local` | ❌ 解析出的 IP 是公网地址，miIO 握手失败 |
-| `--relogin` | 需要交互式扫码登录，不能无人值守 |
-
-**`mihome-ctl` 里没有任何 mesh/gateway 代码**（`grep -rn mesh` 在包里 0 命中），
-所以它属下的 `prop-set` 只能走 MIoT 云，而云对 mesh 子设备需要网关在线转发。
-⟹ **本项目不能用它做断电自动化**；要用只能换通路（python-miio 的 gateway RPC + 网关 token）。
-
-顺带装好的东西（有长期价值，留着）：
-
-- `~/.local/bin/arp`：读 `/proc/net/arp` 的 `arp -an` 兼容 shim（`mihome-ctl --local`
-  与 python `uuid` 都需要它，而主机没装 net-tools）。注意 `~/.local/bin` **不在非交互 shell 的 PATH** 里。
-- `python-miio` 已装进 `~/.local/share/uv/tools/mihome-ctl` 的 venv（`--local` 通路的前提）。
-
-⟹ **恢复挂死设备仍只有两条路**：米家 App / 小爱语音点一下插座，或人手动拔插。
-`tools/host/socket.sh` 保留但标注"当前不可用（mesh 设备）"。
 
 ### 34.28 插座/恢复流程修正 + 卡点缩到 `kmem_cache_alloc_node_noprof`（2026-11-24 深夜）
 
@@ -2553,3 +2515,95 @@ p1  0x47730c (create_boot_cache #1 后)                      ❌
 
 ⟹ 卡在 **`kmem_cache_alloc_node_noprof`**：第一次真正从新建的 cache 取对象。
 下一步该打 `0x1203d8`（`bl __kmalloc_cache_node_noprof`）区分"卡在这个函数里"还是"卡在它之后"。
+
+## 34.30 独立审计后的更正（2026-11-24 23:0x）
+
+两个独立审计员（内核结论 / 流程时间线）逐条核对后，**推翻了我当天的两条结论**，并发现一个
+更严重的仪器缺陷。以下按"错在哪 → 证据 → 已修"排列。
+
+### A. `d3` 是**结构性假阴性** ⟹ "卡在 `kmem_cache_alloc_node_noprof`" 作废
+
+`do_kmem_cache_create` 里第一次建 cache 时 `slab_state == DOWN`：
+
+```
+ffffffc08012035c: ldr  w1, [x22, #1600]     // slab_state
+ffffffc08012036c: cbz  w1, 0x1204e0         // DOWN -> early_kmem_cache_node_alloc (内联)
+ffffffc080120378: bl   kmem_cache_alloc_node_noprof   ← d3 打在这里，这条路上永远不执行
+ffffffc0801204e0: ldr  w1, [x0,#24]; cmp #0x3f; b.ls   // BUG_ON(size < sizeof(node))
+ffffffc0801204fc: bl   new_slab
+```
+
+⟹ `d3 ❌` 只说明"没走到那条 `bl`"，与内核是否挂死无关。
+⟹ **原计划的 `0x1203d8` 必然也 ❌，那一发是白花的电。**
+
+由 `d2 ✅` 只能得到窗口：`[bl pcpu_alloc_noprof 开始 … early_kmem_cache_node_alloc 的 new_slab)`。
+
+### B. 探针 blob **盖住的是活的内核代码**（最严重）
+
+`tramp-postmmu.bin` 长 0x778，放在 `Image+0x36c000`。System.map 精确比对：该区间内有 **9 个真实符号**，
+
+```
+0x36c044 _raw_write_trylock      0x36c0dc _raw_spin_trylock
+0x36c174 _raw_read_unlock        0x36c1d0 _raw_read_unlock_irqrestore
+0x36c230 _raw_read_lock          0x36c28c _raw_read_lock_bh
+0x36c2e8 _raw_read_lock_irq      0x36c350 queued_spin_lock_slowpath（整段）
+0x36c668 queued_read_lock_slowpath（前 0x110）
+```
+
+后果：检查点之前任何一次**锁竞争/慢路径**都会跳进 blob 变成乱跑 = **挂死，且与内核真挂死无法区分**。
+而当前最大嫌疑（`pcpu_alloc` / `new_slab` / `alloc_pages`）恰恰都是拿锁的地方。
+⟹ 仪器注释里"注入 .text 尾部填充"的说法**是错的**，必须记住。
+
+### C. `SAVE_VA` 的"已修"是空修（现已真修）
+
+- `build-postmmu.sh` 只改了 shell 默认值，`DEFS` 里**没有** `-DSAVE_VA`，tramp 仍用自带的
+  `#define 0xffffffc080603000`；且 `SAVE_PA` 的推导写成 `${DEFS##*-DKIMAGE_OFFSET=}`，
+  会把后续 `-D…` 一起带进来 ⟹ python 恒失败 ⟹ 恒定回落旧值。
+- 现已：`-DSAVE_VA / -DTABLE_PA / -DTABLE_VA` 全部传入，`KOFF` 用 `sed` 单独取出，
+  并在构建末尾加**自检**：从 `tramp-postmmu.bin` 反解 `_start_restore` 的立即数，
+  与 `SAVE_VA` 不符就**报错退出**（此前会静默留下旧 blob，所有测量随之失真）。
+- `SAVE_VA` 现为 `0xffffffc08061a000`（`__log_buf` 内、深 120 KB）。仍然在 `__log_buf` 里，
+  但实测早期启动打印只有约 2.4 KB（**该数字来自 QEMU 侧**，真机无日志工件），
+  且 `ckB`/`p1` 两点相距仅 0x58 字节、中间只有两条 `stset`（`node_set`），**没有任何 printk**
+  ⟹ 日志覆盖**不可能**解释 `ckB ✅ / p1 ❌` 的分裂。故 `p1 ❌` 不是自伤。
+- `TABLE_PA` 原硬编码 `0x20601000`，与 `TABLE_VA 0xffffffc080601000` 相差 0x280000（应为
+  `0x20881000`）。本轮没炸是因为 `save`/`restore` 入口都置 `x5=0` 走"清 M/C/I"分支，
+  **建表路径从未执行**；任何 `WORLD_B`/`kva` 检查点都会中招。现已改为按 `TABLE_VA - KOFF` 计算。
+
+### D. 其它仪器隐患（已记录，未修）
+
+| 项 | 内容 |
+|---|---|
+| 记录区未保留 | `PA 0x23080000` 落在 DTS 普通 RAM（`0x20200000+0x21600000`）内，厂内核可当普通内存发放；"记录被清零"与"没写记录"同形。建议记录头加校验+序号 |
+| 中断未屏蔽 | `restore`/`readout` 不关 IRQ，且 `sp=0` 窗口内有 512 次表清零 + `tlbi` + 6.4 MB `dc civac` 循环（`IMAGE_START_PA..IMAGE_END_PA`），而 `kmem_cache_init` 处 IRQ 已开 ⟹ 存在竞态，表现为偶发 ❌ |
+| 镜像台账 | `out/` 现有 49 张 / 1.6 GB，多数无结果记录 |
+
+**审计员的一条误判**：称"记录里的 `x30` 是内核自己的 `x30`，同函数内两个检查点无法区分"。
+实测不成立——探针是用 `bl` 覆盖检查点指令进入的，`x30` = 检查点地址 + 4
+（`ckB→0x4772b8`、`c1→0x463a10`、`b1b→0x463ba8` 等每次都精确吻合），因此 `x30` **可以**标识站点。
+
+### E. 构建陷阱：内建 DTB 的 `.o` 在 `arch/arm64/kernel/`
+
+`arch/arm64/kernel/m7642-dtb.S:29` `.incbin "arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dtb"`
+（相对 **O= 构建树**）。改 DTS 后必须删 **`$O/arch/arm64/kernel/m7642-dtb.o`** 再 `make Image`；
+删错路径（如 `dts/mstar/m7642-dtb.o`）会**静默保留旧 DTB**。已验证：回滚 DTS 后重编，
+Image 内嵌 FDT `memory@` 出现 3 次（size `0xfb5`）。
+
+### F. 当前真实状态与下一发（已备好镜像）
+
+```
+✅ 已证实：ckB(0x4772b4) 可达；d1(0x1202f4)、d2(0x120348) 可达
+❌ 作废：d3(0x120378) 结构性假阴性；"卡在 kmem_cache_alloc_node" 不成立
+窗口：create_boot_cache #1 内部，[pcpu_alloc 开始 … early_kmem_cache_node_alloc 的 new_slab)
+```
+
+| 镜像 | 内容 | md5 |
+|---|---|---|
+| **`ctl`（对照）** | `d0=save` + `0x4772b4=restore`（已知必回） | `8b4bcf72d8bd4f95163e2c5d945d1ff6` |
+| **`ns1`（下一发）** | `d0=save` + `0x1204fc=restore`（`bl new_slab`） | `1a0a04e4095f07ed379794a3b4d6bd11` |
+
+**判读**：`ns1 ✅` ⟹ 卡在 `new_slab→allocate_slab→alloc_pages`（含首次 memset）；
+`ns1 ❌` ⟹ 卡在 `pcpu_alloc` 或其后十几条指令（含 `-ENOMEM`→`create_boot_cache` 的 panic
+`0x474dd0`、`BUG_ON(!slab)`→`0x12078c`），下一发打 `0x120350`。
+
+**纪律**：每批**先打 `ctl` 对照**；对照 ❌ 则本批全部作废（历史上已有 3 条 ❌ 被追溯为仪器问题）。
