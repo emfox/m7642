@@ -116,6 +116,21 @@
 - 纪律：每批先打 `ctl` 对照；对照不回来则整批作废。
 
 
+**2026-11-25 00:1x 状态：仪器已修，真实阶梯到 `sched_init` 体内部**
+
+- **仪器修复**：探针 blob 从 `Image+0x36c000`（压着 `_raw_spin_trylock` 等 9 个符号）
+  移到 `Image+0x36e000`（8 KB 真空闲 `.text` 尾）。修复后 `nb2/t2b/kc4c/sc1` 全部由 ❌ 变 ✅。
+- **已到达**：`kmem_cache_init` 结束、页分配完成、`sched_init` 内的
+  `__sched_fork` → `init_idle` → `idle_thread_set_boot_cpu` → `init_sched_fair_class`
+  的 `alloc_cpumask_var_node` 与 `open_softirq`。
+- **未到达**：`console_init`（`0x46e024`）⟹ 真实窗口 = `open_softirq` 之后 → `console_init`，
+  含 `sched_init` 剩余、`init_IRQ`、`local_irq_enable`、`time_init`。
+- **下一步先静态**：把 `sched_init` 从 `0x46d0e4` 之后到结尾的调用列干净，再列 `start_kernel`
+  从 `sched_init` 返回后到 `console_init` 之间的调用（注意 `init_IRQ`/`local_irq_enable` 是重点嫌疑）。
+  每个打点地址必须先用 `objdump` 确认**所在函数**与**指令类型**（避开 `brk #0x800`）。
+- 纪律：每批先打 `ctl2`（`0x4772b4`）对照；改仪器后**重跑先前 ❌ 的点**验证。
+
+
 ## 停下点（2026-11-22 15:1x）
 
 设备**硬挂**，需要一次物理拔插（红外救不回，见 §34.9 的退化说明）。

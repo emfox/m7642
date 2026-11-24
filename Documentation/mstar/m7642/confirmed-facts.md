@@ -2695,3 +2695,37 @@ __hyp_text_end == 0x36e000`、`_etext = 0x370000` ⟹ 中间是**真空闲的 8 
 
 用修好的仪器**重跑完整阶梯**（`c1 c2 b1 b1b start_kernel sched_init console_init rest_init …`），
 找出**真正的**卡点；此前关于"卡在 `kmem_cache_init`"的全部叙事都要重写。
+
+## 34.33 修好仪器后的真实阶梯（2026-11-25 00:0x）
+
+仪器修复（blob 移到 `0x36e000`，§34.32）后重跑，每批都有 `ctl2` 对照。
+
+### 已确认**到达**的
+
+| 检查点 | 含义 |
+|---|---|
+| `ctl2 0x4772b4` | 对照（`hash_pointers_finalize` 之后） |
+| `kc4c 0x477518` | `kmem_cache_init` 结束（`__cpuhp_setup_state`） |
+| `nb2 0x116aa0` / `t2b 0x10fb6c` | 页分配返回后 / 从 pcplist 取页 |
+| `sc1 0x46cc2c` | `sched_init` 入口（**该发里 sched_init 未执行**） |
+| `s1 0x46ce18` | `sched_init` 体内的 `__sched_fork` 调用点 |
+| `u1/u2/u3` | `init_idle` / `idle_thread_set_boot_cpu` / `init_sched_fair_class` 调用点 |
+| `v1 0x46d070` / `v2 0x46d0e0` | `init_sched_fair_class` 内：第一次 `alloc_cpumask_var_node` / `open_softirq` |
+
+### 未到达的
+
+`ci1 0x46e024`（`console_init` 入口）❌ —— 这是目前**唯一可信的上界**。
+
+⟹ 真实卡点窗口：**`init_sched_fair_class` 的 `open_softirq` 之后 → `console_init`**。
+这段包含：`sched_init` 剩余部分、`start_kernel` 后续（`init_IRQ`、`local_irq_enable`、`time_init` 等）。
+
+### 方法错误（本轮踩到，必须修）
+
+1. **地址归属没核实**：我把 `0x46cec8`（`sched_init_domains`）和 `0x46cebc`
+   （`sched_domains_mutex_lock`）当成 `sched_init` 的一部分去二分，实际它们在
+   **`sched_init_smp`**（`0x46cea8` 起，`kernel_init_freeable` 才调用）里 ⟹ 那两个 ❌ **无意义**。
+   **规矩**：每个打点地址必须先用 `objdump` 确认它落在**哪个函数**里、且该函数在**当前路径**上。
+2. **`prfm`/`brk` 陷阱**：`0x46ce90/0x46ce98/…` 是 `brk #0x800`（`BUG()` 占位），
+   打到这些地址等于人为触发 bug。打点前要确认目标地址是**正常指令**。
+3. `bl f()` 处的终结型探针会让 `f()` **完全不执行**；所以"到达该点"只证明调用前的一切 OK，
+   **不证明该函数本身能跑**。要验证函数体，必须打到函数**内部**或它的返回点之后。
