@@ -2644,3 +2644,54 @@ Image 内嵌 FDT `memory@` 出现 3 次（size `0xfb5`）。
    能返回 ⟹ 循环在正常迭代（不是卡在第一项）；挂死 ⟹ 卡在第一项或取指针即 fault。
 3. 若确认是 zonelist 问题：检查 `CONFIG_NUMA=n` 下 `contig_page_data` 与
    `build_all_zonelists_init()` 的交互，以及 `system_state` 在该调用点是否为 `SYSTEM_BOOTING`。
+
+## 34.32 ★★★★★ 真相：此前全部"挂死"都是**探针 blob 覆盖内核锁函数**造成的（2026-11-25 00:0x）
+
+### 症状链
+
+修好 `SAVE_VA` 之后逐级打点，得到一串"第一次物理页分配就挂死"的结论（§34.31）：
+`nb 0x116aa0 ❌`、`pb 0x110e54 ❌`、`pw 0x10fad8 ❌`、`t2 0x10fb6c ❌`。
+但同一段里 `z1 0x10fa3c ✅`、`z2 0x10fa58 ✅`、`q2 0x10fd48 ✅`、`t1 0x10fb28 ✅` —— 能返回和挂死
+交错出现，不像"某点必挂"，像"某个**被调函数**有问题"。
+
+### 真因
+
+`t1 ✅`（`0x10fb28 = bl _raw_spin_trylock`）而 `t2 ❌`（`0x10fb6c = bl __rmqueue_pcplist`）。
+`_raw_spin_trylock` 的地址 = **`0xffffffc08036c0dc`**，正落在探针 blob 的原位置
+`Image+0x36c000 .. +0x36c778` 里 —— **blob 把 `_raw_spin_trylock`、
+`_raw_read_lock*`、`queued_spin_lock_slowpath`、`queued_read_lock_slowpath` 整段覆盖了**。
+
+`_raw_spin_trylock` 是**真实函数调用**（不是内联），页分配器每次试 zone 锁都会跳进 blob ⟹
+野飞 ⟹ 挂死。QEMU 里没有 blob，所以永远复现不了。
+
+### 修复
+
+blob 移到 **`Image+0x36e000`**：该处 `__static_call_text_start == __static_call_text_end ==
+__hyp_text_end == 0x36e000`、`_etext = 0x370000` ⟹ 中间是**真空闲的 8 KB `.text` 尾巴**
+（可执行、无任何符号，已用 System.map 逐符号确认）。
+
+### 修复后的实测（同一台机器、同样步骤）
+
+| 镜像 | 位置 | 修复前 | 修复后 |
+|---|---|---|---|
+| `ctl2` | `0x4772b4` 对照 | ✅ | ✅ |
+| `nb2` | `0x116aa0` 页分配返回后 | ❌ | **✅** |
+| `t2b` | `0x10fb6c` `bl __rmqueue_pcplist` | ❌ | **✅** |
+| `kc4c` | `0x477518` `kmem_cache_init` 结束 | ❌ | **✅** |
+| `sc1` | `0x46cc2c` `sched_init` | ❌ | **✅** |
+
+⟹ **7.3.5 早就越过了 `kmem_cache_init` 与 `sched_init`**。§34.9/§34.14/§34.24/§34.26/§34.28/§34.29/§34.31
+里所有"❌ = 卡点"的判读**全部作废**——它们是在仪器自伤的前提下得出的。
+
+### 教训（已写进 discipline.md）
+
+1. **探针 blob 的原位置 0x36c000 压着内核锁函数**，这不是"填充区"。任何 ❌ 都必须先排除这一条。
+2. `_raw_spin_trylock` / `queued_spin_lock_slowpath` 这类**非内联**函数被覆盖后，表现是"某处莫名挂死"，
+   且**只在真正用到锁的代码路径上出现** ⟹ 症状会误导成"分配器/内存子系统坏了"。
+3. 每批先打 `ctl` 对照是必要的，但**对照通过也不代表其他点安全**——因为对照点（`hash_pointers_finalize` 之后）
+   本身不碰锁。真正有效的验证是：**改动仪器后重跑先前 ❌ 的点**，看它们是否变 ✅。
+
+### 下一步
+
+用修好的仪器**重跑完整阶梯**（`c1 c2 b1 b1b start_kernel sched_init console_init rest_init …`），
+找出**真正的**卡点；此前关于"卡在 `kmem_cache_init`"的全部叙事都要重写。

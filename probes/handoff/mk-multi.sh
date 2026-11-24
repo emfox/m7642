@@ -4,7 +4,7 @@
 #   mk-multi.sh <tag> <spec>...
 #   spec := <checkpoint-name-or-offset>=<entry>
 #   entry := pa | kva | save | restore
-#            pa      _start        Image+0x36c000
+#            pa      _start        Image+0x36e000
 #            kva     _start_kva    Image+0x36c010
 #            save    _start_save   Image+0x36c400  (world A, returns to the kernel)
 #            restore _start_restore Image+0x36c500 (world B, restores TTBR0/TCR)
@@ -50,6 +50,7 @@ for spec in "$@"; do
 	restore) tgt=$(( TRAMP_AT + 0x500 )) ;;
 	readout) tgt=$(( TRAMP_AT + 0x600 )) ;;
 	count)   tgt=$(( TRAMP_AT + 0x700 )) ;;
+	regdump) tgt=$(( TRAMP_AT + 0x800 )) ;;
 	*) echo "bad entry '$ent'" >&2; exit 1 ;;
 	esac
 	echo "  $ck -> $(printf %#x $off) : bl $(printf %#x $tgt)"
@@ -57,5 +58,5 @@ for spec in "$@"; do
 done
 ARGS+=("--nop" "$(resolve zfix_nop)")
 python3 ../../tools/host/mk-mainline-abort.py --image "$IMAGE" \
-	--stub abort-postmmu.bin --tramp tramp-postmmu.bin --tramp-at 0x36c000 \
+	--stub abort-postmmu.bin --tramp tramp-postmmu.bin --tramp-at ${TRAMP_AT:-0x36e000} \
 	"${ARGS[@]}" --out "$OUT/m7642-$TAG.img"

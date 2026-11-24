@@ -442,3 +442,39 @@ _start_count:
 	sub	x16, x16, x17
 	mov	x5, xzr
 	br	x16
+
+/* --------------------------------------------------------------------- *
+ * Register-dump entry: park x23/x24/x25/x26 in the SAVE page and hand over.
+ * Used to find out WHAT a pointer register actually held at a checkpoint
+ * (e.g. the zone pointer taken from z->_zonerefs[0].zone).  The handover stub
+ * copies SAVE+0x40..0x78 into the record, so these land in readout slots 0..3.
+ * --------------------------------------------------------------------- */
+	.org	0x800
+	.globl	_start_regdump
+_start_regdump:
+	movz	x16, #(SAVE_VA & 0xffff)
+	movk	x16, #((SAVE_VA >> 16) & 0xffff), lsl #16
+	movk	x16, #((SAVE_VA >> 32) & 0xffff), lsl #32
+	movk	x16, #((SAVE_VA >> 48) & 0xffff), lsl #48
+	str	x23, [x16, #0x40]
+	str	x24, [x16, #0x48]
+	str	x25, [x16, #0x50]
+	str	x26, [x16, #0x58]
+	ldr	x17, [x16, #0x18]
+	msr	tcr_el1, x17
+	isb
+	ldr	x17, [x16, #0x20]
+	msr	ttbr0_el1, x17
+	dsb	nsh
+	isb
+	tlbi	vmalle1
+	dsb	nsh
+	isb
+	adr	x16, 1b
+	movz	x17, #(KIMAGE_OFFSET & 0xffff)
+	movk	x17, #((KIMAGE_OFFSET >> 16) & 0xffff), lsl #16
+	movk	x17, #((KIMAGE_OFFSET >> 32) & 0xffff), lsl #32
+	movk	x17, #((KIMAGE_OFFSET >> 48) & 0xffff), lsl #48
+	sub	x16, x16, x17
+	mov	x5, xzr
+	br	x16
