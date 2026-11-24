@@ -30,7 +30,7 @@ PY
 )
 # SAVE_VA lives in the image; the handover stub runs with the MMU off, so it
 # needs the physical address.  PA = VA - KIMAGE_OFFSET.
-SAVE_VA=${SAVE_VA:-0xffffffc080603000}
+SAVE_VA=${SAVE_VA:-0xffffffc08060b000}
 SAVE_PA=$(python3 -c "print(hex($SAVE_VA - ${DEFS##*-DKIMAGE_OFFSET=}))" 2>/dev/null || echo 0x20883000)
 SYMDEFS=""
 i=0
