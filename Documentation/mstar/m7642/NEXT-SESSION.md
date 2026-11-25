@@ -187,6 +187,17 @@
 - 下一步：`FB_SIMPLE`（屏幕控制台）/ `eMMC: no SD 1006`。
 
 
+**2026-11-25 10:35 ★★★★★ 工程状态：源码可复现 + 实机重测通过（当前基线）**
+
+- 构建：源码 `89315dc65`（工作区干净）→ 干净树 `linux-735-clean` → `mkimage.sh` + `mk-multi.sh`；
+  config/Image/System.map 的 md5 与补丁清单见 `confirmed-facts.md` §34.40，镜像旁也有 `.meta`。
+- 实机重测两次（10:2x / 10:3x）：`android up +22s/+23s`、`magic=M764MM`、`x30=panic+4` ✅；
+  报告页 ver=3、`syslog=6879`、`wrote=1`；内核日志含 `Run /init as init process`。
+- 探针镜像 `m7642-fix3.img` md5 `b10d6f18e6f239e187a45b82b2a928f1`。
+- 等待预算：120 s + 插座恢复（老文档的 300 s 规则作废）。
+- 下一步：①eMMC（`eMMC: no SD 1006`）②屏幕控制台（`simple-framebuffer -22`）③毒化机制。
+
+
 ## 停下点（2026-11-22 15:1x）
 
 设备**硬挂**，需要一次物理拔插（红外救不回，见 §34.9 的退化说明）。

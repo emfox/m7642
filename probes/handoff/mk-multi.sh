@@ -93,6 +93,11 @@ done
 if [ "${NO_NOP:-0}" != 1 ]; then
 ARGS+=("--nop" "$(resolve zfix_nop)")
 fi
+python3 ../../tools/host/mk-mainline-abort.py --image "$IMAGE" \
+	--stub abort-postmmu.bin --tramp tramp-postmmu.bin --tramp-at "$TRAMP_AT" \
+	${KERNEL_ADDR:+--kernel-addr $KERNEL_ADDR} \
+	"${ARGS[@]}" --out "$OUT/m7642-$TAG.img"
+
 # Metadata next to every image: without this a working image cannot be
 # reproduced once the build tree moves (discipline.md §4).
 META="$OUT/m7642-$TAG.meta"
@@ -109,8 +114,3 @@ META="$OUT/m7642-$TAG.meta"
 	echo "specs    : $*"
 	echo "built    : $(date -Is)"
 } > "$META"
-
-python3 ../../tools/host/mk-mainline-abort.py --image "$IMAGE" \
-	--stub abort-postmmu.bin --tramp tramp-postmmu.bin --tramp-at "$TRAMP_AT" \
-	${KERNEL_ADDR:+--kernel-addr $KERNEL_ADDR} \
-	"${ARGS[@]}" --out "$OUT/m7642-$TAG.img"

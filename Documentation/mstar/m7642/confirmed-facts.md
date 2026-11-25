@@ -3046,3 +3046,75 @@ panic 探针交接 → Android 起来后用 probeRW 读回。首份日志存为
 
 **下一步（重基线）**：锁定一份 config 与内核提交 → 重新验证对照探针 → 再继续
 `FB_SIMPLE`（屏幕控制台）与 eMMC（`no SD 1006`）。
+
+## 34.40 ★★★★★ 工程状态与可复现配方（2026-11-25 10:3x，实机重测通过）
+
+### 当前状态一览
+
+| 项 | 状态 |
+|---|---|
+| 7.3.5 启动 | **到用户态** ✓（`kernel_execve` / `begin_new_exec` / `ret_to_user` 三发实测，§34.37） |
+| 真卡点 | **`free_initmem` 的 init 段毒化**，已定位并修复（§34.36），修复后到达 `run_init_process` |
+| 构建 | **从源码可复现** ✓（干净 out-of-tree 构建 + 硬断言，见下） |
+| 观测 | ①stash 交接（`magic "M764"` + `x30 == site+4`）；②用户态把 dmesg 写进 PA `0x23082000`，交接后读回（§34.38/34.39） |
+| 未完成 | eMMC（`eMMC: no SD 1006`）、屏幕控制台（`simple-framebuffer ... error -22`）、毒化的机制 |
+
+### 配方（可复现）
+
+**源码**：`~/Debian/m7642-build/kernel/linux-git`，分支 `m7642-7.3.5`，HEAD `89315dc65`
+（两个修复：内建 DTB 移出 `.init`、`free_initmem` 不再毒化），工作区干净。
+
+**构建树**：`~/Debian/m7642-build/kernel/linux-735-clean`（干净 out-of-tree）；
+`.config` 以 `linux-735-out/.config`（基线）为基础，加：
+
+```
+CONFIG_INITRAMFS_SOURCE="/tmp/initramfs"
+CONFIG_INITRAMFS_COMPRESSION_GZIP=y
+CONFIG_DEVMEM=y            # /dev/mem，用户态报告页与日志通道需要它
+# CONFIG_STRICT_DEVMEM is not set
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_MAGIC_SYSRQ=y       # /init 用 sysrq-c 触发 panic，交接才能发生
+CONFIG_PANIC_TIMEOUT=5
+```
+
+**命令**（全部在 `probes/handoff/` 下）：
+
+```sh
+./mkimage.sh ~/Debian/m7642-build/kernel/linux-735-clean     # make dtbs Image + 断言裸 Image(MZ)
+KERNEL=~/Debian/m7642-build/kernel/linux-735-clean TRAMP_AT=0x36e000 WORLD_VA=0 \
+    ./mk-multi.sh <tag> d0=save 0x2a22c=restore               # 打补丁 + 生成容器 + 写 .meta
+tools/host/probe-run.sh <tag> 0xffffffc08002a230              # 上机 + stash 校验
+```
+
+**已核对的账**（镜像旁 `.meta` 与文档同值）：
+
+| 项 | 值 |
+|---|---|
+| 源码 HEAD | `89315dc65` |
+| `.config` md5 | `28f76c247e27ccadfae42b1892c11365`（625 行 CONFIG） |
+| `Image`（裸）md5 | `7a52e7153e4d96504b9572fa7ebb2155`，6,568,448 B |
+| `System.map` md5 | `4a08157ef4bf55fc635d8ff467593fa6` |
+| 探针镜像 | `m7642-fix3.img` md5 `b10d6f18e6f239e187a45b82b2a928f1` |
+| 补丁清单 | shim@0x4→tramp+0xc0；align@**0x465a24**←0x92405279→0xaa1f03f9；nop@0x468060；d0@0x463960→save；panic@0x2a22c→restore；tramp@0x36e000 |
+
+### 实机重测（2026-11-25 10:2x / 10:3x，两次）
+
+```
+推送校验通过 (33554432 字节) / 槽内 md5 与本地一致
+fix3: android up (+22s / +23s)
+magic = M764MM     x30 = 0xffffffc08002a230  (期望一致)
+⟹ ✅ 到达（stash 验证通过）
+报告页: magic=0x4d373634 ver=3 mount=0/0/0 syslog=6879 errno=0 mem=0 wrote=1
+内核日志: 6879 字节，含 "Freeing unused kernel memory: 1280K" 与 "Run /init as init process"
+```
+
+### 附：不重编内核也能换用户态
+
+内核优先使用 **bootloader 提供的外部 ramdisk**，所以想只改 `/init` 时不必重编内核：
+
+```sh
+python3 tools/host/mkbootimg.py -k <Image> -r <initrd.cpio.gz> -o out.img ...
+```
+实测（旧内核 + 新 ramdisk）`android up`、stash 校验通过，可用于快速迭代用户态代码。
+但**交付形态仍是"源码 + 配置 + 脚本可复现构建"**，不是二进制。
