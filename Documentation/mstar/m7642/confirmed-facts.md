@@ -6775,3 +6775,67 @@ drivers/mmc/host/mstar-mci/   "主动 flush" 的代码：**0 处**
 同一条错误犯了两次：**第一次**是烧写命令引号错（测的是旧镜像），**第二次**是
 `pwrite` 未提交 IO（测的是"C 代码到页缓存"这一段）。两次都让大量"实测结论"变成空转。
 以后任何"写入是否生效"的实验，**必须**在同一次运行内读回，或者明确走 `sync()`。
+
+## 36.03 在 sync() 之后：写测试仍然拿不到结果；并发现 WiFi 芯片型号（2026-11-26 13:xx）
+
+### 实验 `ewself`（自带读出，不依赖交接）
+
+`/init`：pwrite(512) → **`sync()`** → 同一次启动内 pread 读回比对 →
+把结论写进 **DRAM 空洞 `0x43000000`**（该处无 `struct page`，厂内核分配不到）。
+
+结果：
+
+```
+✓ 烧写校验通过
+✓ 回到 Android (+70s)      ← sync() 没有挂死
+```
+
+从 Android 读 `0x43000000`：**全零** ✗
+
+### 这说明了什么（两种可能，都指向同一件事）
+
+`emit()` 在 `sync()` **之后**才执行。空洞里是零 ⟹ **`emit()` 没有执行到** ⟹
+`sync()` 或它触发的写回**挂住/panic 了** ⟹ 回到 Android 是 panic 交接的结果。
+
+⟹ **写路径在真正被提交时确实会出问题**（这与"不提交时一切正常"完全自洽）
+
+### 附带发现的读取链路真相（值得记住）
+
+`probeRW.ko` 的输出文件是在 **`rmmod` 时**才写出的 ——
+`insmod` 返回 `rc=0` 但 `probeRW.out` 还不存在。
+正确顺序是：`insmod` → **`/system/bin/rmmod`** → `cat /data/local/tmp/probeRW.out`。
+（`busybox rmmod` 会因缺 `/lib/modules` 失败；管道形式也不可靠。）
+
+### ★ 顺带发现：这台电视的 WiFi 芯片是 MT76x3
+
+`/proc/modules` 里已加载：
+
+```
+wlan_mt76x3_usb         1675264
+wlan_mt76x3_usb_prealloc  16384
+```
+
+⟹ **第 4 项（网络）可以走 WiFi，而不是那个 7200 行的以太网驱动** ✓
+   mainline 有 `mt76` 驱动族，其中 **`mt7663u`** 支持 MT7663/MT76x3 的 USB 接口 ✓
+   ⟹ 这是一个**工作量小一个数量级**的方向，而且完全不依赖 eMMC 写路径
+
+### 下一轮（剩余 13 轮的最佳用法）
+
+1. 静态确认：这颗 M7642 的 MT76x3 是 **USB** 还是 **SDIO** 接口
+   （模块名 `wlan_mt76x3_usb` 暗示 USB）
+2. 查 mainline 7.3.5 里 `mt7663u` 的依赖（固件、`CONFIG_MT76_USB`）与是否需要厂商固件
+3. 若可行，这是第 4 项最现实的路 —— 比以太网驱动小得多，也不受 eMMC 写问题影响
+
+### 补充：mainline 对 MT76x3 USB 的支持（静态确认）
+
+- `drivers/net/wireless/mediatek/mt76/` 下有：`mt7603 mt7615 mt76x0 mt76x2 mt7915 mt7921 mt7925 mt7996`
+- **MT7663 由 `mt7615` 驱动覆盖**，且该目录里已有 `usb.c`、`usb_mcu.c`、`usb_sdio.c`
+- `Kconfig` 里有 `MT76_USB`
+
+⟹ **WiFi（第 4 项）在 mainline 里是有现成驱动的**，和厂商那个 7200 行的以太网驱动相比，
+   工作量小一个数量级，而且不依赖 eMMC 写路径 ✓
+
+仍需确认的前提：
+1. 这颗 MT76x3 是 USB 还是 SDIO 接口（模块名 `wlan_mt76x3_usb` 指向 USB，但需从 DTS/USB 枚举确认）
+2. 是否需要厂商固件（mainline 的 `mt7663` 固件在 linux-firmware 里叫 `WIFI_RAM_CODE_MT7663.bin` 之类）
+3. 我们的 DTS 里有没有 USB 控制器节点（厂树有 `usb: ehci` 的移植记录）
