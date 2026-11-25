@@ -8283,3 +8283,45 @@ memory@54400000: 0x54400000 + ...
 - `adb kill-server` 后再 `connect` 能恢复大部分"命令返回空"的情况
 - 上机脚本必须在**每一步**校验返回值，任一步失败就中止（`run-bcb.sh` 的九步校验就是为此）
 - 读**全镜像** md5 比读前 4KB 可靠得多
+
+## 36.32 ★★★ 突破：DT 节点 + no-map 让 `ramoops` **probe 成功了**（2026-11-27 06:4x）
+
+### 实验 `sr`（1-bit 自报，重试成功）
+
+```
+✓ 推送 md5: 85a06597…
+✓ 槽 md5:   85a06597…
+✓ 烧写与校验都成功，重启
+✓ 回到 Android (+145s)   ⟹ /init 读到 PORM ⟹ ramoops probe 成功
+```
+
+⟹ **我们内核的 `ramoops` 第一次真的 probe 成功了** ✓✓
+
+这是我这一夜最实质的突破 —— 由两处修复共同达成：
+1. **DT 节点**（7.3 的 ramoops 是 DT-only，cmdline 完全无效）
+2. **`no-map`**（`0x41940000` 在 DTS 空洞里，需要 reserved-memory 正确保留）
+
+### 但还有一层：zone 建起来了，却没写进东西
+
+- `/sys/fs/pstore` 仍是**空** ✗
+- `0x41940000` 仍是 `sig=DBGC` / `start=size=0` / 数据 `ff` ✗
+
+### 已排除
+
+- `CONFIG_PSTORE=y` ✓、`CONFIG_PSTORE_CONSOLE=y` ✓、`ramoops_console` 符号在 ✓
+- `cprz` 在 `ramoops_probe` 第 793 行创建 ✓
+- `pstore_register` 在第 848 行调用 ✓
+
+### 剩下最可疑的两点
+
+1. **`mem-size` 与 `console-size` 都是 `0x40000`**，正好卡在
+   `ramoops_init_prz` 的边界判断 `*paddr + size > phys_addr + size` 上
+   ⟹ 试 `mem-size = 0x80000`（`0x41940000..0x419C0000`，不越出 ramoops 区）
+2. **console 后端注册时机**：`pstore_register` 之后 `cprz` 才会被挂到 console 上；
+   如果 `/init` 在注册完成前就跑完，日志不会进 zone
+
+### 这次的教训
+
+**"盒子回来" 只能证明 `/init` 的 `reboot()` 被执行**，而 `/init` 的条件来自
+`/dev/mem` 读 `0x23081000`。这次那个读**成功**了（否则 `ok=0` 会挂住），
+所以 `PORM` 确实存在 ⟹ **probe 成功是可信的** ✓
