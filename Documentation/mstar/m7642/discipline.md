@@ -623,3 +623,48 @@ CONFIG_DETECT_HUNG_TASK=y      CONFIG_BOOTPARAM_HUNG_TASK_PANIC=1   (timeout 30)
 - 或者写到**另一个未被使用的页**（例如 `0x23090000`），避免与报告页/日志页冲突；
 - 每次都写一个**递增计数**即可，不必每秒都落盘（挂死时最后一次写的内容仍留在 DRAM 里，
   只要写操作本身不触发 msync 风暴）。
+
+## ★ 最严重的一次方法学事故：烧写命令一直是坏的（2026-11-26 02:xx）
+
+### 现象
+
+连续多轮实验都得出"内核挂死"的结论（`net2`、`net3`、`netmin`、`netonly`、`d14`、`snap2`…），
+最后的 §34.97 甚至得出"内核连 2 秒都活不到"。
+
+### 真相
+
+校验恢复槽内容时发现：**槽里的镜像 md5 和刚推送的镜像完全不符** ✗
+（槽是 `9d477bd1…`，`base15` 应该是 `609d72b5…`）
+
+进一步测试各种 `su` 调用形式，结果：
+
+| 形式 | 结果 |
+|---|---|
+| `adb shell "su -c \"cmd\""`（**双引号**） | ✗ 静默失败（输出了 busybox 应用列表） |
+| `adb shell "su 0 cmd args"` | ✗ busybox 把参数当二进制，报 syntax error |
+| `adb shell "su -c 'cmd'"`（**内层单引号**） | ✅ **正常** |
+| `echo cmd \| su` | ✅ 也能用 |
+
+⟹ **我之前所有烧写都用的是 `exec-out su -c "dd ..."`（双引号）—— 全部失败** ✗
+⟹ **镜像从来没有真正写进 recovery 槽** ⟹ 最近几十轮"运行"实际测的都是**槽里那个旧镜像**
+
+### 正确的烧写流程（以后固定用这个）
+
+```bash
+# 推送
+adb -s 192.168.10.60:5555 push <img> /data/local/tmp/t.img
+# 校验推送
+adb -s 192.168.10.60:5555 shell "su -c '/vendor/bin/busybox md5sum /data/local/tmp/t.img'"
+# 烧写（内层必须是单引号！）
+adb -s 192.168.10.60:5555 shell "su -c '/vendor/bin/busybox dd if=/data/local/tmp/t.img of=/dev/block/by-name/recovery bs=4096'"
+adb -s 192.168.10.60:5555 shell "su -c '/vendor/bin/busybox sync'"
+# 校验槽（必须与镜像前 4096 字节的 md5 一致）
+adb -s 192.168.10.60:5555 shell "su -c '/vendor/bin/busybox dd if=/dev/block/by-name/recovery bs=4096 count=1 2>/dev/null | /vendor/bin/busybox md5sum'"
+```
+
+**每次烧写后必须做上面最后一步校验**，否则后面所有观察都无意义。
+
+### 结论
+
+§34.93–§34.97 里关于"emac 驱动挂死"、"CONFIG_NET 挂死"、"2 秒内就死"的结论
+**全部作废**，需要用正确的烧写流程重做。
