@@ -8366,3 +8366,51 @@ memory@54400000: 0x54400000 + ...
 
 **用 `/dev/mem` 读 `no-map` 保留区会得到 0，不能当"没数据"的证据。**
 这一条值得写进纪律。
+
+## 36.34 ★★★ 内核侧通道确认打通：probe 成功 + console 真的在写（2026-11-27 08:2x）
+
+### 两次 1-bit 自证的结果
+
+| 探针 | 判据 | 结果 |
+|---|---|---|
+| `sr` | `/init` 读到 `PORM` 就 reboot | **盒子回来** ✓ ⟹ **`ramoops_probe` 成功** |
+| `cc` | `/init` 读到 `PORM` **且** console zone 的 `size != 0` 就 reboot | **盒子回来** ✓ ⟹ **console 真的写进 zone 了** |
+
+⟹ **ramoops 在内核侧已经完全打通** ✓✓
+（`cc` 早先那次 FALSE 是**假阴性**：烧写校验中止，实验根本没跑）
+
+### 但 Android 侧没有导出
+
+盒子回到 Android 后：
+- `0x41940000`：`sig=DBGC`、`start=size=0`、数据区 **`ff`**
+- `/sys/fs/pstore`：**空**（`console-ramoops` / `dmesg-ramoops-0` / `pmsg-ramoops-0` 按名字读也都是空）
+
+⟹ 数据在内核里**确实写进了 zone**，但**跨 Android 启动没留住** ✗
+
+### 剩下的可能（都很具体）
+
+1. **Android 的 `post_init` 把记录判为无效并清空** —— 它是 `record #1`，
+   而 `record` zone 只有在**真崩机**时才由 `pstore_dump` 写（带 `====` 头）。
+   我们写的是 **console** 内容（没有 `====` 头）⟹ 在 **record** zone 里被
+   `ramoops_pstore_read` 的 `ramoops_read_kmsg_hdr` 判为无头 → `zap` ✗
+2. **`no-map` + `ioremap` 的写在跨内核时没落到物理内存**（可能性较低，因为同启动内读得到）
+
+### 下一个正确做法
+
+**把我们的 console 指到真正的 console zone（`0x41980000`）**，而不是 record #1：
+```dts
+ramoops@41980000 {
+        compatible = "ramoops";
+        reg = <0x0 0x41980000 0x0 0x40000>;
+        console-size = <0x40000>;
+        no-map;
+};
+```
+console zone **不需要 `====` 头** ⟹ Android 的 `post_init` 会 `save_old` 并导出成
+`/sys/fs/pstore/console-ramoops` ✓
+（之前用 console zone 时失败，是因为**那时还没有 DT 节点、probe 根本没成功** ✗ —— 现在不同了）
+
+### 本轮净成果
+
+**ramoops 内核侧打通**：DT 节点 + `no-map` + 正确落点 ⟹ probe 成功、console 写入确认。
+这是这一夜最有价值的进展，比任何 eMMC 试验都更接近目标。
