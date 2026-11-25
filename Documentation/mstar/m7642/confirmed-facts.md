@@ -3864,3 +3864,42 @@ while (waited < u32_us) {
    `eMMC_clock_setting()` 里 HS 相关的 `emmcpll_0x*` / `chiptop_0x6E` 改成 M7642 的值，
    每改一处单独验证（不要再一次性改三处，§34.47 的教训）；
 3. 高速通了以后再回头验证 4/8-bit 总线与 HS200。
+
+## 34.55 CMD6 调查阶段小结（2026-11-25 13:3x）——挂死点已收窄到 CMD6 之后的时序/pad 切换
+
+### 实验矩阵（全部实测）
+
+| 配置 | busy 等待 | CMD6 | 结果 |
+|---|---|---|---|
+| `NO_HS_SWITCH=y`（当前可用版） | 事件（假成功） | **不发** | ✅ eMMC 正常（29.1 GiB，数据与厂内核一致） |
+| `BUSY_POLL=y` | 厂商轮询 | 发 | ❌ 挂死（厂商轮询在原子上下文 sleep） |
+| `BUSYDBG=y`（只读日志） | 事件 | 发 | ✅ 不挂，日志揭示真相（§34.54） |
+| `BUSY_LEVEL=y`（电平轮询） | 电平 | 发 | ❌ 挂死 |
+| `BUSY_LEVEL=y` + `CAP_CLOCK=y`（f_max 钉 400 kHz） | 电平 | 发 | ❌ 仍挂死 |
+
+### 由矩阵得出的结论
+
+1. **busy 等待已正确解决**：`BIT_SD_CARD_BUSY`（BIT6）电平可信、`BUSY_END_INT` 事件不产生；
+   电平轮询（`CONFIG_M7642_BUSY_LEVEL`，udelay 有界）不会挂。
+2. **一旦命令前不再被 busy 等待卡住，CMD6 就真的执行了**，然后**内核挂死**。
+3. **不是时钟拉高的问题**：把 `f_max` 钉在 400 kHz（`CONFIG_M7642_CAP_CLOCK`，
+   caps 不动）照样挂死。
+4. ⟹ 挂死点收窄到 **CMD6 之后核心做的时序切换**：`mmc_set_timing(MMC_TIMING_MMC_HS)`
+   → 驱动 `mstar_mci_set_ios()` → `eMMC_pads_switch()` / `eMMC_clock_setting()`
+   里的 **`emmcpll_0x*` / `chiptop_0x*` 写**（M7322 常量）⟹ 怀疑写坏了 eMMC PLL
+   或 pad macro，导致后续 MMIO 访问挂死（中断关闭，任何检测器都救不了）。
+
+### 下一步（每步只需一次上机）
+
+1. 在 `mstar_mci_set_ios()` 里，对 `MMC_TIMING_MMC_HS` **跳过 pad/PLL 切换**
+   （只保留时钟设置，且时钟已被 `CAP_CLOCK` 钉住）⟹ 若不再挂死，就锁定
+   `eMMC_pads_switch`/`eMMC_clock_setting` 的 PLL 写是元凶；
+2. 然后按 §34.46 的厂内核基线（`reg_emmc_test=0x0035`、`PAD+0x6E=0x0000`、
+   `EMMC_PLL+0x45=0x00ff`…）**逐项**修改这些写，每改一项单独上机验证；
+3. 速度目标：先要 4-bit（CMD6 index 0xB7），再谈 HS（0xB9），最后 HS200。
+
+### 提醒
+
+- 挂死无数据的代价已经付出多次，后续实验务必**一次只动一个变量**；
+- `CONFIG_M7642_NO_HS_SWITCH=y` 是**当前唯一可用**的 eMMC 配置（1-bit/legacy），
+  任何实验都要能回到它。
