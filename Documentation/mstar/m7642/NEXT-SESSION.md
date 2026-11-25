@@ -36,7 +36,10 @@ tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash �
 
 ## 下一步（按优先级）
 
-1. **eMMC（进行中，§34.49 已到最后一关）**：卡已被**完整识别并初始化**（CID/CSD/EXT_CSD 都读到），
+1. **eMMC（★已调通，§34.51）**：`mmcblk0 = 29.1 GiB` 已出现并能读出数据
+   （boot0/boot1/rpmb 也在）。关键两点：DMA mask 必须 32 位（§34.49）、
+   所有 CMD6 必须忽略（§34.51，`__mmc_switch()` 在本机直接返回成功）。
+   限制：1-bit/legacy 速度，写路径未验证，分区表还没解析。：卡已被**完整识别并初始化**（CID/CSD/EXT_CSD 都读到），
    卡在 **HS_TIMING 切换** —— CMD6(SWITCH) 之后 CMD13 超时 10 s
    （`FCIE_MIE_EVENT` bit4 不来）。低速模式（`CONFIG_M7642_FORCE_LOWSPEED`）绕不过，
    因为 MMC 核心只按 `ext_csd.hs_max_dtr` 决定是否切 HS。

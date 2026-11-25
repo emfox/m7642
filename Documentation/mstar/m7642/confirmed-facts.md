@@ -3640,3 +3640,73 @@ EXT_CSD 读对之后、`mmc0: new` 之前，还有 **一次 CMD6**（arg `0x3af0
 - 伪造设备响应（假装命令成功）在 MMC 这种有状态机上**不能试**——直接挂死，
   而且挂死后无数据（中断关闭路径，lockup 检测器也救不了）。
 - 埋点锚点必须唯一；报告页按 ver 解码；探针期望值必须现算。
+
+## 34.51 ★★★★★ eMMC 调通：mmcblk0 = 29.1 GiB 出现并能读出数据（2026-11-25 13:0x）
+
+### 最终结果（`m7642-nosw1.img`，md5 `8a0cd1f655f440236f662ef7c08603f1`）
+
+```
+mmc0: new MMC card at address 0001
+mmcblk0: mmc0:0001 BJTD4R 29.1 GiB
+mmcblk0boot0: mmc0:0001 BJTD4R 4.00 MiB
+mmcblk0boot1: mmc0:0001 BJTD4R 4.00 MiB
+mmcblk0rpmb: mmc0:0001 BJTD4R 4.00 MiB, chardev (254:0)
+```
+
+用户态 `/init` 报告（同一发）：
+
+```
+mmc_host=1 设备=1  hosts='mmc0'  devices='mmc0:0001'
+open(/dev/mmcblk0)=0
+容量 /sys/block/mmcblk0/size = 61071360 扇区 = 31.27 GB
+read(/dev/mmcblk0, 512) = 512 字节, 其中 298 字节非零
+```
+
+⟹ **P3 达成**：卡识别 ✓、容量正确 ✓（29.1 GiB = 31.27 GB，板载 32GB eMMC ✓）、
+块设备注册 ✓（含 boot0/boot1/rpmb 三个硬件分区 ✓）、**实际读出数据** ✓。
+
+### 两个决定性修复
+
+1. **DMA 地址必须落在 <4 GiB**（§34.49）
+   `CONFIG_M7642_DMA_32BIT`：`dma_set_mask_and_coherent(mmc_dev(host), DMA_BIT_MASK(32))`
+   —— 否则 `sg_dma_address` 在 0x1_xxxx_xxxx，驱动的 32 位 MIU 翻译会编出垃圾地址，
+   数据通路完全不工作（EXT_CSD 全 0 ⟹ 容量 0 B）。
+
+2. **所有 CMD6 都不能真的发给硬件**（本节）
+   CMD6(SWITCH) 在本机永远等不到 `BIT_CMD_END`（10 s 超时、卡不回响应）。
+   CMD6 在核心里的全部用途都是优化/可选特性，所以：
+
+   - 驱动 `init_card()`：`hs_max_dtr=0`、去掉 4/8-bit caps、`raw_pwr_cl_*` 清零、
+     `cache_size`/`power_off_notification`/`bkops`/`*_bkops_en` 清零；
+   - 核心 `mmc_init_card`：跳过 `ERASE_GRP_DEF`（index 0xAF）；
+   - 核心 `__mmc_switch()`：开着 `CONFIG_M7642_NO_HS_SWITCH` 时**直接返回成功**并打印
+     `M7642: ignoring CMD6 switch index=...`。
+
+   实测被忽略的 index：**34**（POWER_OFF_NOTIFICATION）、**185**（HS_TIMING）、
+   **161**、**33**（CACHE_CTRL）、**179**（PARTITION_CONFIG ×3，切 boot0/boot1/rpmb）。
+   卡始终保持默认状态（1-bit / legacy），**慢但完全可用**。
+
+### 踩过的坑（都已记录）
+
+| 尝试 | 结果 |
+|---|---|
+| 伪造成功放在**驱动** `request` 里 | ✗ 内核挂死（锁/上下文不对），§34.50 |
+| 只清 `hs_max_dtr` + caps | ✗ 后面还有 POWER_CLASS/ERASE_GRP_DEF/POWER_OFF_NOTIFY/CACHE/PARTITION 的 CMD6 |
+| `card->ext_csd.rev = 0` 想关 ERASE_GRP_DEF | ✗ 无效（`rev` 在初始化后段被覆盖，实测仍为 8） |
+
+### 现在的 eMMC 能力与限制
+
+- **能读**：`/dev/mmcblk0` + boot0/boot1/rpmb 都在，容量正确，`read()` 有真实数据 ✓
+- **速度**：1-bit / legacy（~25 MHz 以内），没有 HS/HS200，也没有 4/8-bit 总线
+- **没验证写的**：所有写操作都还没试（P4），而且 `ERASE_GRP_DEF`/cache/BKOPS 被关掉，
+  写路径的行为要重新评估
+- **没有分区表解析**：`/init` 只读了 sector 0，还没跑 `partx`/`of_partition`
+  （核心的 `mmcblk0p*` 需要扫描，且扫描会读分区表——下一步可做）
+
+### 下一步（按价值）
+
+1. 让 `/init` 读 **分区表**（MBR/GPT）并打印分区列表 ⟹ 确认 `boot`/`recovery`/`system` 等
+   分区偏移，为"从 eMMC 启动"做准备；
+2. 试**只读挂载**一个已知分区（ext4/f2fs 只读挂载）；
+3. 再评估**写**路径（P4）——需要先确认 `ERASE_GRP_DEF` 关掉后 trim/discard 是否安全；
+4. 速度优化：HS 走不通就先放着（CMDQ/DDR 都不谈）。
