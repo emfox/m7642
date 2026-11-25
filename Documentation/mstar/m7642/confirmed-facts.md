@@ -9308,3 +9308,64 @@ RESULT=HUNG   (errbits == 0)
 
 这**不解释**"数据到卡缓冲但不编程"（1-bit 也能正确读写），但如果写时序在 1-bit 下
 有某种边界问题，也可能表现成这个样子。**这是目前唯一还没试过的变量。**
+
+## 36.54 ★★★★★ WiFi 的真实起点：干净配置里 `CONFIG_NET` 和 `CONFIG_USB_SUPPORT` 都是关的（2026-11-27 07:1x）
+
+### 决定性发现
+
+对比 `probes/configs/m7642-735-clean.config`（我们一直在用的、能正常启动的配置）
+和 `probes/configs/m7642-735-wifi.config`：
+
+```
+clean 里：  # CONFIG_NET is not set
+            # CONFIG_USB_SUPPORT is not set
+            # CONFIG_CRYPTO is not set
+            # CONFIG_KEYS is not set
+            # CONFIG_NLS is not set
+            # CONFIG_PPS is not set
+```
+
+⟹ **我们一直刷的镜像里根本没有网络栈、也没有 USB 栈** ✗
+
+⟹ HANDOFF.md 里"WiFi 驱动完全工作（MT7663U 枚举成功、有非零 MAC）"这个结论，
+  **不可能是用 clean 配置测出来的** —— 它必然来自 wifi 配置，而 wifi 配置现在启动会挂住（见下）。
+
+### 两份配置的差异规模
+
+`diff` 结果 **708 行**：wifi 配置把 NET / USB / CRYPTO / KEYS / NLS / PPS / WLAN
+以及一大批 vendor 驱动**全部打开**。这不是"加一个开关"，是把整个网络与 USB 子系统接进来。
+
+### 二分结果：挂住与 mt76 无关
+
+| 镜像 | 配置 | 探针 | 结果 |
+|---|---|---|---|
+| `wifi1`/`wifi2` | wifi 配置 + mt76 + WEXT | wlan0 检测 | **挂住** ✗ |
+| `wctl` | wifi 配置 + mt76 | 只 sleep 5 + reboot | **挂住** ✗（说明连 `/init` 都到不了或 reboot 死） |
+| **`wno76`** | **wifi 配置，但 mt76 全关**（cfg80211+mac80211 保留） | 只 sleep 5 + reboot | **挂住** ✗ |
+
+⟹ **不是 mt76 驱动的问题**，而是这份大配置里别的东西在启动时挂住 ✗
+
+### 另一个线索
+
+wifi 配置里有：
+```
+CONFIG_BOOTPARAM_HUNG_TASK_PANIC=1
+CONFIG_DEFAULT_HUNG_TASK_TIMEOUT=30
+```
+⟹ hung task 会在 30 秒后 **panic** 而不是静默挂住；而 cmdline 有 `panic=10` ⟹ 应该
+10 秒后重启回 Android。但实测 5 分钟以上从未回到 Android ⟹ 情况比"一个 hung task"更糟。
+
+### 结论
+
+**「给 7.3 开 WiFi」不是加一个内核开关，而是要在 M7642 上把 NET + USB 子系统bring-up 起来**，
+而这两者在这颗芯片上从未被验证过（mainline 里没有 M7642 的 USB PHY 驱动条目）。
+这是一个**独立的、多步骤的工作流**，不属于原目标（持久日志通道）的范围。
+
+### 顺带确认的运维事实
+
+1. **插座功率读数会失效**（读到 0 W 但设备明显在运行）⟹ 不能把功率当唯一判据
+2. **adb 假阴性**：`adb push` 在设备待机/doze 时会**静默失败**，读回 md5 是 `md5sum:`（文件不存在）。
+   判据必须用**文件大小**先验、md5 后验，并重试推送本身
+3. **绝不允许两个脚本并发操作 adb/插座**：本轮有 20 分钟完全浪费在
+   `wnetgo3.sh` 和 `runone.sh` 互抢设备上，表现为一连串无法解释的"失败"
+4. `pkill -f <脚本名>` 会杀掉包含同名字符串的**自己**；要用括号正则（`runone[.]sh`）并排除自身 pid
