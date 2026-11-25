@@ -4570,3 +4570,64 @@ CONFIG_XFS_FS   = y          ← 镜像 7,158,272 B（比 ext4 的 7,035,392 B �
   部分 `__init` 路径）
 - 取证通道已可用（§34.66），但当前失败形态下 `kmsg_dump` 拿到的日志长度为 0
   ⟹ 失败发生在 printk 环形缓冲产生内容之前，属于**极早期**（`start_kernel` 最前段）
+
+## 34.69 ★ 检查点 stash 一直落在内核自己的 `.rodata` 里（已修正，但不是 ext4 的原因）（2026-11-25 16:4x）
+
+### 发现
+
+`build-postmmu.sh` 里 `SAVE_PA` 默认是 **`0x20883000`**。对照内核符号（PA）：
+
+| 构建 | `_etext` | `_sdata` | `_end` | `SAVE_PA=0x20883000` 落在 |
+|---|---|---|---|---|
+| 基线 | 0x206E0000 | 0x20890000 | 0x20930000 | **`.rodata`**（`_etext`..`_sdata` 之间） |
+| 开 ext4 | 0x20650000 | 0x20890000 | 0x209b0000 | 同段，但**偏移对应的具体数据不同** |
+
+⟹ 检查点机制一直在往**内核只读数据区**写 0x30 字节 ✗。基线构建恰好没踩到关键数据（所以能用），
+但换配置后同一地址对应的是**别的 rodata 内容**（可能在 `.rodata` 里是跳转表/格式串），
+完全有可能因此崩溃 —— 这与"开 ext4/XFS 后极早期死亡、连日志都没有"的症状高度吻合。
+
+### 修正
+
+把 stash 挪到**内核镜像之外**、且经验上能存活的位置（紧邻已验证可存活的报告页）：
+
+```
+SAVE_PA = 0x23088000      SAVE_VA = 0xffffffc082e08000
+```
+
+调用方式（mk-multi 支持用环境变量覆盖）：
+
+```sh
+SAVE_PA=0x23088000 SAVE_VA=0xffffffc082e08000 KERNEL=$O WORLD_VA=0 \
+    ./mk-multi.sh <tag> d0=save 0x2a244=restore
+```
+
+已在 `tramp-postmmu.bin` 的 `0x1c/0x20/0x400/0x404` 处验证新 `SAVE_VA` 编码正确 ✓。
+
+### 但：ext4 仍然失败
+
+`m7642-e4s.img`（ext4 + stash 已挪出内核）实测：**仍然没能回到 Android** ✗
+⟹ **stash 覆盖 rodata 不是 ext4 失败的根因**（但它是个真实缺陷，必须修，已修）。
+
+### 当前对 ext4 的判断（更新）
+
+以下假设都已排除：
+
+| 假设 | 排除依据 |
+|---|---|
+| ext4 代码自身 | XFS 同样失败（§34.67） |
+| 镜像体积 / 地址冲突 | `_end`=0x209b0000，与 stub/报告页相距 >1MB（§34.68） |
+| `CONFIG_RELR` | 真实配置里没这个符号（§34.68） |
+| stash 覆盖 `.rodata` | 挪走后仍失败（本节） |
+
+剩下的差异：**`CONFIG_BUFFER_HEAD=y`（由 `EXT4_FS` select）+ JBD2/CRC16/MBCACHE**。
+失败形态：**printk 环形缓冲都没内容**（`kmsg_dump` 拿到 length=0）⟹ 死在 `start_kernel` 最前段。
+
+### 建议的下一步
+
+1. **加一个 `start_kernel` 入口的检查点**（`restore` 动作，世界 A，dump + 交接）：
+   如果它触发并 dump 出空日志 ⟹ 死在 `start_kernel` 之前（`__primary_switched`/`setup_arch` 早期）；
+   如果 dump 出内容 ⟹ 死在 `start_kernel` 之后，范围立刻缩小一半。
+2. 或者更省事：**`BUFFER_HEAD` 的早期副作用**——查 `mm/mpage*`、`fs/buffer.c` 里
+   被 `#ifdef CONFIG_BUFFER_HEAD` 包起来、且在**早期 initcall** 里跑到的路径。
+3. 由于每次上机 + 恢复在该链路上要 3–5 分钟、且失败时通常拿不到数据，
+   建议把 ext4 挂载列为**已知限制**，先推进其它方向（eMMC 读写/HS 已完整可用）。
