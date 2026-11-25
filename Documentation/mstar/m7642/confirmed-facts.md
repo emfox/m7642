@@ -3753,3 +3753,59 @@ LBA1 也不是 `EFI PART`）。电视厂商用的是自己的裸布局，分区�
 | 速度 | 1-bit / legacy（CMD6 全部被忽略） |
 | 写入 | ✗ 未验证（P4） |
 | 分区表解析 | ✗ 无 MBR/GPT，需按厂商布局处理（见上） |
+
+## 34.53 CMD6 的真实机制：不是"卡不回"，是"卡一直忙"（2026-11-25 13:1x）
+
+### 之前的误判纠正
+
+超时信息 `wanted: 0010h` 里的 **0x10 不是 `BIT_CMD_END`（那是 0x02）**，而是
+**`BIT_BUSY_END_INT`（BIT4）**。看 `eMMC_reg_v5.h`：
+
+```
+FCIE_MIE_EVENT: BIT0=DMA_END  BIT1=CMD_END  BIT2=ERR_STS  BIT3=SDIO_INT
+                BIT4=BUSY_END_INT  BIT5=R2N_RDY_INT  BIT6/7=CARD_CHANGE
+FCIE_SD_STATUS 的错误位：BIT0=DAT_RD_CERR  BIT3=CMD_NO_RSP  BIT4=CMD_RSP_CERR
+                        （`BIT_SD_FCIE_ERR_FLAGS` = BIT6-1 = 0x3F，只有低 6 位）
+```
+
+而 `SD_STATUS = 0xff00` 只有高 8 位，**低 6 位一个错误都没有** ⟹ 没有 RSP timeout、没有 CRC 错
+⟹ **卡其实回应了**，之前的解读（"卡不回 CMD6"）是错的。
+
+### 真正的机制
+
+`mstar_mci_send_command()` 在**每条命令之前**都会调 `mstar_mci_WaitD0High()`：
+
+```c
+u32 mstar_mci_WaitD0High(u32 u32_us)
+{
+#if ENABLE_FCIE_HW_BUSY_CHECK
+    REG_FCIE_SETBIT(FCIE_SD_CTRL, BIT_BUSY_DET_ON);
+    if (eMMC_FCIE_WaitEvents(FCIE_MIE_EVENT, BIT_BUSY_END_INT, u32_us) != SUCCESS)
+        return eMMC_ST_ERR_TIMEOUT_WAITD0HIGH;          ← 我们一直卡在这里
+#else
+    ... eMMC_FCIE_WaitD0High_Ex() 轮询 ...
+#endif
+}
+```
+
+`ENABLE_FCIE_HW_BUSY_CHECK = 1`（`eMMC_linux.h:414`）⟹ 走硬件事件路径。
+超时 10 s 后打印 `eMMC Warn: retry wait D0 H.` 并重试 ⟹ 最终放弃 ⟹ 卡初始化中止。
+
+⟹ 真实结论：**CMD6 之后的 DAT0 忙信号从未被"看到释放"**。
+两种可能：(a) 卡真的卡在忙；(b) M7642 的 busy 事件检测不工作（M7322 的 pad/chiptop 配置差异）。
+
+### 已做的实验：改用轮询（`CONFIG_M7642_BUSY_POLL`）
+
+把 `ENABLE_FCIE_HW_BUSY_CHECK` 接到 Kconfig（关掉 CMD6 抑制，开轮询），结果
+**内核挂死**（150 s 无 Android、无数据）。⟹ 轮询路径 `eMMC_FCIE_WaitD0High_Ex()`
+在这版代码下不能用（可能死循环/在睡眠上下文里轮询），**暂时不能作为在线调试手段**。
+
+### 下一步候选（按风险排序）
+
+1. **只读诊断**：在 `mstar_mci_WaitD0High()` 超时那一刻打印
+   `FCIE_SD_CTRL` / `FCIE_SD_STATUS` / `FCIE_MIE_EVENT` 的原始值
+   （不打就不知道到底是"事件位不置"还是"卡还在忙"），**只加日志**，风险最低；
+2. 对照厂内核的 `SD_CTRL`：厂内核 idle 时是 `0x022e`（**BIT8=BUSY_DET_ON 是 0**），
+   而我们驱动会 `SETBIT(BIT_BUSY_DET_ON)` ⟹ 确认这一位在 M7642 上是否该置位；
+3. 若确认是"事件检测不工作"，则用"发命令后固定延时 + 轮询 SD_STATUS 的 DAT0 位"替换事件等待，
+   而不是用厂商那个会挂死的轮询函数。
