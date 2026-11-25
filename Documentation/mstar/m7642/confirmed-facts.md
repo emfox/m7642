@@ -6659,3 +6659,76 @@ DRAM 日志从 Android 读回」。日志能从 Android 读到 ⟹ 交接**成�
 
 `build-postmmu.sh` 的默认行为是**从 `System.map` 解析并打开 dump** ⟹
 「忘了设 `PANIC_DUMP_VA=0`」等于「带 dump」。这也是那组实验翻车的工具原因。
+
+## 36.01 ★★★ 子代理找到 eMMC 写不落盘的真正根因：写缓存开着，落盘路径不可用（2026-11-26 12:xx）
+
+### 根因（静态代码链条，全部可查）
+
+```
+drivers/mmc/core/mmc.c:1907   mmc_init_card(): 若 card->ext_csd.cache_size != 0
+                              ⟹ mmc_switch(EXT_CSD_CACHE_CTRL, 1)  把写缓存打开
+                              ⟹ 之后 CMD24/CMD25 的数据只进卡的易失缓存
+drivers/mmc/core/mmc.c:2131   _mmc_flush_cache() 是唯一落盘路径（CMD6 FLUSH_CACHE）
+drivers/mmc/core/block.c:1298 mmc_blk_issue_flush() —— 只响应 REQ_OP_FLUSH
+                              ⟹ 只有 fsync / BLKFLSBUF / umount 才会触发
+                              ⟹ 普通 pwrite **不产生 flush 请求**
+drivers/mmc/host/mstar-mci/   "主动 flush" 的代码：**0 处**
+```
+
+⟹ **数据只到了卡的缓存，从未进 NAND。** 进 Android（断电）后缓存丢失 ⟹ 读回全零。
+
+### 决定性旁证（来自我们自己的观测）
+
+> 加 `fsync` 会**挂死**，不加 `fsync` 则"返回成功但不落盘"
+
+**fsync 能挂死，本身就证明写缓存是开着的**：缓存没开时 `_mmc_flush_cache()` 直接返回 0，
+根本不可能挂。而 flush 挂死的原因是 host 驱动的 R1b 忙等
+（`mstar_mci_v5.c:1962-1995` + `:1419-1435`）——把 `busy_timeout`(=30 s)×1000 微秒
+喂给一个 `udelay(10)` 的死等循环，持锁不调度，超时还会 `eMMC_die()`→`panic()`。
+
+### 这解释了之前所有的困惑
+
+为什么 8-bit 与 1-bit、ADMA 开与关、主区与 boot0、32 字节与 512 字节、
+加不加 sync —— **表现全部一样**：因为**数据通路本来就是好的**，
+问题从来不在通路，而在"没有落盘"。
+
+### 修复（已实现并编译）
+
+`->init_card()` 在 `mmc.c:1907` **之前**执行 ⟹ 在那里把 `cache_size` 清零，
+就能让"开缓存"那个分支整体跳过：
+
+```c
+#if IS_ENABLED(CONFIG_M7642_DISABLE_CACHE)
+	card->ext_csd.cache_size = 0;
+	card->ext_csd.power_off_notification = 0;
+	card->ext_csd.bkops = false;
+	card->ext_csd.man_bkops_en = false;
+	card->ext_csd.auto_bkops_en = false;
+#endif
+```
+
+注意：这段代码**原本就存在于**我们的 `init_card` 里，但被包在
+`CONFIG_M7642_NO_HS_SWITCH` 条件内，而那个选项当前没开 ⟹ **一直没编译进去** ✗
+现在拆成独立常开的 `CONFIG_M7642_DISABLE_CACHE` ✓
+
+### 同时修掉的隐患
+
+写路径的非 ADMA 分支原本仍置 `BIT_ADMA_EN`，而 `ENABLE_FCIE_ADMA=0` 时
+**没有任何描述符被准备**（控制器会把数据缓冲区当描述符解析）。
+厂商只在 ADMA 打开时跑过这条分支，所以这是厂商未验证的死代码。已去掉该位。
+
+（另附一条静态核对发现：之前被测的 `.o`/`vmlinux` 里其实已经是"无 ADMA 位"的版本，
+但源码+当前 `.config` 重新编译会把它放回去 —— 所以这行必须修，否则下次编译又被污染。）
+
+### 验证计划（一步，零风险）
+
+**同一次启动内** `pwrite` 后**直接 `pread` 读回**（不 fsync、不交接）：
+- 读回得到我们写的数据 ⟹ 写缓存确实关了、CMD25 已经自己落盘 ✓
+- 仍全零 ⟹ 还有别的问题（回到 DMA/cache 方向）
+
+然后再做一次"断电后读回"确认持久性。
+
+### 教训
+
+这条根因**完全可以在几周前用静态分析查出**，而我一直在做硬件实验试错。
+子代理只读代码就找到了 —— 说明"先静态、后动态"的纪律，我在驱动层面没有坚持。
