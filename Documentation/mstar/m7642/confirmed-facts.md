@@ -8459,3 +8459,59 @@ if (!header_length) {
 
 已确认：`pwrite`/`fsync` 返回成功、同启动读回一致，但跨重启丢失 —— 与 ramoops 的
 问题**同一个形状**（写以为成功、跨内核丢失）。两条线的最后障碍都指向"**数据如何跨内核留存**"。
+
+## 36.36 ★★★ 关键机制：`PRZ_FLAG_ZAP_OLD` 让 `post_init` 必然清 size（2026-11-27 11:0x）
+
+### 7.3 的 `persistent_ram_post_init`
+
+```c
+bool zap = !!(prz->flags & PRZ_FLAG_ZAP_OLD);      /* ramoops_init_prz 传了 ZAP_OLD */
+...
+if (prz->buffer->sig == sig) {
+        if (buffer_size(prz) == 0 && buffer_start(prz) == 0) {
+                pr_debug("found existing empty buffer\n");
+                return 0;                            /* 空 buffer：直接返回 */
+        }
+        if (buffer_size > prz->buffer_size || buffer_start > buffer_size) {
+                pr_info("found existing invalid buffer...");
+                zap = true;
+        } else {
+                persistent_ram_save_old(prz);        /* ★ 拷贝到 old_log */
+        }
+}
+...
+if (zap)
+        persistent_ram_zap(prz);                     /* ★ 无论 save_old 与否都 zap */
+```
+
+### 这解释了我一直看到的现象
+
+**`start=0` / `size=0` 是 `PRZ_FLAG_ZAP_OLD` 的必然结果**，不是"没写"的证据 ✗
+⟹ 我此前把 `size == 0` 当作"我们的写入失败"，**这是误判** ✗
+⟹ 而 `save_old(prz)` **确实被调用**了（sig 匹配 + 尺寸合法）⟹ 数据应该在 `old_log` 里
+⟹ `ramoops_pstore_read` 应该能把它作为记录返回 ⟹ pstore 应该有条目 ✗ 但实际没有
+
+### 剩下真正要解释的两件事
+
+1. **`/sys/fs/pstore` 为什么是空的** —— `save_old` 明明复制了
+   （可能：`pstore_get_records` 在 `pstore_register` 时跑，而我们的数据是
+   **上一次**内核写的 —— 时序上应该是它先跑再看数据，符合预期）
+2. **数据区为什么是 `ff`** —— `persistent_ram_zap` **不清数据** ✗
+   ⟹ 数据变 `ff` 说明**物理内存被重置**，与 `cc` 的"写入落地"矛盾
+
+### 下一步（这次有明确方向）
+
+用 **1-bit 通道**验证 `save_old` 是否被调用：在 `persistent_ram_post_init` 的
+`save_old(prz)` 之后加一句"写标记到普通 System RAM"，然后…… 不行，那是 Android 内核 ✗
+
+**改我们自己的内核**：在我们内核的 `post_init` 里，如果 `save_old` 被调用就把标记
+写到 `0x23081000`，`/init` 用 1-bit 读它 —— 但这只能验证**我们**内核的 post_init，
+不是 Android 的 ✗
+
+**唯一可行的验证**：找一个**我们能读、Android 也不会动**的地方存标记 ——
+这正是要解决的问题本身。**循环依赖确认。**
+
+### 结论
+
+`PRZ_FLAG_ZAP_OLD` 这条解释掉了"size 总是 0"，但**没有**解释"pstore 为空"和"数据区是 ff"。
+这两个是独立的、仍待解释的问题。
