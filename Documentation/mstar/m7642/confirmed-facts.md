@@ -3903,3 +3903,62 @@ while (waited < u32_us) {
 - 挂死无数据的代价已经付出多次，后续实验务必**一次只动一个变量**；
 - `CONFIG_M7642_NO_HS_SWITCH=y` 是**当前唯一可用**的 eMMC 配置（1-bit/legacy），
   任何实验都要能回到它。
+
+## 34.56 ★★★★★ CMD6 全部跑通：卡进入 high speed，挂死点锁定为 M7322 的 PLL/pad 写（2026-11-25 13:4x）
+
+### 配置（`m7642-nopad1.img`，md5 `29e981b8e8db5e8ca2038676c6c52d79`）
+
+```
+CONFIG_M7642_BUSY_LEVEL=y      # 用 BIT_SD_CARD_BUSY 电平轮询替代坏掉的 BUSY_END_INT
+CONFIG_M7642_CAP_CLOCK=y       # f_max 仍钉 400 kHz（隔离实验，caps 不动）
+CONFIG_M7642_NO_PAD_SWITCH=y   # HS 时序只记录，不做 pads_switch/clock_setting
+CONFIG_M7642_NO_HS_SWITCH=n    # **不再抑制 CMD6**
+CONFIG_M7642_DMA_32BIT=y
+```
+
+### 结果：所有 CMD6 依次成功
+
+```
+mstar_mci_v5.c request opcode=6 arg=0x3af0101   ERASE_GROUP_DEF
+mstar_mci_v5.c request opcode=6 arg=0x3220101   POWER_OFF_NOTIFICATION
+mstar_mci_v5.c request opcode=6 arg=0x3b90101   HS_TIMING = 1
+M7642: HS timing requested; skipping pads_switch/clock_setting
+mstar_mci_v5.c request opcode=6 arg=0x3b70201   BUS_WIDTH
+mstar_mci_v5.c request opcode=6 arg=0x3a10101 / 0x3210101   cache 相关
+mstar_mci_v5.c request opcode=6 arg=0x3b30901 / 0x3b30a01 / 0x3b30801  PARTITION_CONFIG（boot0/boot1/rpmb）
+
+mmc0: new high speed MMC card at address 0001        ← ★ 高速模式
+mmcblk0: mmc0:0001 BJTD4R 29.1 GiB
+mmcblk0boot0: 4.00 MiB   mmcblk0boot1: 4.00 MiB   mmcblk0rpmb: 4.00 MiB
+```
+
+### 结论
+
+1. **CMD6 本身完全没问题**：卡对每一种 SWITCH 都正常响应并完成。
+   §34.51 里"CMD6 不可用"的判断，实质是 `mstar_mci_WaitD0High()` 用坏掉的
+   `BUSY_END_INT` 事件做等待，把整条命令序列卡死；换成 `BIT_SD_CARD_BUSY` 电平轮询
+   （`CONFIG_M7642_BUSY_LEVEL`）后一切正常。
+2. **挂死点确认**：一旦允许核心走 HS 时序，驱动会执行
+   `eMMC_pads_switch(FCIE_eMMC_SDR)` + `eMMC_clock_setting(FCIE_DEFAULT_CLK)`，
+   这两个函数里的 `emmcpll_0x*` / `chiptop_0x*` 是 **M7322（MT9653）的值**，
+   写下去就让控制器/总线锁死（中断关闭，检测器救不了）。
+   用 `CONFIG_M7642_NO_PAD_SWITCH` 跳过它们后，**一切正常**。
+3. 现在卡是 **high speed 模式、4-bit 总线**（CMD6 已生效），但**时钟仍限 400 kHz**
+   （`CAP_CLOCK`），所以速度还是慢的。
+
+### 下一步：把 HS 的 PLL/pad 按 M7642 的真实值配好
+
+用 §34.46 的厂内核基线（那份 dump 是在厂内核跑满速时读的，正是 HS 状态）：
+
+| 寄存器 | 厂内核（HS 正常） | 我们的 HAL 会写（M7322） |
+|---|---|---|
+| `CLKGEN0+0x64` `reg_ckg_fcie` | `0x00f0` = BIT6(PLL 源) + `0xC<<2`(PLL 2X) + bit7 | 不匹配 |
+| `EMMC_PLL+0x1A` `reg_emmc_test` | `0x0035` | `0x00f4` |
+| `EMMC_PLL+0x45` | `0x00ff` | 低 4 位 |
+| `PAD_CHIPTOP+0x6E` | `0x0000` | `0x0001` |
+| `FCIE_SD_MODE` | `0x0004`（8-bit） | |
+| `FCIE_CMD_RSP_SIZE` / `SD_CTRL` / `DDR_MODE` | `0x0505` / `0x022e` / `0x1100` | |
+
+做法：**逐个**把 `eMMC_pads_switch()` / `eMMC_clock_setting()` 里 HS 分支涉及的写
+替换/绕过为上述值，每改一项单独上机（一次只动一个变量），直到能去掉 `CAP_CLOCK`
+而仍然正常 ⟹ 那时才是真正的 HS 速度。
