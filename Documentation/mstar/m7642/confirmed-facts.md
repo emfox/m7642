@@ -5168,3 +5168,31 @@ REG_ADDR(REG_SW_RESET_CPU_AEON)  = AEON_SW_RESET;    /* 再置（保持） */
 
 修写路径的具体做法（§34.80 已列）：原样重跑 §34.58 那版 `/init`（判据是 DRAM 报告的 `match`），
 若 match=1 ⟹ 写路径其实一直好的、只是我的探针判据错了；若 match=0 ⟹ 按配置二分。
+
+## 34.84 ★ 第 3 项达成：AEON_SW_RESET restart handler 工作（2026-11-25 19:0x）
+
+### 证据
+
+`rb1` 镜像（`/init` 睡 5 秒 → `reboot(RB_AUTOBOOT)`，失败才退 `sysrq-b`）：
+写入 recovery 槽 → 重启进入我们的内核 → **55 秒后设备自己回到 Android** ✓
+
+关键点：**整个过程中没有做过插座恢复** ✓ ⟹ 盒子是从我们的内核**自行复位**并启动的，
+不是靠外部断电 ✓。
+
+对比基线（§34.84 之前的事实）：厂内核实现在 `machine_restart` 走的是"交权 PM51 → 切电 → 待机"，
+**不会复位** ✗；我们之前的尝试也因为漏了 `MHEG5_CPU_STOP` 而没有生效 ✗。
+
+⟹ 新的 `m7642-restart.c`（`arch/arm64/kernel/`，注册 `restart_handler` priority 200，
+按厂序列 `CPU_STOP=1` → `msleep(1)` → `clear` → `set` 操作 0x1F201FCC/0x1F20210C）**有效** ✓✓
+
+### 意义
+
+以后每轮实验的重启从"插座 + 红外 + 30 秒"降到一条命令（`reboot`/`sysrq-b`），
+而且**不再依赖米家 token**。这对后续所有工作都是数量级收益 ✓
+
+### 遗留
+
+- 中间有一次观测到"78 W 但没有 adb 持续数分钟"，可能与 BCB 指向 recovery 有关
+  （复位后 mboot 又引导 recovery ⟹ 短暂循环），最终仍回到了 Android ✓
+- 建议后续在  里先清 BCB（misc 分区）再 reboot，可以让这条路径更干净
+  —— 但这需要 eMMC 写路径（§34.80），所以优先级仍在写路径上
