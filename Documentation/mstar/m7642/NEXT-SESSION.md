@@ -461,3 +461,10 @@ probes/handoff/run-rung.sh ~/Debian/m7642-build/out/m7642-rec-73-rung-0x465e80.i
 - 新仪器：tramp 注入 `.text` 尾部填充（内核 VA 与 idmap 都 ROX），两个入口；handover 仍在 0x21680200。
 - 第一发 `prsw` NO_RETURN（505 s）——但那一版漏了 `nop @0x46804C`，已重建四张镜像。
 - 机器目前挂死，等一次物理断电。
+
+## 重要约束：`machine_restart` 未实现
+
+Linux 7.3.5 在这台机器上**没有可用的重启实现**，所以：
+- 内核 panic 后不会自动重启（会挂住，只能插座断电，DRAM 里的现场随之丢失）；
+- 交接/复位必须依靠探针（`tramp-postmmu.S`）里的自有实现；
+- 任何"关掉探针做实验"的计划都要先想好怎么把机器救回来。

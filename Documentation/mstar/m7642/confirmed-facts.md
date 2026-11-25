@@ -4333,3 +4333,59 @@ ext4 超级块（§34.61）。⟹ 因果关系明确。
 - `system` 是 ext4、2.5 GiB、4 KiB 块（§34.61）
 - `CONFIG_EXT4_FS=y` 会让内核在 `/init` 之前 panic，与 mmc/init 无关（§34.62）
 - panic 取证通道：机制就位，触发路径还需要改探针（§34.63）
+
+## 34.64 panic 取证的结构性结论：探针吞掉 panic 体；去掉探针又不会重启（2026-11-25 15:1x）
+
+### 判定一：探针接管后，`panic()` 的函数体**不执行**
+
+在 `kernel/panic.c` 的 `panic()` **函数体最开头**加了一条用线性映射直写的标记
+（`__va(0x230a0000)`，不用 ioremap、不加锁，panic 上下文安全）：
+
+```c
+#if IS_ENABLED(CONFIG_M7642_PANIC_LOG)
+	{ u32 *p = (u32 *)__va(0x230a0000UL); p[0] = 0x4d373634; p[1] = 0xdeadbeef; }
+#endif
+```
+
+挂上 panic 探针（`0x2a22c=restore`）后实测：stash 正常到达 ✓，但 `0x230a0000` 的
+**magic 是 0** ✗ ⟹ **panic 体一行都没执行** ⟹ 探针在入口接管后走的是"写 stash → 复位"，
+不返回 panic。⟹ 任何写在 `panic()` 里的取证代码（含 `kmsg_dump` 处理器）都够不到。
+
+### 判定二：去掉探针钩子后 `panic()` 会执行，但机器不会自己重启
+
+改成只挂 `d0=save`（不挂 panic 的 restore）重新构建带 ext4 的镜像上机：
+
+```
+槽内 md5 校验 ✓ → 重启到 recovery → 150 s 内 Android 没回来 ✗
+```
+
+⟹ `panic()` 执行了（`kmsg_dump` 应该已把日志写进 0x230a0000），但
+**`machine_restart` 在 7.3.5 上未实现** ⟹ 内核挂住不重启 ⟹ 只能插座断电，
+而断电会丢掉 DRAM ⟹ **日志还是拿不回来** ✗。
+
+### 结论：panic 取证必须在**探针里**做
+
+探针（`tramp-postmmu.S`）是唯一"panic 之后一定会执行、且会触发交接/复位"的代码路径。
+推荐设计：
+
+1. 在驱动里加一个 **非 static、noinline** 的 C 函数
+   `void m7642_panic_dump(void)`（内部调 `kmsg_dump(KMSG_DUMP_PANIC)` 或直接把
+   printk 环拷到 0x230a0000），它在 System.map 里就会有符号；
+2. `build-postmmu.sh` 把它的地址作为 `-DM7642_PANIC_DUMP_VA=...` 传给汇编；
+3. 在 `_start_save` 槽写完 stash 之后、`ret` 之前加：
+
+```asm
+	movz	x16, #(M7642_PANIC_DUMP_VA & 0xffff)
+	...（64 位拼装）
+	mov	x0, #1			/* KMSG_DUMP_PANIC */
+	blr	x16
+```
+
+注意：调用前要保证 x0-x18 等会被 C 代码破坏的寄存器已经保存（`_start_save` 里
+目前只保存了 TCR/TTBR 与 magic，调用点要放在**所有需要保留的值都落盘之后**）。
+
+### 附带记录
+
+- 无探针 + panic = 挂死（需要插座恢复）；这对将来"关了探针做实验"是一个**重要风险**。
+- `machine_restart` 未实现这一条应该写进 HANDOFF/NEXT-SESSION：任何依赖"panic 自恢复"
+  的方案在这台机器上都不可行。
