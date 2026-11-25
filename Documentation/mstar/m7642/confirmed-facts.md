@@ -4873,3 +4873,38 @@ tvcertificate / impdata / persist / tcluserdata / tclconfig   →  ext4
 跑 60 秒后（或挂死后被恢复前）—— 但 DRAM 会丢，所以改成：`/init` 每秒 `write()` 一次
 到报告页，然后用**探针在 20 秒处**做一次 `save`（记录当时的时间戳）⟹ 两次记录的时间差
 直接告诉我们定时器有没有停。
+
+## 34.76 逐秒 tick 探针：即使 `/init` 每秒写标记，交接也没发生（2026-11-25 17:0x）
+
+### 工具（`tick-init.c`，ver=15，值得保留）
+
+`/init` 每**一秒**把 `{magic, ver, second, t_last_ms}` 写一次报告页（最多 90 秒），
+然后 panic。只要能拿到报告页，**最后一个 `second` 就是内核停止推进的时刻**。
+
+### 结果
+
+`m7642-tick1.img`（md5 `fb3d4cf5092ee71813841d188d14d78f`）：
+**挂死**（插座 79 W、无 adb），报告页读不到 ✗。
+
+⟹ 说明内核死亡时**连 panic 交接都没能完成**（此前 30 秒版本能"自己回到 Android"，
+这次没有）⟹ 死亡形态不稳定：有时 panic 触发交接、有时直接挂死。
+
+### 长时运行调查的当前结论（本轮完整版）
+
+- **临界点**：15 秒能正常完成；30 秒必失败；60/90/120 秒失败或挂死
+- **已排除 7 个方向**：PM51 切电、CPU 空闲路径、mmc 驱动、lockup/hung-task 检测器、
+  fbcon/VT、文件系统代码、eMMC/DMA
+- **死亡形态不稳定**：有时 panic（能交接、能回 Android），有时完全挂死（不能交接）
+
+### 建议的下一步
+
+1. **先让交接更可靠**：panic 钩子目前依赖 tramp 的 `restore` 槽（恢复 TTBR0/TCR 再跳公共路径）。
+   挂死时它可能根本没被调用（`panic()` 没走到）。可以在**更早的探针点**也挂 `restore`
+   （例如 watchdog/`die` 路径），或者给 tramp 增加"定时器中断驱动的心跳 + N 秒无心跳则强制交接"。
+2. **优先怀疑定时器/中断停摆**：15 s 能完成、30 s 完成不了、越久越糟 —— 与
+   "定时器中断在某个点之后不再到来"高度吻合。可静态检查 `arch_timer` 的
+   `CONFIG_ARM_ARCH_TIMER_OOL_WORKAROUND`（MStar 常在 arch timer 上有 errata）与
+   `clocksource` 的 watchdog 设置。
+3. 也可以反向验证：把 `/init` 改成**死循环不让 CPU 睡**（已经试过 60 s 忙等 ✗），
+   但这次在 `MAXSEC` 循环里**每秒只写内存不 sleep**，看是否还能活 —— 用来区分
+   "定时器停了"（sleep 会卡住）与"其他"（忙等也死）。
