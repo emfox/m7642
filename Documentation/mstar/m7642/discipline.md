@@ -577,3 +577,28 @@ CONFIG_DETECT_HUNG_TASK=y      CONFIG_BOOTPARAM_HUNG_TASK_PANIC=1   (timeout 30)
 并且在动手前用静态分析把候选压到 1–2 个。
 
 （这套配置本身无害，留在 `.config` 里可以兜住"中断正常但任务卡住"的情况。）
+
+### 恢复链路分两段，故障要分开判（2026-11-25 踩坑）
+
+**红外/插座 = 米家云**，不是本地：
+
+```
+我的机器 ──HTTPS──> 小米云 ──> 家里的红外发射器（小爱音箱）──IR──> 电视
+我的机器 ──HTTPS──> 小米云 ──> 电视插座
+```
+
+- **远程公网 IP 不影响**红外/插座控制：云只认账号 session，真正发红外的是**家里**的音箱。
+- **`adb 192.168.10.60` 走的是家里 LAN**，必须经 WireGuard —— VPN 断了 adb 必断，
+  但云控制可能仍然正常。两者要分开排查。
+
+**典型故障：米家 session token 过期**（缓存 `~/.local/state/mihome-ctl/mi-tokens.json`）
+
+- 现象：`list` / `prop-get` 看起来正常（插座状态能读），但 `ir-send` **卡住不动**、
+  给再长超时也没用 —— 因为它其实在等交互式授权。
+- 判别：`~/.local/bin/mihome-ctl ir-send --remote 电视 --key POWER --relogin`
+  会直接打印 `https://c3.account.xiaomi.com/longPolling/login?ticket=…`。
+- 修复：`~/.local/bin/mihome-ctl extract --relogin`（QR 登录并重新提取 token）。
+  注意子命令里**没有 `login`**，是 `extract`。
+
+⟹ 恢复脚本里凡是走云的步骤，都应该带**短超时 + 失败即报"token 可能过期"**，
+而不是无限等（本会话就因为这一点白等了十几分钟）。
