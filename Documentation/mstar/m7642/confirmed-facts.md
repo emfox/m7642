@@ -3809,3 +3809,58 @@ u32 mstar_mci_WaitD0High(u32 u32_us)
    而我们驱动会 `SETBIT(BIT_BUSY_DET_ON)` ⟹ 确认这一位在 M7642 上是否该置位；
 3. 若确认是"事件检测不工作"，则用"发命令后固定延时 + 轮询 SD_STATUS 的 DAT0 位"替换事件等待，
    而不是用厂商那个会挂死的轮询函数。
+
+## 34.54 CMD6 机制定案：卡不忙、事件不产生（2026-11-25 13:2x）
+
+### 实测数据（`CONFIG_M7642_BUSYDBG`，只读日志）
+
+```
+M7642 W0H ok:      SD_CTRL=0x100 SD_STATUS=0xff00 EVENT=0x10 SD_MODE=0x1
+M7642 W0H ok:      SD_CTRL=0x104 SD_STATUS=0xff00 EVENT=0x10 SD_MODE=0x1
+M7642 W0H ok:      SD_CTRL=0x106 SD_STATUS=0xff00 EVENT=0x10 SD_MODE=0x1
+M7642 W0H TIMEOUT: SD_CTRL=0x106 SD_STATUS=0xff00 EVENT=0x0  SD_MODE=0x1
+```
+
+关键点：
+
+1. **成功的那几次是"假成功"**：`EVENT` 里 bit4（`BIT_BUSY_END_INT`）本来就是 1
+   （上一条命令的残留），等待立即返回。一旦这个位被消费掉（`EVENT=0x0`），
+   **再也不产生** ⟹ 超时 ⟹ 重试 ⟹ 初始化中止。
+2. **`SD_STATUS` 两种情况完全相同（`0xff00`）**，而
+   `BIT_SD_CARD_BUSY = BIT6` 在 `0xff00` 里是 **0** ⟹ **卡根本不忙**；
+   低 6 位的错误标志（`BIT_SD_FCIE_ERR_FLAGS` = 0x3F）也全 0 ⟹ 也没有超时/CRC 错。
+3. 结论：**控制器的 `BUSY_END_INT` 事件在本机不工作**（M7322 的 pad/chiptop 配置差异），
+   而 **`BIT_SD_CARD_BUSY` 电平位是可信的**。
+
+### 换用电平轮询（`CONFIG_M7642_BUSY_LEVEL`）
+
+```c
+while (waited < u32_us) {
+        if (!(REG_FCIE_U16(FCIE_SD_STATUS) & BIT_SD_CARD_BUSY))
+                return eMMC_ST_SUCCESS;
+        udelay(10); waited += 10;
+}
+```
+
+不睡眠、有界，避免厂商 `eMMC_FCIE_WaitD0High_Ex()` 在原子上下文里
+`eMMC_hw_timer_sleep()` 导致挂死（`CONFIG_M7642_BUSY_POLL` 实测就是挂死）。
+
+### 新发现：放开真实 CMD6 后会挂死
+
+配置 `M7642_BUSY_LEVEL=y` + `M7642_NO_HS_SWITCH=n`（真实 CMD6 路径）⟹ **内核挂死**（无数据）。
+
+推断：CMD6 这次**真的执行了**（含 `HS_TIMING`），随后核心
+`mmc_set_timing(MMC_TIMING_MMC_HS)` → 驱动 `set_ios` 用 **M7322 的
+`eMMC_pads_switch()` / `eMMC_clock_setting()` PLL 参数**去拉 25–52 MHz 时钟
+⟹ 时钟/pad 配置与 M7642 不匹配 ⟹ 硬件锁死（中断关闭，检测器也救不了）。
+
+### 下一步（隔离变量）
+
+1. **只封住时钟、不封 CMD6**：在驱动里把 `f_max` 钉在 400 kHz
+   （`pMMCHost_st->f_max = CLK_400KHz;`，**不改 caps**），这样 CMD6 照发、
+   但 `mmc_set_clock()` 永远不会拉高 ⟹ 如果这样就不再挂死，就直接证明
+   **挂死点是 HS 时钟/pad 配置**（M7322 常量问题），而不是 CMD6 本身；
+2. 若确认，就按 §34.46 的厂内核寄存器基线，逐个把 `eMMC_pads_switch()` /
+   `eMMC_clock_setting()` 里 HS 相关的 `emmcpll_0x*` / `chiptop_0x6E` 改成 M7642 的值，
+   每改一处单独验证（不要再一次性改三处，§34.47 的教训）；
+3. 高速通了以后再回头验证 4/8-bit 总线与 HS200。
