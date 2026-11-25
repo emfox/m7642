@@ -9419,3 +9419,48 @@ wno76 作业输出：
 **任何时刻只允许一个 adb 操作者**，包括"我自己顺手直查一下"。
 本轮已有两次因此误判：§36.54 的错误结论、以及更早 `wnetgo3.sh` 与 `runone.sh` 互抢设备。
 需要旁证时用 ping 或功率读数，**不要另起 adb**。
+
+## 36.56 ★★★★★ WiFi 为什么通不了：MStar 的 EHCI 需要 16 位寄存器访问，主线 ehci-platform 驱动不了它（2026-11-27 07:2x）
+
+### 实测：把 mt76 做成模块、由 /init 加载，**依然挂住**
+
+`wmod` 镜像（`MT7663U=m` + 依赖模块全在 initramfs，`/init` 用 `init_module()` 逐个加载）：
+- 烧写 md5 校验通过、07:19:12 重启
+- 之后 **80 W、ping 100% 丢包、完全没有 adb**（这次我没有并发操作 adb，判据干净）
+⟹ **`wlan0` 没有出现，`init_module` 那一步就卡住了**
+
+### 根因（文档 `usb.md` / `usb-phy.md` 里 2026-11-17 的调研已经写明）
+
+1. **MStar 的 USB 块是 16 位寄存器**：一个 32 位 EHCI 寄存器由两个相邻 16 位半字拼成
+   （低半字在 `2*off`，高半字在 `2*off+4`）。厂方为此**改了 `ehci.h` 的 `ehci_readl/ehci_writel`**。
+   ⟹ **主线 `ehci-platform` 直接拿去用会读错寄存器** —— 这是移植的主要缺口
+2. 控制器逻辑上是标准 EHCI（`CAPLENGTH=0x10`、`HCIVERSION=0x0100`、单端口、64 位寻址）
+3. 四路基址已实测确认；**MT7663 在第三路**：`ehc=0xFD202600`、`utmi=0xFD202900`、`irq=68`
+4. **PHY 上电序列可以直接搬**：厂方 `Titania3_series_start_ehc()` 的机器码与 m7322 源码同构，
+   两个特征值逐字命中（`0x2084` 写入 `UTMI+0x4`、`0x8051` 写入 `UTMI+0x40`）
+
+而 wifi 配置里开的正是 `CONFIG_USB_EHCI_HCD=y` + `CONFIG_USB_EHCI_HCD_PLATFORM=y`（不是 XHCI）。
+
+⟹ **EHCI 起不来 ⟹ MT7663U 永远枚举不到 ⟹ mt76 探测阻塞 ⟹ 整个 `/init` 卡在 `init_module`** ✓
+
+### 所以「开 WiFi」的真实工作量
+
+**不是加配置开关，是要移植一个 MStar EHCI 主机控制器驱动**：
+
+1. 给 EHCI 加 MStar 的 16 位访问器（改 `ehci_readl/ehci_writel`，或写一个 MStar 变体的 glue）
+2. 加四路 EHCI 的 DT 节点（基址/IRQ 文档里都有）
+3. 执行 `Titania3_series_start_ehc()` 的 PHY 上电序列
+4. 之后 MT7663U 才能枚举 → mt76 才能 probe → 才有 `wlan0`
+
+这是**独立的驱动移植工作流**，与"持久日志通道"目标无关。
+
+### 好消息：userspace 从来不是瓶颈
+
+- `Image` 只有 9.1–9.8 MB，32 MB 的 recovery 分区还剩 ~24 MB ⟹ **静态 busybox / wpa_supplicant / 固件都能塞进 initramfs**，不需要写 eMMC
+- `wpa_supplicant 2.10` 源码已取到，静态交叉编译配置已理清：只需关掉 `CONFIG_MACSEC` / `CONFIG_LIBNL32` / `CONFIG_NL80211`，用 `CONFIG_TLS=internal` + `CONFIG_DRIVER_WEXT`
+- WiFi 凭据可从 `/data/misc/wifi/WifiConfigStore.xml` 读出（用户已授权，读权限已确认）
+
+### 结论
+
+**WiFi 的瓶颈 100% 在内核的 EHCI 移植**，不在 userspace、不在固件、不在凭据。
+这条路要走通需要若干个驱动移植步骤；在此之前「完全启用 WiFi」做不到。
