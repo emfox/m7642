@@ -3288,3 +3288,56 @@ CMD52/5/55/8 (探 SD/SDIO) → CMD0 → CMD1(SEND_OP_COND, MMC) → CMD2(ALL_SEN
 - `/init` 现在会 `sleep(15)` 再 dump：MMC 的 rescan 是异步的，5 s 时超时信息还没出来
   （第一次就是这样把"驱动无输出"误读成"驱动没跑"）。
 - `tools/host/readlog2.sh`：不依赖报告页布局，直接读满 64 KB 再截断尾部零。
+
+## 34.44 eMMC 驱动来源与 HS 切换的静态分析（2026-11-25 11:5x）
+
+### 驱动是厂商代码，不是手写、也不是主线
+
+出处：厂内核 **4.9.118 源码树**（`~/Debian/m7642-build/kernel/mstar-4.9/`，其 vermagic 与设备
+上的 `4.9.118+` 逐字相同），原路径 `drivers/mstar2/hal/m7322/mmc/` 与
+`drivers/mstar2/drv/mmc/`。整体搬到 `drivers/mmc/host/mstar-mci/`：
+**9 个 .c + 6 个 .h，14,571 行**（提交 `b6d2c777c`）。
+
+和厂版逐文件 diff，`mstar_mci_v5.c` 只差 **74 增 / 3 删**：
+
+| 改动 | 说明 |
+|---|---|
+| `mstar_pm_base` 归属 | 厂版由 `init/main.c:547` 设全局 `ioremap(IO_PHYS, 0xA00000)`；主线没人做，改由 `mstar_mci_init()` 自建 |
+| 版本门槛 `while(1)` | 改 `pr_warn`（`CONFIG_MMC_MSTAR_MCI_STRICT_VERSION` 可恢复死循环） |
+| bring-up 埋点 | `request`/`set_ios`/`mmc_add_host`/`clock_setting` 的 `pr_info` |
+| `CONFIG_M7642_FORCE_LOWSPEED` | 低速开关（实测绕不过 HS 切换） |
+
+其余**逐字节相同**，包括 `eMMC_hal_speed.c`（725 行 HS 时序表 + pad/PLL 切换，一行未动）。
+另有 82 行 `mstar_mci_shim.h` 做 4.9→7.3 的 API 适配。
+
+⟹ **HS 失败不是代码差异**，只能是「厂商内核在驱动之前做过的 SoC 级初始化我们没做」或
+「7.3 核心与 4.9 的调用时序不同」。
+
+### HS 切换的时序细节（指向具体怀疑点）
+
+7.3.5 `mmc_ops.c` 的 `__mmc_switch()`：
+
+```c
+	... 发送 CMD6（用旧时序）...
+	if (timing)
+		mmc_set_timing(host, timing);          /* 655 行：切主机时序 */
+	if (send_status) {
+		err = mmc_switch_status(card, true);   /* ← 这里用 CMD13 轮询 */
+		if (err && timing)
+			mmc_set_timing(host, old_timing);
+	}
+```
+
+`mmc_select_hs()` 传的是 `timing = MMC_TIMING_MMC_HS`。所以正常流程应该是：
+**CMD6(旧时序) → set_ios(timing=HS) → CMD13(新时序)**。
+
+我们的日志是：`set_ios clock=400000 timing=0` → CMD6 → CMD13 → 超时 ✗，
+**中间没有 `set_ios(timing=HS)`** ⟹ 主机侧从未切到 HS ⟹ 卡切了、主机没切 ⟹
+CMD13 的响应采样不对 ⟹ 10 s 超时。这是下一步要验证的第一条。
+
+### 另一个已知不符
+
+`REG_FCIE(reg_ckg_fcie_syn)`（`CLKGEN2+0x0C`，0x1F201430）实测 **`0x0003`**，而驱动自己的
+修正代码（`eMMC_platform.c:997`）要求 `(val & 0x3) == BIT0`（即 `01`），厂版还在
+`eMMC_platform.c:1630` 有自检会 `eMMC_debug(0,1,"Wrong reg_ckg_fcie_syn (=%04X) setting!!!")`。
+⟹ 要么修正没生效（地址/时序问题），要么之后被别的代码改回 `11`。

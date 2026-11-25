@@ -40,7 +40,12 @@ tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash �
    卡在 **HS_TIMING 切换** —— CMD6(SWITCH) 之后 CMD13 超时 10 s
    （`FCIE_MIE_EVENT` bit4 不来）。低速模式（`CONFIG_M7642_FORCE_LOWSPEED`）绕不过，
    因为 MMC 核心只按 `ext_csd.hs_max_dtr` 决定是否切 HS。
-   下一步：静态读 `eMMC_hal_speed.c` 的 HS 路径，或让核心跳过 HS 先把 `mmcblk0` 拿出来。
+   下一步（§34.44 已细化为两条）：
+   ① 日志显示 CMD6 之后**没有 `set_ios(timing=HS)`** ⟹ 主机从未切 HS，而卡切了 ⟹ CMD13 采样错。
+      先验证 `mmc_set_timing()` 为何没有触发 `set_ios`（或驱动内部把 HS 当 LEGACY 处理）。
+   ② `reg_ckg_fcie_syn` 实测 `0x0003`，驱动要求 `01`；厂版自带自检，可先让自检跑起来。
+   驱动本身是厂商代码（14,571 行，我们只改了 74 行），所以 HS 失败不是代码差异，
+   而是「厂商内核在驱动之前做过的 SoC 级初始化」或缺、或 4.9→7.3 调用时序差异。
 2. ~~屏幕控制台~~ **已完成并收口**（§34.41/§34.42）：定稿写法是 **`/chosen` + `memory-region`
    + reserved-memory `no-map` + `CONFIG_FB_SIMPLE=y` 且 `# CONFIG_DRM_SIMPLEDRM`**；
    用户态 `/dev/fb0` 全项验证通过（1920x1080x32、stride 7680、mmap 写读 OK）。
