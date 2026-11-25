@@ -7563,3 +7563,45 @@ D  B  G  C  | start=0     | size=0      |
 **一次只写一个 zone**，按 `0x41940000`（console）→ `0x41900000`（record）→ `0x41980000`（pmsg）
 的顺序逐个试，每次跑完看 `/sys/fs/pstore`。
 若某个 zone 出来的 `size` 不是 0，就说明那个 zone 对了，再看导出内容。
+
+## 36.19 ramoops 注入：记录未被接受，且抓窗口无效（2026-11-26 23:1x）
+
+### 本轮两件事
+
+**① zone 顺序确认**（间接证据）：Android 里存在 `/dev/pmsg0`
+⟹ pmsg zone 就是第 3 个（`0x41980000`）⟹ 顺序为
+`record 0x41900000 → console 0x41940000 → pmsg 0x41980000 → ftrace 0x419C0000` ✓
+
+**② 抓窗口实验 `psinj5`**：写 console zone → `reboot()` → **Android 起来后 3 秒内**立刻检查
+
+结果：
+
+```
+✓ 回到 Android (+72s) —— 立刻检查
+/sys/fs/pstore: total 0          ← 仍然空
+dmesg: avc: denied { read } ... dev="pstore" tclass=dir permissive=1
+```
+
+⟹ SELinux 只是**记录告警**（permissive）并放行 ⟹ 列表是真空 ✓
+⟹ **不是错过窗口**，而是记录**根本没被接受** ✗
+
+### 因此剩下的问题在"格式/语义"层面（用户指出的方向是对的）
+
+已确认正确的：`sig`（`0x43474244` 小端 = `44 42 47 43`）、`ecc=0`、zone 顺序
+
+仍可能错的：
+1. **`start` 语义** —— 我用了 `start = n`；也许必须是 0
+2. **`prz->buffer_size`** —— 各 zone 的可用尺寸 = `zone_size - sizeof(header)`，
+   但 `ramoops_init_prz` 传的 `size` 可能不是 `console_size`
+3. **`ftrace_size`** —— Android 的参数里它有值，若不为 0 则 zone 总数/布局要重算
+4. **`memtype` / `PRZ_FLAG_*`** —— 影响写入路径
+5. 我们**自己的内核也注册了 ramoops**（cmdline 里 `mem_address=0x42300000`），
+   两者互不干扰，但要注意别把我们的写当成 Android 的
+
+### 下一步的正确做法
+
+**用 Android 自己的代码来写**，而不是手工拼格式：
+把**我们内核的** ramoops 参数指向 Android 的 console zone（`mem_address=0x41940000`、
+`mem_size=0x40000`、`console_size=0x3fff4`），让**内核的 `persistent_ram` 代码**
+替我们做记账 —— 这样格式一定合法。
+之前试过指向 `0x41900000` 但**尺寸/布局不匹配**，现在有了精确参数可以重试。
