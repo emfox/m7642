@@ -4203,3 +4203,49 @@ set_ios clock=0      bus_width=0 power_mode=0  ← 断电
 2. 为 eMMC 增加**分区解析**（厂商私有布局，需要自定义 `blk_add_partitions` 或用 dm 映射），
    好处是能直接 `mount /dev/mmcblk0p22`。
 3. HS200/HS400（§34.59，性能项，不阻塞可用性）。
+
+## 34.61 system 分区确认是 ext4（超级块读对）+ 发现 EXT4_FS=y 会让内核早期 panic（2026-11-25 14:2x）
+
+### 结果（`m7642-iso1.img`，md5 `c206c2869c06b3868f2735df6e324c4c`）
+
+从我们的内核直接读 `system` 分区（LBA 544384）偏移 1024 处的 **ext4 超级块**：
+
+```
+read(1024) = 1024 ✓
+ext4 魔数  = 0xef53 ✓
+inodes     = 163840
+blocks     = 655360        (× 4096 B = 2.50 GiB，与分区大小 5,242,880 扇区 = 2.5 GiB 一致 ✓)
+block_size = 4096
+卷标       = '/'
+superblock FNV = 0x4a7fc278
+```
+
+⟹ **`system` 是标准 ext4、2.5 GiB、4 KiB 块**，我们的驱动在 52 MHz/8-bit 下把它读对了 ✓。
+
+### 副产品：`CONFIG_EXT4_FS=y` 会让内核在 `/init` 之前 panic
+
+为了让内核能 `mount`，我把 `CONFIG_EXT4_FS=y` 打开（镜像从 6,500,864 B 涨到 7,035,392 B）。
+结果**连续两发都是"stash 到达 + 报告页/日志页全空"**：
+
+- stash 只证明 `panic()` 被调用了，**不能**证明是我们的 `/init` 调 `sysrq-c`；
+- 报告页和日志页都空 ⟹ `/init` 根本没跑到写内存那一步 ⟹ **是内核自己 panic 的**。
+
+隔离实验：**只关掉 `EXT4_FS`、其余不变**（`m7642-iso1.img`）⟹ 一切正常，
+超级块读对 ✓ ⟹ **确认是 ext4 代码路径导致的早期 panic**，与驱动/时序无关。
+
+⟹ 结论：`EXT4_FS` 目前**不能打开**，要挂载 ext4 得先查清这个 panic
+（下一次可以在开 ext4 的构建上加 `panic` 现场的调用栈打印——panic 探针已经能交接，
+但需要确认 panic 发生在 `/init` 之前，所以要在 `panic()` 里打印 `dmesg` 尾部或直接
+用 ramoops 控制台缓冲）。
+
+### eMMC 侧目前的完整能力
+
+| 能力 | 状态 | 证据 |
+|---|---|---|
+| 识别 / 容量 | ✅ | 29.1 GiB，BJTD4R |
+| 读（原始） | ✅ | 与厂内核逐位一致（§34.60） |
+| 写 | ✅ | 写入+读回+还原（§34.58） |
+| 速率 | ✅ | 52 MHz / 8-bit / HS |
+| ext4 结构 | ✅ | 超级块 magic 0xef53、2.5 GiB、4 KiB 块 |
+| 挂载 ext4 | ✗ | 需先解决 `EXT4_FS=y` 的早期 panic |
+| HS200/HS400 | ✗ | 需整体 PHY 配置（§34.59） |
