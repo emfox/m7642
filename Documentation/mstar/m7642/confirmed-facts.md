@@ -3710,3 +3710,46 @@ read(/dev/mmcblk0, 512) = 512 字节, 其中 298 字节非零
 2. 试**只读挂载**一个已知分区（ext4/f2fs 只读挂载）；
 3. 再评估**写**路径（P4）——需要先确认 `ERASE_GRP_DEF` 关掉后 trim/discard 是否安全；
 4. 速度优化：HS 走不通就先放着（CMDQ/DDR 都不谈）。
+
+## 34.52 ★★★★★ eMMC 数据正确性最终确认：与厂内核逐字节一致（2026-11-25 13:0x）
+
+### 交叉验证方法
+
+用 `probeRW.ko` 在厂内核（Android）下读同一个扇区，和我们内核读到的比对。
+
+厂内核 `/dev/block/mmcblk0` 扇区 0：
+
+```
+30 16 4b 29 b8 2a 01 00 05 00 00 00 b8 2a 11 00
+00 20 3f 00 c4 bb fb 28 00 02 00 00 b8 2a 01 00
+```
+
+我们内核读到的前 4 字节（`/init` 报告 `first4`）= **`0x30164b29`** ⟹ 小端即 `29 4b 16 30`
+⟹ **逐字节一致 ✓✓**
+
+厂内核 `/proc/partitions`：`mmcblk0 30535680` 块 = **29.1 GiB**
+我们内核 `/sys/block/mmcblk0/size` = **61071360** 扇区 = **29.1 GiB** ⟹ **完全一致 ✓✓**
+
+### 一个重要的认知修正
+
+**这台机器的 eMMC 用户区第 0 扇区不是 MBR/GPT**（厂内核读到的也没有 `0x55AA`，
+LBA1 也不是 `EFI PART`）。电视厂商用的是自己的裸布局，分区信息在别处
+（mboot 的 board info / `misc` BCB / 厂商私有的 partition 表）。
+⟹ 以后**不要**指望 `mmcblk0p*` 自动出现；要按厂内核的 `include/linux/mmc/...` 或
+`/proc/partitions` 对照厂镜像的分区表（Android 侧 `/proc/partitions` 里就有 `mmcblk0p*`，
+可以照抄偏移）。
+
+（补充：厂内核 `/proc/partitions` 里只有 `mmcblk0` 主子设备，本机 Android 用
+`/dev/block/by-name/*` 和 device-mapper 管理，分区表细节要看 `by-name` 链接。）
+
+### eMMC 总结（最终状态）
+
+| 项目 | 状态 |
+|---|---|
+| 卡识别（CID/CSD/EXT_CSD） | ✓ `mmc0: new MMC card at address 0001` |
+| 容量 | ✓ 29.1 GiB / 61071360 扇区 / 31.27 GB（与厂内核一致） |
+| 块设备 | ✓ `mmcblk0` + `mmcblk0boot0/boot1`（各 4 MiB）+ `mmcblk0rpmb` |
+| 数据读取 | ✓ 与厂内核逐字节一致 |
+| 速度 | 1-bit / legacy（CMD6 全部被忽略） |
+| 写入 | ✗ 未验证（P4） |
+| 分区表解析 | ✗ 无 MBR/GPT，需按厂商布局处理（见上） |
