@@ -1,0 +1,73 @@
+From 2eec96ede268995226ab21d988fe0d5a46090a70 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 11:15:18 +0800
+Subject: [PATCH 12/29] =?UTF-8?q?arm64:=20dts:=20m7642:=20framebuffer=20?=
+ =?UTF-8?q?=E5=AE=9A=E7=A8=BF=E4=B8=BA=20/chosen=20+=20memory-region=20+?=
+ =?UTF-8?q?=20no-map?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+两种写法都实测通过，选绑定文档要求的 /chosen 形式：
+- 节点放 /chosen（simple-framebuffer.yaml 要求）；因为 /chosen 没有 ranges，reg 无法翻译成
+  IORESOURCE_MEM（simplefb 会报 No memory resource/-EINVAL），改用 memory-region 引用
+  reserved-memory 里的 framebuffer 节点（绑定允许且 simplefb_parse_dt 优先）。
+- reserved-memory 标 no-map：否则内核先做默认映射，simplefb 的 ioremap_wc() 冲突失败(-ENOMEM)。
+- 驱动侧需 CONFIG_FB_SIMPLE=y 且 !CONFIG_DRM_SIMPLEDRM。
+
+实测：fb0: simplefb registered!、Console: switching to colour frame buffer device 240x67，
+用户态 open(/dev/fb0)/FBIOGET_*/mmap/写入读回全部 OK（1920x1080x32, stride 7680, smem 0x2d100000）。
+---
+ .../boot/dts/mstar/m7642-tcl-65s535d.dts      | 32 +++++++++++--------
+ 1 file changed, 18 insertions(+), 14 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts b/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
+index 2d32f9bbd..a8da139ee 100644
+--- a/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
++++ b/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
+@@ -20,20 +20,6 @@ aliases {
+ 		serial0 = &uart0;
+ 	};
+ 
+-	framebuffer@2d100000 {
+-		compatible = "simple-framebuffer";
+-		/*
+-		 * Must be a child of the root (not /chosen): /chosen has no ranges,
+-		 * so reg cannot be turned into an IORESOURCE_MEM there and simplefb
+-		 * fails with "No memory resource".
+-		 */
+-		reg = <0x0 0x2d100000 0x0 0x7e9000>;
+-		width = <1920>;
+-		height = <1080>;
+-		stride = <7680>;
+-		format = "a8r8g8b8";
+-	};
+-
+ 	chosen {
+ 		/*
+ 		 * maxcpus=1: see the CPU comment in m7642.dtsi.
+@@ -66,6 +52,24 @@ chosen {
+ 		#address-cells = <2>;
+ 		#size-cells = <2>;
+ 
++		/*
++		 * Firmware-handoff framebuffer.  Per the simple-framebuffer binding
++		 * this belongs under /chosen; because /chosen has no ranges, "reg"
++		 * cannot be translated into an IORESOURCE_MEM, so describe the
++		 * memory with memory-region instead (the binding allows that and
++		 * simplefb_parse_dt() prefers it).
++		 */
++		framebuffer@2d100000 {
++			compatible = "simple-framebuffer";
++			memory-region = <&framebuffer>;
++			width = <1920>;
++			height = <1080>;
++			stride = <7680>;
++			format = "a8r8g8b8";
++		};
++
++
++
+ 	};
+ 
+ 	/*

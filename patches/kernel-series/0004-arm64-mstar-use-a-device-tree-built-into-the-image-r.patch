@@ -1,0 +1,288 @@
+From eae12334d1940cc5addfb34d03456210120a577d Mon Sep 17 00:00:00 2001
+From: m7642 <m7642@local>
+Date: Mon, 23 Nov 2026 00:24:27 +0800
+Subject: [PATCH 04/29] arm64: mstar: use a device tree built into the image
+ (regenerated from the tree)
+
+---
+ arch/arm64/Kconfig.platforms  |  26 +++++
+ arch/arm64/kernel/Makefile    |   2 +
+ arch/arm64/kernel/m7642-dtb.S | 175 ++++++++++++++++++++++++++++++++++
+ arch/arm64/kernel/setup.c     |  19 ++++
+ 4 files changed, 222 insertions(+)
+ create mode 100644 arch/arm64/kernel/m7642-dtb.S
+
+diff --git a/arch/arm64/Kconfig.platforms b/arch/arm64/Kconfig.platforms
+index 715e971eb..940b058a8 100644
+--- a/arch/arm64/Kconfig.platforms
++++ b/arch/arm64/Kconfig.platforms
+@@ -196,6 +196,32 @@ config ARCH_MSTAR
+ 	  This enables support for MStar TV SoCs, now part of MediaTek.
+ 	  Currently covers the m7642, marketed as the MT9652.
+ 
++config MSTAR_M7642_BUILTIN_DTB
++	bool "Use the built-in device tree on m7642"
++	depends on ARCH_MSTAR
++	help
++	  Bring-up aid.  Ignore the device tree passed by the bootloader and
++	  use the board DTB compiled into the image instead.
++
++	  This bootloader reads its DTB from a dedicated raw partition that
++	  the stock kernel depends on as well, so replacing it there is a
++	  one-way door.  Carrying our own copy keeps that partition intact.
++
++	  Say N for a kernel that should honour the firmware's device tree.
++
++config MSTAR_M7642_BEACON
++	bool "Paint the framebuffer from primary_entry (bring-up aid)"
++	depends on ARCH_MSTAR
++	help
++	  Writes a solid colour into the scanout buffer as the very first
++	  instructions of primary_entry, before the MMU or a stack exist.
++
++	  Turn this on only when there is no serial console: it is the sole
++	  way to tell whether the bootloader jumped to the kernel at all.  It
++	  must stay off for any kernel that is expected to run normally, and
++	  for anything tested under QEMU, where the framebuffer address is not
++	  mapped.
++
+ 
+ config ARCH_MESON
+ 	bool "Amlogic Platforms"
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index ea6633943..b4268f2ef 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -88,5 +88,7 @@ ifeq ($(CONFIG_DEBUG_EFI),y)
+ AFLAGS_head.o += -DVMLINUX_PATH="\"$(abspath vmlinux)\""
+ endif
+ 
++obj-$(CONFIG_MSTAR_M7642_BUILTIN_DTB)	+= m7642-dtb.o
++
+ # for cleaning
+ subdir- += vdso vdso32
+diff --git a/arch/arm64/kernel/m7642-dtb.S b/arch/arm64/kernel/m7642-dtb.S
+new file mode 100644
+index 000000000..6fc195ce7
+--- /dev/null
++++ b/arch/arm64/kernel/m7642-dtb.S
+@@ -0,0 +1,175 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * LOCAL BRING-UP AID -- not intended for upstream.
++ *
++ * Two jobs:
++ *
++ * 1. Embed the board DTB into the image so the kernel can ignore the device
++ *    tree handed over by the bootloader.  This bootloader loads its DTB from a
++ *    dedicated raw partition that the stock kernel also depends on, so writing
++ *    our own tree there cannot be undone from Linux.  Carrying the tree in the
++ *    image keeps that partition pristine.
++ *
++ * 2. Provide the bring-up beacon.  There is no serial adapter on this board, so
++ *    the panel is the only output channel: the bootloader leaves its logo
++ *    buffer on screen and steers the display engine at the framebuffer only
++ *    once a framebuffer driver probes.  A mainline kernel has no such driver
++ *    yet, which is why the beacon has to steer the display itself.
++ *
++ * The .dtb is produced by `make dtbs` and found relative to the build root, so
++ * device trees must be built before the image.
++ */
++
++#include <linux/linkage.h>
++
++	.section .init.rodata, "a"
++	.balign 8
++	.global __m7642_dtb
++__m7642_dtb:
++	.incbin "arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dtb"
++	.global __m7642_dtb_end
++__m7642_dtb_end:
++	.balign 8
++
++	.text
++/*
++ * m7642_beacon(w12 = colour)
++ *
++ * Bring-up checkpoint reporter: flood the scanout buffer with one flat colour
++ * and hold it for a moment, then return.  Each checkpoint calls this with its
++ * own colour, so the colour left on the panel when the kernel stops names the
++ * last checkpoint reached.
++ *
++ * Flat colour, not bars.  Bands were tried first and always came back as
++ * fragments -- "magenta background with crumbly vertical stripes", later
++ * "blocks instead of bars" -- so a shape carries no reliable information here.
++ * A flat fill is immune to any scanout layout because every pixel is identical.
++ * A colour change is also countable without naming colours: the useful reading
++ * is "how many colour changes before it stopped".
++ *
++ * GOP0 only, and the window stride is 0x40, taken from measurement rather than
++ * from the vendor headers.  Deriving it from
++ *
++ *   GOP_REG(addr, bk) = RIU[(addr << 1) + 0x20200 + (bk << 8)]
++ *
++ * with RIU a u16 pointer suggests 0x80, but that reading is wrong here: the
++ * factory hook that produced a full-screen flat colour -- the one build on this
++ * board proven to cover all eight windows -- stepped by 0x40.  Stepping by 0x80
++ * leaves only window 0 steered at the framebuffer, which shows up as the
++ * bootloader's recovery bitmap with a fraction of one colour painted over it.
++ *
++ * The window registers are shadowed: they only reach the scanout engine once
++ * GOP_FWR (bit 9 of gop0 bank1 BANK_SEL) is toggled, and without that the
++ * writes are dropped silently.
++ *
++ * No stack, no calls: this runs before early_init_stack exists.  It also saves
++ * nothing and writes nothing but the framebuffer; x0..x3 and x19..x21, the live
++ * state at every call site, are simply never touched.  An earlier version parked
++ * its saved registers in .data, which faults if the bootloader hands over with
++ * the MMU on and the image mapped read-only; a fault there looks exactly like
++ * "the kernel never ran".
++ *
++ * The colour goes into both halves of the 32-bit word, because the panel takes
++ * RGB565 out of the low half while the buffer is one word per pixel.
++ */
++SYM_FUNC_START(m7642_beacon)
++	/*
++	 * The control word is deliberately not touched here, so the colour format
++	 * is whatever the entry rung left behind.
++	 *
++	 * An earlier comment here claimed the rung set it "with a plain write" and
++	 * that an earlier version of this function had done read-modify-write,
++	 * turning every colour into a faint magenta wash because these registers
++	 * "do not read back what was written".  Both halves of that are wrong or
++	 * unproven, and the comment misled a later session into "fixing" the rung
++	 * on the strength of it:
++	 *
++	 *   - the rung does read-modify-write, and does not do a plain write;
++	 *   - no image from the four real flashes contains a CTRL access here, so
++	 *     the "earlier version" cannot be identified and its failure mode is
++	 *     not evidence of anything;
++	 *   - only one GOP dump exists under artifacts/, so the read-back claim has
++	 *     never been measured either.
++	 *
++	 * Keep this function out of the control word because it runs after the
++	 * rung has set the format, and because a second writer to the same register
++	 * adds a variable to every panel reading for no gain.  Not because of the
++	 * story above.
++	 */
++
++	/* Point GOP0's eight windows at the framebuffer. */
++	movz	x4, #0x0604
++	movk	x4, #0x1f24, lsl #16		// 0x1f240604: win0 STR_L
++	movz	w5, #0x2d10			// HI16BIT(0x2d100000)
++	mov	x6, xzr				// LO16BIT and EX2BIT
++	mov	x7, #8
++1:	strh	w6, [x4]			// STR_L
++	strh	w5, [x4, #4]			// STR_H
++	strh	w6, [x4, #8]			// STR_EX
++	add	x4, x4, #0x40			// next window
++	subs	x7, x7, #1
++	b.ne	1b
++
++	/* Commit: toggle GOP_FWR so the shadowed addresses take effect. */
++	movz	x8, #0x07fc
++	movk	x8, #0x1f24, lsl #16		// 0x1f2407fc: gop0 bank1 BANK_SEL
++	ldrh	w10, [x8]
++	orr	w10, w10, #0x0200
++	strh	w10, [x8]
++	ldrh	w10, [x8]
++	bic	w10, w10, #0x0200
++	strh	w10, [x8]
++
++	/* Replicate the 16-bit colour into both halves of the word. */
++	and	w13, w12, #0xffff
++	lsl	w11, w12, #16
++	orr	w11, w11, w13
++
++	/* Flood the whole 1920x1080x4 buffer. */
++	movz	x4, #0x2d10
++	lsl	x4, x4, #16			// 0x2d100000
++	movz	x5, #0x7e9
++	lsl	x5, x5, #12			// 0x7e9000
++	add	x5, x4, x5
++2:	str	w11, [x4], #4
++	cmp	x4, x5
++	b.lo	2b
++	dsb	sy
++
++	/*
++	 * Dwell so the store above has actually reached the panel before the
++	 * next checkpoint repaints it.  Deliberately short: the reading is not
++	 * the sequence of colours but the state the screen is left in, because
++	 * nothing on this machine repaints the scanout buffer once we stop --
++	 * the mainline kernel has no framebuffer driver, so whatever colour the
++	 * kernel died on stays on the panel until the next power cycle.
++	 */
++	mov	x5, #0x04000000
++3:	subs	x5, x5, #1
++	b.ne	3b
++
++	ret
++SYM_FUNC_END(m7642_beacon)
++
++/*
++ * m7642_mark(w0 = colour) -- C-callable form of the beacon, which takes its
++ * colour in w12 because head.S calls it through a macro.
++ *
++ * __pi_m7642_mark is the same code under the name the kernel/pi/ objects see:
++ * that directory is built with --prefix-symbols=__pi_, and objcopy rewrites
++ * the symbol name inside relocations too, so a plain reference to
++ * m7642_mark from map_range.c would otherwise not resolve.
++ */
++SYM_FUNC_START(m7642_mark)
++	mov	w12, w0
++	b	m7642_beacon
++SYM_FUNC_END(m7642_mark)
++
++	.global __pi_m7642_mark
++	.set	__pi_m7642_mark, m7642_mark
++
++	/* Constants shared with head.S and setup.c: 1920x1080x4 at 0x2d100000. */
++	.global m7642_fb_phys
++	.global m7642_fb_bytes
++	.equ	m7642_fb_phys, 0x2d100000
++	.equ	m7642_fb_bytes, 0x7e9000
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+index 29c6100f0..bd1315df6 100644
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -59,6 +59,10 @@ static int num_standard_resources;
+ static struct resource *standard_resources;
+ 
+ phys_addr_t __fdt_pointer __initdata;
++
++#ifdef CONFIG_MSTAR_M7642_BUILTIN_DTB
++extern char __m7642_dtb[];
++#endif
+ u64 mmu_enabled_at_boot __initdata;
+ 
+ /*
+@@ -289,6 +293,14 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	early_fixmap_init();
+ 	early_ioremap_init();
+ 
++#ifdef CONFIG_MSTAR_M7642_BUILTIN_DTB
++	/*
++	 * Bring-up aid: ignore the firmware's device tree and use the board
++	 * DTB carried in the image.  The vendor tree lives in a raw partition
++	 * the stock kernel also uses, so it must not be replaced from Linux.
++	 */
++	__fdt_pointer = __pa_symbol(__m7642_dtb);
++#endif
+ 	setup_machine_fdt(__fdt_pointer);
+ 
+ 	/*
+@@ -373,6 +385,13 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 			"This indicates a broken bootloader or old kernel\n",
+ 			boot_args[1], boot_args[2], boot_args[3]);
+ 	}
++
++	/*
++	 * Synchronous abort on this TV's panel is already ruled out as a usable
++	 * signal, and writing the framebuffer here would be the only memory write
++	 * in setup_arch() that can fault if the MMU happens to be on with that
++	 * page unmapped, so no beacon is painted.
++	 */
+ }
+ 
+ static inline bool cpu_can_disable(unsigned int cpu)

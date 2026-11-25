@@ -1,0 +1,62 @@
+From 0bb6d732db239a2ec2c346abf07693cd7269f13a Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 13:26:20 +0800
+Subject: [PATCH 21/29] =?UTF-8?q?mmc:=20mstar-mci:=20CONFIG=5FM7642=5FBUSY?=
+ =?UTF-8?q?=5FLEVEL=EF=BC=88=E7=94=A8=20BIT=5FSD=5FCARD=5FBUSY=20=E7=94=B5?=
+ =?UTF-8?q?=E5=B9=B3=E8=BD=AE=E8=AF=A2=E6=9B=BF=E4=BB=A3=E5=9D=8F=E6=8E=89?=
+ =?UTF-8?q?=E7=9A=84=20BUSY=5FEND=5FINT=EF=BC=89+=20CONFIG=5FM7642=5FBUSYD?=
+ =?UTF-8?q?BG?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ drivers/mmc/host/Kconfig                  | 12 ++++++++++++
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c | 14 ++++++++++++++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index 7d8ee3841..ea0ebab01 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -1326,3 +1326,15 @@ config M7642_BUSYDBG
+ 	  few times only) so we can tell "event never fires" from "card still busy".
+ 
+ 	  Log only; nothing is changed.
++
++config M7642_BUSY_LEVEL
++	bool "m7642: poll the DAT0 busy level bit instead of the BUSY_END_INT event"
++	depends on MMC_MSTAR_MCI
++	help
++	  Measured on this board: FCIE_SD_STATUS bit 6 (BIT_SD_CARD_BUSY) reads 0
++	  while the controller's BUSY_END_INT event never fires, so the vendor
++	  event-based wait always times out after CMD6 (and the vendor polling
++	  fallback sleeps in an atomic context and hangs).
++
++	  This replaces the wait with a bounded udelay() poll of BIT_SD_CARD_BUSY:
++	  no sleeping, no reliance on the broken event.
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index 4d1dfe9f4..08b5f31ef 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -1404,6 +1404,20 @@ static void mstar_mci_completed_command(struct mstar_mci_host *pMStarHost_st)
+ #define WAIT_D0H_POLLING_TIME   HW_TIMER_DELAY_100us
+ u32 mstar_mci_WaitD0High(u32 u32_us)
+ {
++#if IS_ENABLED(CONFIG_M7642_BUSY_LEVEL)
++    /* m7642 busy-level poll: BIT_SD_CARD_BUSY is valid, BUSY_END_INT is not */
++    {
++        u32 waited = 0;
++
++        while (waited < u32_us) {
++            if (!(REG_FCIE_U16(FCIE_SD_STATUS) & BIT_SD_CARD_BUSY))
++                return eMMC_ST_SUCCESS;
++            udelay(10);
++            waited += 10;
++        }
++        return eMMC_ST_ERR_TIMEOUT_WAITD0HIGH;
++    }
++#endif
+     #if defined(ENABLE_FCIE_HW_BUSY_CHECK)&&ENABLE_FCIE_HW_BUSY_CHECK
+ 
+     REG_FCIE_SETBIT(FCIE_SD_CTRL, BIT_BUSY_DET_ON);

@@ -1,0 +1,140 @@
+From cd989b14ed18790247460c6ecbf9b443079c5bf8 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 14:05:52 +0800
+Subject: [PATCH 24/29] =?UTF-8?q?mmc:=20mstar-mci:=20eMMC=20=E8=B7=91?=
+ =?UTF-8?q?=E9=80=9A=E7=9C=9F=E6=AD=A3=20HS=20=E2=80=94=E2=80=94=2052=20MH?=
+ =?UTF-8?q?z=20/=208-bit=20/=20HS=20=E6=97=B6=E5=BA=8F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+二分结论：HS 时序分支里 eMMC_clock_setting(FCIE_DEFAULT_CLK=200M PLL) 单独执行正常，
+致命的是 eMMC_pads_switch(FCIE_eMMC_SDR)——即使只做 BIT_8BIT_MACRO_EN 一位也锁死
+（macro 数据通路需要 M7322 的那套 emmcpll/chiptop 值，且不能整寄存器照抄）。
+
+配置：BUSY_LEVEL + HS_CLOCK_ONLY + VENDOR_STATIC + DMA_32BIT（CAP_CLOCK 关）。
+实测 52000000 Hz / bus_width=3(8-bit) / timing=1(HS)，mmcblk0 29.1 GiB，
+52 MHz 下 read(512) 的 sum/nonzero 与 400 kHz 及厂内核逐位一致。
+---
+ drivers/mmc/host/Kconfig                   | 40 ++++++++++++++++++++++
+ drivers/mmc/host/mstar-mci/eMMC_platform.c | 35 +++++++++++++++++++
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c  |  5 ++-
+ 3 files changed, 79 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index c8c84a88f..26fc5af56 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -1362,3 +1362,43 @@ config M7642_NO_PAD_SWITCH
+ 
+ 	  This skips that switch (the timing is still recorded) so the next
+ 	  experiment can tell whether those register writes are the hang.
++
++config M7642_VENDOR_STATIC
++	bool "m7642: adopt the vendor kernel's static eMMC IO/PAD register values"
++	depends on MMC_MSTAR_MCI
++	help
++	  The eMMC HAL in this driver carries M7322 (MT9653) values.  The vendor
++	  kernel for this board, read back through /dev/mem while it was running at
++	  HS400, has:
++
++	    EMMC_PLL+0x1A (reg_emmc_test) = 0x0035
++	    EMMC_PLL+0x45                  = 0x00ff
++	    PAD_CHIPTOP+0x6E               = 0x0000
++
++	  This forces exactly those three after the HAL's platform init, and logs
++	  the read-back so the next experiments start from a known state.
++
++	  No clock/PLL change; safe to use together with M7642_CAP_CLOCK.
++
++config M7642_HS_CLOCK_ONLY
++	bool "m7642: on HS timing run eMMC_clock_setting but skip eMMC_pads_switch"
++	depends on MMC_MSTAR_MCI
++	help
++	  Bisect step: the HS timing branch does
++	      eMMC_pads_switch(FCIE_eMMC_SDR);
++	      eMMC_clock_setting(FCIE_DEFAULT_CLK);
++	  and enabling both hangs the board.  This runs only the clock setting so
++	  the next run can tell which of the two is fatal.
++
++config M7642_PAD_SWITCH_MIN
++	bool "m7642: reduced eMMC_pads_switch (only the FCIE DDR_MODE bit)"
++	depends on MMC_MSTAR_MCI
++	help
++	  Bisect result: on HS timing, eMMC_clock_setting() alone is fine but
++	  eMMC_pads_switch(FCIE_eMMC_SDR) hangs the board.  That function writes
++	  chiptop_0x6E/0x6F/0x50 (pin mux!) and a dozen emmcpll_0x* registers with
++	  the M7322 vendor tree's values.
++
++	  This runs only the FCIE-side part (FCIE_DDR_MODE |= BIT_8BIT_MACRO_EN)
++	  and leaves the pin mux and the eMMC PLL macro exactly as the bootloader
++	  left them.
+diff --git a/drivers/mmc/host/mstar-mci/eMMC_platform.c b/drivers/mmc/host/mstar-mci/eMMC_platform.c
+index 7e8dc1119..83d7907c2 100644
+--- a/drivers/mmc/host/mstar-mci/eMMC_platform.c
++++ b/drivers/mmc/host/mstar-mci/eMMC_platform.c
+@@ -444,6 +444,22 @@ U32 eMMC_pads_switch(U32 u32Mode)
+ 	volatile U16 u16_reg;
+     g_eMMCDrv.u8_PadType = u32Mode;
+ 
++#if IS_ENABLED(CONFIG_M7642_PAD_SWITCH_MIN)
++    /*
++     * m7642: the chiptop_0x6E/0x6F/0x50 (pin mux) and emmcpll_0x* writes below
++     * are the M7322 vendor tree's; running them here locks the controller up.
++     * The bootloader already configured this board, so only set the FCIE side.
++     */
++    if(FCIE_eMMC_SDR == u32Mode)
++        REG_FCIE_SETBIT(FCIE_DDR_MODE, BIT_8BIT_MACRO_EN);
++
++    pr_info("M7642 pads_switch(%s): DDR_MODE=%#x pad6e=%#x (PLL/chiptop untouched)\n",
++            (FCIE_eMMC_SDR == u32Mode) ? "SDR" : "other",
++            REG_FCIE_U16(FCIE_DDR_MODE), REG_FCIE_U16(reg_chiptop_0x6E));
++
++    return eMMC_ST_SUCCESS;
++#endif
++
+ #if IS_ENABLED(CONFIG_M7642_HAL_MIN)
+     /*
+      * m7642: these chiptop/emmcpll values are the M7322 vendor tree's; the
+@@ -1700,6 +1716,25 @@ U32 eMMC_PlatformInit(void)
+ 
+     eMMC_clock_setting(FCIE_SLOWEST_CLK);
+ 
++#if IS_ENABLED(CONFIG_M7642_VENDOR_STATIC)
++    /*
++     * m7642 vendor static values (read back from the running vendor kernel,
++     * which drives this eMMC at HS400/200 MHz):
++     *   reg_emmc_test = 0x0035, EMMC_PLL+0x45 = 0x00ff, PAD_CHIPTOP+0x6E = 0.
++     * The HAL leaves M7322's values here.
++     */
++    /*
++     * Only the 1.8V IO enable.  Do NOT touch PAD_CHIPTOP+0x6E: that is the
++     * eMMC pin mux and writing the vendor's 0x0000 there disconnects the pads
++     * (one run hung exactly that way).  EMMC_PLL+0x45 is left alone too.
++     */
++    pr_info("M7642 before: emmc_test=%#x\n", REG_FCIE_U16(reg_emmc_test));
++    REG_FCIE_SETBIT(reg_emmc_test, BIT0);   /* 1.8V IO enable */
++    REG_FCIE_CLRBIT(reg_emmc_test, BIT6|BIT7);
++    pr_info("M7642 vendor static: emmc_test=%#x (was %#x)\n",
++            REG_FCIE_U16(reg_emmc_test), 0xf4);
++#endif
++
+     return eMMC_ST_SUCCESS;
+ }
+ 
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index b5506244e..c6de565d9 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -2394,7 +2394,10 @@ static void mstar_mci_set_ios(struct mmc_host *pMMCHost_st, struct mmc_ios *pIOS
+             }
+             else if( pIOS_st->timing == MMC_TIMING_MMC_HS )
+             {
+-#if IS_ENABLED(CONFIG_M7642_NO_PAD_SWITCH)
++#if IS_ENABLED(CONFIG_M7642_HS_CLOCK_ONLY)
++                pr_info("M7642: HS timing: clock_setting only (no pads_switch)\n");
++                eMMC_clock_setting(FCIE_DEFAULT_CLK);
++#elif IS_ENABLED(CONFIG_M7642_NO_PAD_SWITCH)
+                 pr_info("M7642: HS timing requested; skipping pads_switch/clock_setting\n");
+ #else
+                 eMMC_pads_switch(FCIE_eMMC_SDR);

@@ -53,3 +53,22 @@ DTS 后续修改，且 0004 已无法干净应用。现由内核 git 树（分�
 | 2026-11-23 | **`v7.3.5` 753f54c3** | **9 个补丁重放零冲突、零差异**；构建通过；函数地址整体位移（`setup_arch` +8、`__primary_switched` +0x14、符号 +21 个），**函数内相对偏移不变** |
 
 升级后偏移由 `tools/host/ckpt.py` 按"符号+delta"重新解析，不再有任何手工写死的偏移。
+
+## 完整补丁系列：`kernel-series/`（2026-11-25 新增）
+
+上面 `series/` 是**按主题手工压缩**的 9 个补丁，方便阅读；但它会过时。
+`kernel-series/` 是**机械导出**的完整系列，任何时候都和内核分支一致：
+
+```sh
+cd ~/Debian/m7642-build/kernel/linux-git      # 分支 m7642-7.3.5
+git format-patch v7.3.5-import..HEAD -o ~/Debian/m7642/patches/kernel-series --no-signature
+```
+
+- 基线：tag `v7.3.5-import`（上游 Linux 7.3.5）
+- 当前：**29 个补丁，43 个文件，+16281/−2**
+- 内容：ehci 分体寄存器、mstar USB2 PHY、mstar 平台 + TCL 65S535D DTS、
+  内建 DTB、**mstar-mci eMMC 驱动（含 m7642 bring-up 的全部 `CONFIG_M7642_*` 选项）**、
+  `kernel/panic.c` 的 panic 取证标记等
+- 恢复方式：在内核树上 `git am ~/Debian/m7642/patches/kernel-series/*.patch`
+
+⚠️ 两份补丁集内容重叠：`series/` 便于人读，`kernel-series/` 保证准确。以 `kernel-series/` 为准。

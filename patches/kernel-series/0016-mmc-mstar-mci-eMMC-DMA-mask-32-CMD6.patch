@@ -1,0 +1,185 @@
+From 2cd5dc2f4905afc7d695a8231f1f8c92cf1cb88a Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 12:42:44 +0800
+Subject: [PATCH 16/29] =?UTF-8?q?mmc:=20mstar-mci:=20=E4=BF=AE=E5=A5=BD=20?=
+ =?UTF-8?q?eMMC=20=E6=95=B0=E6=8D=AE=E9=80=9A=E8=B7=AF=EF=BC=88DMA=20mask?=
+ =?UTF-8?q?=2032=20=E4=BD=8D=EF=BC=89+=20=E6=8A=91=E5=88=B6=20CMD6=20?=
+ =?UTF-8?q?=E8=AE=A9=E5=8D=A1=E6=9E=9A=E4=B8=BE=E6=88=90=E5=8A=9F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+根因链：
+1. CMD6(SWITCH) 卡不回（SD_STATUS=0xff00，FIFO 已空）⟹ 用 init_card 清 hs_max_dtr + 去 4/8-bit caps，
+   完全跳过 CMD6（init_card 在 mmc_select_timing 之前调用，已核实）⟹ 卡枚举成功、
+   mmc0: new MMC card at address 0001、mmcblk0: BJTD4R 出现
+2. 但容量 0：CSD 正常、EXT_CSD 全 0 ⟹ 数据通路问题
+3. 根因：sg_dma=0x1_8008_9a00 落在 ≥4GiB 高内存，驱动只有 32 位 MIU 翻译
+   （MSTAR_MIU1_BUS_BASE_H 未定义）⟹ 编程 0x1_6008_9a00 垃圾地址 ⟹ 控制器没写
+4. 修复：CONFIG_M7642_DMA_32BIT（dma_set_mask_and_coherent 32 位）⟹
+   EXT_CSD 读对：sec_count=61071360 (31.27GB), rev=8 ✓
+
+剩余：EXT_CSD 之后还有一次 CMD6(HS_TIMING) 超时，需再挡一次。
+---
+ drivers/mmc/core/mmc.c                    |  8 +++
+ drivers/mmc/host/Kconfig                  | 62 +++++++++++++++++++++++
+ drivers/mmc/host/mstar-mci/eMMC_hal_v5.c  | 18 +++++++
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c |  6 +++
+ 4 files changed, 94 insertions(+)
+
+diff --git a/drivers/mmc/core/mmc.c b/drivers/mmc/core/mmc.c
+index 05444ecf3..7188f32f9 100644
+--- a/drivers/mmc/core/mmc.c
++++ b/drivers/mmc/core/mmc.c
+@@ -180,6 +180,9 @@ static int mmc_decode_csd(struct mmc_card *card)
+ 	m = unstuff_bits(resp, 62, 12);
+ 	csd->capacity	  = (1 + m) << (e + 2);
+ 
++	pr_info("M7642 csd raw: %08x %08x %08x %08x -> capacity=%u\n",
++		resp[0], resp[1], resp[2], resp[3], csd->capacity);
++
+ 	csd->read_blkbits = unstuff_bits(resp, 80, 4);
+ 	csd->read_partial = unstuff_bits(resp, 79, 1);
+ 	csd->write_misalign = unstuff_bits(resp, 78, 1);
+@@ -378,6 +381,11 @@ static void mmc_manage_gp_partitions(struct mmc_card *card, u8 *ext_csd)
+  */
+ static int mmc_decode_ext_csd(struct mmc_card *card, u8 *ext_csd)
+ {
++	pr_info("M7642 ext_csd raw: %02x %02x %02x %02x %02x %02x %02x %02x | sec_count=%u rev=%u\n",
++		ext_csd[0], ext_csd[1], ext_csd[2], ext_csd[3],
++		ext_csd[4], ext_csd[5], ext_csd[6], ext_csd[7],
++		ext_csd[212] | (ext_csd[213] << 8) | (ext_csd[214] << 16) | ((u32)ext_csd[215] << 24),
++		ext_csd[192]);
+ 	int err = 0, idx;
+ 	u64 part_size;
+ 	struct device_node *np;
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index 7b3f66eb7..0863d70e6 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -1240,3 +1240,65 @@ config M7642_FORCE_CKG_FCIE
+ 
+ 	  This forces the vendor value in the PLL branch of eMMC_clock_setting().
+ 	  Second single-point step of the m7642 eMMC bring-up.
++
++config M7642_CMD6_DEBUG
++	bool "m7642: dump FCIE state around CMD6 (log only, no behaviour change)"
++	depends on MMC_MSTAR_MCI
++	help
++	  CMD6 (SWITCH) never completes on the m7642: eMMC_FCIE_SendCmd waits for
++	  FCIE_MIE_EVENT bit 4 (BIT_CMD_END) and times out after 10 s.  This
++	  prints the FCIE registers and the command FIFO before and after that
++	  wait for cmd index 6, so we can tell whether the command reached the
++	  FIFO, whether the card answered, or whether only the event bit is lost.
++
++	  Log only; nothing is changed.
++
++config M7642_NO_HS_SWITCH
++	bool "m7642: never send CMD6 (no HS timing, no bus-width switch)"
++	depends on MMC_MSTAR_MCI
++	help
++	  On the m7642 the card answers every command except CMD6 (SWITCH): the
++	  controller reports a response timeout and eMMC_FCIE_WaitEvents never sees
++	  BIT_CMD_END.  CMD6 is only an optimisation (higher clock, wider bus), so
++	  for the bring-up it is skipped entirely: init_card() clears
++	  ext_csd.hs_max_dtr (which is what makes the core call mmc_select_hs())
++	  and drops the 4/8-bit caps so mmc_select_bus_width() does nothing.
++
++	  The card then enumerates at 1 bit / legacy timing: slow, but should give
++	  a working mmcblk0 for read-only verification.
++
++config M7642_DMA_DEBUG
++	bool "m7642: print the eMMC DMA addresses and the buffer after a data transfer"
++	depends on MMC_MSTAR_MCI
++	help
++	  The EXT_CSD read (CMD8, 512 bytes) returns all zeros while every command
++	  and response works, so the data path is suspect.  This prints the buffer
++	  VA, the dma_addr from dma_map_single(), the value actually programmed
++	  into FCIE_MIU_DMA_ADDR_*, and the first bytes of the buffer after the
++	  transfer -- enough to tell "controller wrote elsewhere" from "no transfer".
++
++	  Log only.
++
++config M7642_ADMA_DEBUG
++	bool "m7642: dump ADMA descriptors, programmed MIU DMA address and read buffer"
++	depends on MMC_MSTAR_MCI
++	help
++	  The EXT_CSD read returns zeros while all commands work.  This prints the
++	  ADMA descriptors, the MIU DMA address actually programmed, and the first
++	  bytes of the buffer once the read has completed.  Log only.
++
++config M7642_DMA_32BIT
++	bool "m7642: restrict the eMMC DMA mask to 32 bits"
++	depends on MMC_MSTAR_MCI
++	help
++	  The vendor driver turns a DMA address into the MIU window offset with
++	  "dmaaddr -= MSTAR_MIU0_BUS_BASE" (0x2000_0000).  Its 64-bit variant needs
++	  MSTAR_MIU1_BUS_BASE_H / ARM_MIU1_BASE_ADDR, which are not defined here, so
++	  any buffer above 4 GiB is translated into a garbage 36-bit value and the
++	  controller writes nowhere -- the read buffer stays zero and EXT_CSD reads
++	  all zeros (mmcblk0 shows 0 B).
++
++	  Restricting the mask to 32 bits makes the DMA API bounce into low memory,
++	  where the MIU0 translation is correct.
++
++	  Say Y for the m7642 bring-up.
+diff --git a/drivers/mmc/host/mstar-mci/eMMC_hal_v5.c b/drivers/mmc/host/mstar-mci/eMMC_hal_v5.c
+index 0daea3001..955dd3dce 100644
+--- a/drivers/mmc/host/mstar-mci/eMMC_hal_v5.c
++++ b/drivers/mmc/host/mstar-mci/eMMC_hal_v5.c
+@@ -1731,6 +1731,11 @@ U32 eMMC_CMD8_MIU(U8 *pu8_DataBuf)
+ 	REG_FCIE_W(FCIE_JOB_BL_CNT, 1);
+ 	dma_DataMapAddr = eMMC_DMA_MAP_address((uintptr_t)pu8_DataBuf, eMMC_SECTOR_512BYTE,1);
+     uint_DataDMAAddr = eMMC_translate_DMA_address_Ex(dma_DataMapAddr, eMMC_SECTOR_512BYTE);
++#if IS_ENABLED(CONFIG_M7642_DMA_DEBUG)
++    pr_info("M7642 dma: buf_va=%px dma_addr=%#llx programmed=%#llx len=%u\n",
++            (void *)pu8_DataBuf, (unsigned long long)dma_DataMapAddr,
++            (unsigned long long)uint_DataDMAAddr, eMMC_SECTOR_512BYTE);
++#endif
+ 
+     #if (defined(ENABLE_UMA) && ENABLE_UMA) && defined(CONFIG_ARM64)
+     REG_FCIE_W(FCIE_MIU_DMA_ADDR_15_0, uint_DataDMAAddr & 0xFFFF);
+@@ -1768,6 +1773,14 @@ U32 eMMC_CMD8_MIU(U8 *pu8_DataBuf)
+ 	#endif
+ 	u32_err = eMMC_FCIE_WaitEvents(FCIE_MIE_EVENT,
+         (BIT_DMA_END|BIT_ERR_STS), TIME_WAIT_1_BLK_END);
++#if IS_ENABLED(CONFIG_M7642_DMA_DEBUG)
++	pr_info("M7642 dma-done: err=%#x buf=%02x %02x %02x %02x %02x %02x %02x %02x | SD_STATUS=%#x DMA_LEN=%#x DMA_ADDR=%#x %#x\n",
++		u32_err,
++		pu8_DataBuf[0], pu8_DataBuf[1], pu8_DataBuf[2], pu8_DataBuf[3],
++		pu8_DataBuf[4], pu8_DataBuf[5], pu8_DataBuf[6], pu8_DataBuf[7],
++		REG_FCIE_U16(FCIE_SD_STATUS), REG_FCIE_U16(FCIE_MIU_DMA_LEN_15_0),
++		REG_FCIE_U16(FCIE_MIU_DMA_ADDR_15_0), REG_FCIE_U16(FCIE_MIU_DMA_ADDR_31_16));
++#endif
+ 
+ 	REG_FCIE_R(FCIE_SD_STATUS, u16_reg);
+ 	if(eMMC_ST_SUCCESS != u32_err || (u16_reg & BIT_SD_FCIE_ERR_FLAGS))
+@@ -2514,6 +2527,11 @@ U32 eMMC_CMD17_MIU(U32 u32_eMMCBlkAddr, U8 *pu8_DataBuf)
+ 	REG_FCIE_W(FCIE_JOB_BL_CNT, 1);
+ 	dma_DataMapAddr = eMMC_DMA_MAP_address((uintptr_t)pu8_DataBuf,eMMC_SECTOR_512BYTE,1);
+     uint_DataDMAAddr = eMMC_translate_DMA_address_Ex(dma_DataMapAddr, eMMC_SECTOR_512BYTE);
++#if IS_ENABLED(CONFIG_M7642_DMA_DEBUG)
++    pr_info("M7642 dma: buf_va=%px dma_addr=%#llx programmed=%#llx len=%u\n",
++            (void *)pu8_DataBuf, (unsigned long long)dma_DataMapAddr,
++            (unsigned long long)uint_DataDMAAddr, eMMC_SECTOR_512BYTE);
++#endif
+ 
+     #if (defined(ENABLE_UMA) && ENABLE_UMA) && defined(CONFIG_ARM64)
+     REG_FCIE_W(FCIE_MIU_DMA_ADDR_15_0, uint_DataDMAAddr & 0xFFFF);
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index df5e88f25..3419cf39a 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -3065,6 +3065,12 @@ static s32 mstar_mci_probe(struct platform_device *pDev_st)
+     INIT_WORK(&pMStarHost_st->async_work, mstar_mci_send_data);
+     #endif
+ 
++#if IS_ENABLED(CONFIG_M7642_DMA_32BIT)
++    {
++        int dma_ret = dma_set_mask_and_coherent(mmc_dev(pMMCHost_st), DMA_BIT_MASK(32));
++        pr_info("M7642: dma_set_mask_and_coherent(32-bit) -> %d\n", dma_ret);
++    }
++#endif
+     pr_info("MMCDBG: mmc_add_host (host=%p caps=%#x)\n", pMMCHost_st, pMMCHost_st->caps);
+     mmc_add_host(pMMCHost_st);
+     pr_info("MMCDBG: mmc_add_host done\n");

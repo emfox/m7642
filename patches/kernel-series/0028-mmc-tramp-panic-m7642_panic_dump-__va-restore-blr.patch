@@ -1,0 +1,64 @@
+From aec4589829d05381b3739704d88ff4cd6ce7a518 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 14:46:06 +0800
+Subject: [PATCH 28/29] =?UTF-8?q?mmc/tramp:=20=E6=8E=A2=E9=92=88=E5=86=85?=
+ =?UTF-8?q?=20panic=20=E5=8F=96=E8=AF=81=E6=9C=BA=E5=88=B6=EF=BC=88m7642?=
+ =?UTF-8?q?=5Fpanic=5Fdump=20+=20=5F=5Fva=20=E7=9B=B4=E5=86=99=20+=20resto?=
+ =?UTF-8?q?re=20=E6=A7=BD=20blr=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+修两个工具链坑：SYSMAP 解析静默失败改为报错退出；-D 值补 0x 前缀（否则预处理器
+把 ffffffc080374550 当成未定义标识符=0，整块代码被 #if 裁掉）。blob 已验证含调用。
+运行时还没生效（stash x30 落在 tramp 区、日志页空），见 §34.65 的三步排查计划。
+---
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c | 29 +++++++++++------------
+ 1 file changed, 14 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index 841c2e23a..a24b2af2c 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -2978,27 +2978,26 @@ static void m7642_kmsg_dump(struct kmsg_dumper *dumper,
+                             struct kmsg_dump_detail *detail)
+ {
+     struct kmsg_dump_iter iter;
+-    void *page;
++    u8 *page = (u8 *)__va(M7642_PANICLOG_PA);   /* linear map: panic-context safe */
+     size_t len = 0;
+ 
+-    page = memremap(M7642_PANICLOG_PA, M7642_PANICLOG_SIZE, MEMREMAP_WB);
+-    if (!page) {
+-        /* cannot even map it: leave a breadcrumb in the stderr-adjacent page */
+-        void *alt = memremap(0x230a1000UL, 4096, MEMREMAP_WB);
+-        if (alt) { *(u32 *)alt = 0xdeadbeef; memunmap(alt); }
+-        return;
+-    }
+-
+-    /* breadcrumb first: proves the handler ran at all */
+-    *(u32 *)page = 0x4d373634;
+-    *(u32 *)((char *)page + 4) = 0xffffffff;
+-
+     kmsg_dump_rewind(&iter);
+     kmsg_dump_get_buffer(&iter, false, (char *)page + 8,
+                          M7642_PANICLOG_SIZE - 8, &len);
+     *(u32 *)page = 0x4d373634;                  /* "M764" */
+-    *(u32 *)((char *)page + 4) = (u32)len;
+-    memunmap(page);
++    *(u32 *)(page + 4) = (u32)len;
++    dsb(sy);
++}
++
++/*
++ * Entry point for the checkpoint trampoline: the probe intercepts panic()'s
++ * entry and never lets the body run, so the trampoline calls this instead.
++ * Non-static and noinline so the address shows up in System.map and
++ * build-postmmu.sh can hand it to the assembler.
++ */
++void noinline m7642_panic_dump(void)
++{
++    kmsg_dump(KMSG_DUMP_PANIC);
+ }
+ 
+ static int m7642_paniclog_init(void)

@@ -1,0 +1,35 @@
+From 7921d7b55b6c68227a879bc5698e2467a01c1807 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 14:53:37 +0800
+Subject: [PATCH 29/29] mmc/tramp: panic forensics channel works end to end
+ (tramp blr -> m7642_panic_dump -> kmsg_dump -> DRAM 0x230a0000 -> readable
+ from Android); ext4 panic found to be pre-logging
+
+---
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index a24b2af2c..51ba19d85 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -2997,7 +2997,19 @@ static void m7642_kmsg_dump(struct kmsg_dumper *dumper,
+  */
+ void noinline m7642_panic_dump(void)
+ {
++    /*
++     * Called from the checkpoint trampoline's restore slot (§34.65).
++     * Writes a marker first (cheap, always works), then dumps the kernel log
++     * through kmsg_dump so the panic message and call trace land in DRAM.
++     */
++    u32 *p = (u32 *)__va(M7642_PANICLOG_PA);
++
++    p[0] = 0x4d373634;      /* "M764": proves the trampoline got here */
++    p[1] = 0;               /* handler's length field */
++    dsb(sy);
++
+     kmsg_dump(KMSG_DUMP_PANIC);
++    /* the handler leaves magic/length at p[0]/p[1] -- do not clobber them */
+ }
+ 
+ static int m7642_paniclog_init(void)

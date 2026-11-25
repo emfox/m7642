@@ -1,0 +1,123 @@
+From d09dd2d81bc6bb8c4164765f28d318c4d59ed70f Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 14:31:48 +0800
+Subject: [PATCH 26/29] =?UTF-8?q?mmc:=20mstar-mci:=20CONFIG=5FM7642=5FPANI?=
+ =?UTF-8?q?C=5FLOG=EF=BC=88kmsg=5Fdump=20=E2=86=92=20PA=200x230a0000?=
+ =?UTF-8?q?=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+注册成功（armed），但处理器不被调用：我们的检查点探针在 panic() 入口就接管了，
+panic() 内的 kmsg_dump() 调用走不到。面包屑验证（先写 magic+0xffffffff 再取日志）
+证明处理器根本没进 ⟹ 需要改探针在 restore 路径里主动调 kmsg_dump。见 §34.63。
+---
+ drivers/mmc/host/Kconfig                  | 15 ++++++
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c | 57 +++++++++++++++++++++++
+ 2 files changed, 72 insertions(+)
+
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index 5f3713627..284721d9a 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -1414,3 +1414,18 @@ config M7642_MACRO_VENDOR
+ 
+ 	  The HAL's SDR branch sets BIT7 (BIT_8BIT_MACRO_EN, the M7322 encoding) and
+ 	  that alone locks the board up.  This uses the vendor encoding instead.
++
++config M7642_PANIC_LOG
++	bool "m7642: copy the kernel log to a DRAM page on panic (kmsg_dump)"
++	depends on MMC_MSTAR_MCI
++	help
++	  Hangs and early panics otherwise leave nothing behind: the ramoops
++	  console region is reused by the factory kernel before we can read it, and
++	  the panic probe only stores registers.
++
++	  This registers a kmsg_dump handler that copies the printk ring buffer to
++	  physical 0x230a0000 (layout: u32 magic "M764", u32 length, then the text)
++	  as the last thing before the reboot.  The page survives the handover, so
++	  the panic message and call trace can be read back from Android.
++
++	  Chunk of bring-up scaffolding; harmless when nothing panics.
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index c6de565d9..841c2e23a 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -52,6 +52,8 @@
+  *
+  *****************************************************************************/
+ 
++#include <linux/kmsg_dump.h>
++#include <linux/io.h>
+ #include "mstar_mci.h"
+ #include "linux/mmc/mmc.h"
+ 
+@@ -2959,6 +2961,58 @@ static void mstar_mci_init_card(struct mmc_host *host, struct mmc_card *card)
+ }
+ #endif
+ 
++
++#if IS_ENABLED(CONFIG_M7642_PANIC_LOG)
++/*
++ * Panic forensics: copy the printk ring buffer to a DRAM page that survives the
++ * handover, so the panic message and call trace can be read from Android.
++ *
++ *   0x230a0000: u32 magic 'M764' | u32 length | text...
++ */
++#define M7642_PANICLOG_PA   0x230a0000UL
++#define M7642_PANICLOG_SIZE 0x10000UL
++
++static struct kmsg_dumper m7642_kmsg_dumper;
++
++static void m7642_kmsg_dump(struct kmsg_dumper *dumper,
++                            struct kmsg_dump_detail *detail)
++{
++    struct kmsg_dump_iter iter;
++    void *page;
++    size_t len = 0;
++
++    page = memremap(M7642_PANICLOG_PA, M7642_PANICLOG_SIZE, MEMREMAP_WB);
++    if (!page) {
++        /* cannot even map it: leave a breadcrumb in the stderr-adjacent page */
++        void *alt = memremap(0x230a1000UL, 4096, MEMREMAP_WB);
++        if (alt) { *(u32 *)alt = 0xdeadbeef; memunmap(alt); }
++        return;
++    }
++
++    /* breadcrumb first: proves the handler ran at all */
++    *(u32 *)page = 0x4d373634;
++    *(u32 *)((char *)page + 4) = 0xffffffff;
++
++    kmsg_dump_rewind(&iter);
++    kmsg_dump_get_buffer(&iter, false, (char *)page + 8,
++                         M7642_PANICLOG_SIZE - 8, &len);
++    *(u32 *)page = 0x4d373634;                  /* "M764" */
++    *(u32 *)((char *)page + 4) = (u32)len;
++    memunmap(page);
++}
++
++static int m7642_paniclog_init(void)
++{
++    m7642_kmsg_dumper.dump = m7642_kmsg_dump;
++    m7642_kmsg_dumper.max_reason = KMSG_DUMP_MAX;
++    if (kmsg_dump_register(&m7642_kmsg_dumper))
++        pr_warn("M7642: kmsg_dump_register failed\n");
++    else
++        pr_info("M7642: panic log channel armed (-> 0x%lx)\n", M7642_PANICLOG_PA);
++    return 0;
++}
++#endif
++
+ static const struct mmc_host_ops sg_mstar_mci_ops =
+ {
+ #if IS_ENABLED(CONFIG_M7642_NO_HS_SWITCH)
+@@ -3449,6 +3503,9 @@ static s32 __init mstar_mci_init(void)
+      * probe() reads FCIE_RESERVED_FOR_SW before it looks at the platform
+      * device, which is why the mapping above has to happen first.
+      */
++#if IS_ENABLED(CONFIG_M7642_PANIC_LOG)
++    m7642_paniclog_init();
++#endif
+     if((err = platform_device_register(&sg_mstar_emmc_device_st)) < 0)
+         eMMC_debug(eMMC_DEBUG_LEVEL_ERROR,1,"eMMC Err: platform_driver_register fail, %Xh\n", err);
+ 

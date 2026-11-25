@@ -1,0 +1,58 @@
+From 89315dc65a998a01decb714ab86760e739f130e9 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 06:48:15 +0800
+Subject: [PATCH 10/29] =?UTF-8?q?arm64/m7642:=20=E5=86=85=E5=BB=BA=20DTB?=
+ =?UTF-8?q?=20=E7=A7=BB=E5=87=BA=20.init=EF=BC=9Bfree=5Finitmem=20?=
+ =?UTF-8?q?=E4=B8=8D=E5=86=8D=E6=AF=92=E5=8C=96=20init=20=E6=AE=B5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+两者都是 free_initmem 卡点的修复：
+- m7642-dtb.S 从 .init.rodata 改为 .rodata，否则 DTB 会被 POISON_FREE_INITMEM
+  的 0xcc memset 写坏（DTB 必须活到启动之后）。
+- free_initmem() 用 -1 代替 POISON_FREE_INITMEM：页照常归还，不做毒化。
+  毒化本身在该平台上会导致启动挂死，机制待查（见 Documentation/mstar/m7642/
+  confirmed-facts.md §34.36）。
+
+真机验证：修复后内核到达 run_init_process / kernel_execve / begin_new_exec /
+ret_to_user（EL0），dmesg 打印 "Run /init as init process"。
+---
+ arch/arm64/kernel/m7642-dtb.S | 2 +-
+ arch/arm64/mm/init.c          | 9 ++++++++-
+ 2 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/kernel/m7642-dtb.S b/arch/arm64/kernel/m7642-dtb.S
+index 6fc195ce7..3a8beec57 100644
+--- a/arch/arm64/kernel/m7642-dtb.S
++++ b/arch/arm64/kernel/m7642-dtb.S
+@@ -22,7 +22,7 @@
+ 
+ #include <linux/linkage.h>
+ 
+-	.section .init.rodata, "a"
++	.section .rodata, "a"
+ 	.balign 8
+ 	.global __m7642_dtb
+ __m7642_dtb:
+diff --git a/arch/arm64/mm/init.c b/arch/arm64/mm/init.c
+index fbf215ecc..d4a42b761 100644
+--- a/arch/arm64/mm/init.c
++++ b/arch/arm64/mm/init.c
+@@ -394,8 +394,15 @@ void free_initmem(void)
+ 	WARN_ON(!IS_ALIGNED((unsigned long)lm_init_begin, PAGE_SIZE));
+ 	WARN_ON(!IS_ALIGNED((unsigned long)lm_init_end, PAGE_SIZE));
+ 
++	/*
++	 * m7642 bring-up: poisoning the freed __init region hangs this platform
++	 * shortly afterwards (the pages are freed correctly, but the 0xcc memset
++	 * takes the machine down).  Free the pages without poisoning them; the
++	 * root cause of the hang is still being tracked down.
++	 * See Documentation/mstar/m7642/confirmed-facts.md.
++	 */
+ 	free_reserved_area(lm_init_begin, lm_init_end,
+-			   POISON_FREE_INITMEM, "unused kernel");
++			   -1, "unused kernel");
+ 	/*
+ 	 * Unmap the __init region but leave the VM area in place. This
+ 	 * prevents the region from being reused for kernel modules, which

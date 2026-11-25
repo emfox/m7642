@@ -1,0 +1,60 @@
+From 0778ab51a9e2f25e1b0bf66cf81dba99a19fe125 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 13:36:13 +0800
+Subject: [PATCH 23/29] =?UTF-8?q?mmc:=20mstar-mci:=20CONFIG=5FM7642=5FNO?=
+ =?UTF-8?q?=5FPAD=5FSWITCH=20=E2=80=94=E2=80=94=20CMD6=20=E5=85=A8?=
+ =?UTF-8?q?=E9=83=A8=E8=B7=91=E9=80=9A=EF=BC=8C=E5=8D=A1=E8=BF=9B=E5=85=A5?=
+ =?UTF-8?q?=20high=20speed?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+配置：BUSY_LEVEL + CAP_CLOCK + NO_PAD_SWITCH + DMA_32BIT，不抑制 CMD6。
+结果：ERASE_GROUP_DEF/POWER_OFF_NOTIFY/HS_TIMING/BUS_WIDTH/cache/PARTITION_CONFIG
+全部 CMD6 依次成功，mmc0: new high speed MMC card，mmcblk0 29.1 GiB + boot0/boot1/rpmb。
+
+结论：CMD6 本身没问题；挂死点是 HS 时序里的 eMMC_pads_switch/eMMC_clock_setting
+写 M7322 的 PLL/pad 值。跳过它们一切正常（时钟仍被 CAP_CLOCK 限在 400 kHz）。
+---
+ drivers/mmc/host/Kconfig                  | 12 ++++++++++++
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c |  5 ++++-
+ 2 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index 33d3d7d3d..c8c84a88f 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -1350,3 +1350,15 @@ config M7642_CAP_CLOCK
+ 	  values) locks the controller up".
+ 
+ 	  Unlike M7642_FORCE_LOWSPEED this does not touch the host caps.
++
++config M7642_NO_PAD_SWITCH
++	bool "m7642: do not reprogram pads/PLL when the core asks for HS timing"
++	depends on MMC_MSTAR_MCI
++	help
++	  With CMD6 actually executing (busy wait fixed, CMD6 not suppressed) the
++	  board hangs right after the core asks for MMC_TIMING_MMC_HS, i.e. inside
++	  eMMC_pads_switch(FCIE_eMMC_SDR) / eMMC_clock_setting(FCIE_DEFAULT_CLK),
++	  whose emmcpll_0x* / chiptop_0x* values are the M7322 vendor tree's.
++
++	  This skips that switch (the timing is still recorded) so the next
++	  experiment can tell whether those register writes are the hang.
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index 0e69c9cf6..b5506244e 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -2394,9 +2394,12 @@ static void mstar_mci_set_ios(struct mmc_host *pMMCHost_st, struct mmc_ios *pIOS
+             }
+             else if( pIOS_st->timing == MMC_TIMING_MMC_HS )
+             {
++#if IS_ENABLED(CONFIG_M7642_NO_PAD_SWITCH)
++                pr_info("M7642: HS timing requested; skipping pads_switch/clock_setting\n");
++#else
+                 eMMC_pads_switch(FCIE_eMMC_SDR);
+                 eMMC_clock_setting(FCIE_DEFAULT_CLK);
+-
++#endif
+                 u8_cur_timing = pIOS_st->timing;
+             }
+             else if( (pIOS_st->timing == MMC_TIMING_UHS_DDR50) ||

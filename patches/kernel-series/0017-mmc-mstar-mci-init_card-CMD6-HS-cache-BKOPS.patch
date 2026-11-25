@@ -1,0 +1,74 @@
+From fc191ebb3fd4c9936ee20c421e5f9300b46fe667 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 12:53:22 +0800
+Subject: [PATCH 17/29] =?UTF-8?q?mmc:=20mstar-mci:=20init=5Fcard=20?=
+ =?UTF-8?q?=E5=85=B3=E6=8E=89=E6=89=80=E6=9C=89=20CMD6=20=E4=BD=BF?=
+ =?UTF-8?q?=E7=94=A8=E6=96=B9=EF=BC=88HS/=E6=80=BB=E7=BA=BF=E5=AE=BD/?=
+ =?UTF-8?q?=E5=8A=9F=E7=8E=87=E7=AD=89=E7=BA=A7/cache/BKOPS/=E6=8E=89?=
+ =?UTF-8?q?=E7=94=B5=E9=80=9A=E7=9F=A5=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+之前的 init_card 在排查过程中被 git checkout 冲掉了，这次连同能力清零一起加回并提交：
+- hs_max_dtr = 0、去掉 4/8-bit caps
+- raw_pwr_cl_* 全清零（EXT_CSD_POWER_CLASS 切换的唯一触发源）
+- cache_size / power_off_notification / bkops / man_bkops_en / auto_bkops_en 清零
+---
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c | 41 +++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index 3419cf39a..37b47a38a 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -2873,8 +2873,49 @@ static struct attribute_group mstar_mci_attr_grp =
+ };
+ 
+ 
++#if IS_ENABLED(CONFIG_M7642_NO_HS_SWITCH)
++/*
++ * m7642 bring-up: CMD6 (SWITCH) never completes on this port -- the controller
++ * reports a response timeout and BIT_CMD_END is never raised.  Every CMD6 user
++ * is an optimisation (HS timing, bus width, power class, cache, BKOPS,
++ * power-off notification), so switch all of them off here: init_card() runs
++ * before mmc_select_timing() and friends.
++ *
++ * The card then stays at 1 bit / legacy timing: slow, but it enumerates and
++ * gives a working mmcblk0.
++ */
++static void mstar_mci_init_card(struct mmc_host *host, struct mmc_card *card)
++{
++	pr_info("M7642: suppressing CMD6 switches (hs_max_dtr=%u, caps=%#x)\n",
++		card->ext_csd.hs_max_dtr, host->caps);
++	card->ext_csd.hs_max_dtr = 0;
++	host->caps &= ~(MMC_CAP_4_BIT_DATA | MMC_CAP_8_BIT_DATA);
++
++	/* power class (EXT_CSD_POWER_CLASS) */
++	card->ext_csd.raw_pwr_cl_26_360      = 0;
++	card->ext_csd.raw_pwr_cl_52_360      = 0;
++	card->ext_csd.raw_pwr_cl_ddr_52_360  = 0;
++	card->ext_csd.raw_pwr_cl_200_360     = 0;
++	card->ext_csd.raw_pwr_cl_ddr_200_360 = 0;
++	card->ext_csd.raw_pwr_cl_26_195      = 0;
++	card->ext_csd.raw_pwr_cl_52_195      = 0;
++	card->ext_csd.raw_pwr_cl_ddr_52_195  = 0;
++	card->ext_csd.raw_pwr_cl_200_195     = 0;
++
++	/* cache, power-off notification, BKOPS */
++	card->ext_csd.cache_size = 0;
++	card->ext_csd.power_off_notification = 0;
++	card->ext_csd.bkops = false;
++	card->ext_csd.man_bkops_en = false;
++	card->ext_csd.auto_bkops_en = false;
++}
++#endif
++
+ static const struct mmc_host_ops sg_mstar_mci_ops =
+ {
++#if IS_ENABLED(CONFIG_M7642_NO_HS_SWITCH)
++    .init_card      = mstar_mci_init_card,
++#endif
+     #if defined(ENABLE_EMMC_ASYNC_IO) && ENABLE_EMMC_ASYNC_IO
+     .pre_req        = mstar_mci_pre_req,
+     .post_req       = mstar_mci_post_req,

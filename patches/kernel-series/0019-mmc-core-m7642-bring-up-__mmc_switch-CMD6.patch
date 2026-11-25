@@ -1,0 +1,76 @@
+From 452c5c3f4ddbbf7b91795563214eb0a8969930b9 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 12:59:09 +0800
+Subject: [PATCH 19/29] =?UTF-8?q?mmc:=20core:=20m7642=20bring-up=20?=
+ =?UTF-8?q?=E4=B8=8B=20=5F=5Fmmc=5Fswitch()=20=E7=9B=B4=E6=8E=A5=E8=BF=94?=
+ =?UTF-8?q?=E5=9B=9E=E6=88=90=E5=8A=9F=EF=BC=88CMD6=20=E5=9C=A8=E6=9C=AC?=
+ =?UTF-8?q?=E6=9C=BA=E4=B8=8D=E5=8F=AF=E7=94=A8=EF=BC=8C=E5=85=A8=E9=83=A8?=
+ =?UTF-8?q?=E6=98=AF=E5=8F=AF=E9=80=89=E4=BC=98=E5=8C=96=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- init_card 里清 hs_max_dtr/caps/pwr_cl/cache/bkops/poweroff 能力
+- ERASE_GROUP_DEF（index 0xAF）单独跳过并打印
+- 最后统一在 __mmc_switch 入口返回 0，避免逐个追（POWER_OFF_NOTIFICATION 0x22 等）
+---
+ drivers/mmc/core/mmc.c                    |  6 ++++++
+ drivers/mmc/core/mmc_ops.c                | 11 +++++++++++
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c |  4 ++++
+ 3 files changed, 21 insertions(+)
+
+diff --git a/drivers/mmc/core/mmc.c b/drivers/mmc/core/mmc.c
+index 7188f32f9..1b03f2c14 100644
+--- a/drivers/mmc/core/mmc.c
++++ b/drivers/mmc/core/mmc.c
+@@ -1768,7 +1768,13 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
+ 	mmc_select_card_type(card);
+ 
+ 	/* Enable ERASE_GRP_DEF. This bit is lost after a reset or power off. */
++#if IS_ENABLED(CONFIG_M7642_NO_HS_SWITCH)
++	pr_info("%s: M7642: skipping ERASE_GRP_DEF switch (rev=%u)\n",
++		mmc_hostname(card->host), card->ext_csd.rev);
++	if (0) {
++#else
+ 	if (card->ext_csd.rev >= 3) {
++#endif
+ 		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+ 				 EXT_CSD_ERASE_GROUP_DEF, 1,
+ 				 card->ext_csd.generic_cmd6_time);
+diff --git a/drivers/mmc/core/mmc_ops.c b/drivers/mmc/core/mmc_ops.c
+index 4840e386d..033c4d1eb 100644
+--- a/drivers/mmc/core/mmc_ops.c
++++ b/drivers/mmc/core/mmc_ops.c
+@@ -604,6 +604,17 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
+ 		unsigned int timeout_ms, unsigned char timing,
+ 		bool send_status, bool retry_crc_err, unsigned int retries)
+ {
++#if IS_ENABLED(CONFIG_M7642_NO_HS_SWITCH)
++	/*
++	 * CMD6 (SWITCH) never completes on this port (response timeout, no
++	 * BIT_CMD_END).  Every use in the core is an optimisation or an optional
++	 * feature, and the card keeps working in its default state, so report
++	 * success without touching the hardware.
++	 */
++	pr_info("%s: M7642: ignoring CMD6 switch index=%u value=%u\n",
++		mmc_hostname(card->host), index, value);
++	return 0;
++#endif
+ 	struct mmc_host *host = card->host;
+ 	int err;
+ 	struct mmc_command cmd = {};
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index ee4012d68..ddc00f109 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -2087,6 +2087,10 @@ static void mstar_mci_post_req(struct mmc_host *mmc, struct mmc_request *mrq, in
+ 
+ static void mstar_mci_request(struct mmc_host *pMMCHost_st, struct mmc_request *pMRQ_st)
+ {
++    if (pMRQ_st && pMRQ_st->cmd && pMRQ_st->cmd->opcode == 6) {
++        pr_info("M7642 CMD6 caller:\n");
++        dump_stack();
++    }
+     if (pMRQ_st && pMRQ_st->cmd)
+         pr_info("MMCDBG: request opcode=%u flags=%#x arg=%#x datalen=%u\n",
+                 pMRQ_st->cmd->opcode, pMRQ_st->cmd->flags, pMRQ_st->cmd->arg,

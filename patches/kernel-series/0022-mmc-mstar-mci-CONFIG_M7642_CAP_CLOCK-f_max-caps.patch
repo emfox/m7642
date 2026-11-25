@@ -1,0 +1,52 @@
+From 021331e913a8066805c3d3e457abb9c8c849e419 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 13:33:56 +0800
+Subject: [PATCH 22/29] =?UTF-8?q?mmc:=20mstar-mci:=20CONFIG=5FM7642=5FCAP?=
+ =?UTF-8?q?=5FCLOCK=EF=BC=88=E5=8F=AA=E9=92=89=20f=5Fmax=20=E4=B8=8D?=
+ =?UTF-8?q?=E5=8A=A8=20caps=EF=BC=8C=E7=94=A8=E4=BA=8E=E9=9A=94=E7=A6=BB?=
+ =?UTF-8?q?=E6=97=B6=E9=92=9F=E9=97=AE=E9=A2=98=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ drivers/mmc/host/Kconfig                  | 12 ++++++++++++
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c |  5 +++++
+ 2 files changed, 17 insertions(+)
+
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index ea0ebab01..33d3d7d3d 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -1338,3 +1338,15 @@ config M7642_BUSY_LEVEL
+ 
+ 	  This replaces the wait with a bounded udelay() poll of BIT_SD_CARD_BUSY:
+ 	  no sleeping, no reliance on the broken event.
++
++config M7642_CAP_CLOCK
++	bool "m7642: keep the eMMC host clock at the identification rate (cap f_max)"
++	depends on MMC_MSTAR_MCI
++	help
++	  Isolation experiment: with the busy-level poll in place, allowing the
++	  real CMD6 path makes the board hang.  Capping f_max at 400 kHz lets the
++	  core issue CMD6 as usual while mmc_set_clock() can never raise the clock,
++	  which isolates "CMD6 is broken" from "the HS clock/pad setup (M7322
++	  values) locks the controller up".
++
++	  Unlike M7642_FORCE_LOWSPEED this does not touch the host caps.
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index 08b5f31ef..0e69c9cf6 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -3153,6 +3153,11 @@ static s32 mstar_mci_probe(struct platform_device *pDev_st)
+         int dma_ret = dma_set_mask_and_coherent(mmc_dev(pMMCHost_st), DMA_BIT_MASK(32));
+         pr_info("M7642: dma_set_mask_and_coherent(32-bit) -> %d\n", dma_ret);
+     }
++#endif
++#if IS_ENABLED(CONFIG_M7642_CAP_CLOCK)
++    pMMCHost_st->f_max = CLK_400KHz;
++    pr_info("M7642 cap f_max = %u (caps untouched: %#x)\n",
++            pMMCHost_st->f_max, pMMCHost_st->caps);
+ #endif
+     pr_info("MMCDBG: mmc_add_host (host=%p caps=%#x)\n", pMMCHost_st, pMMCHost_st->caps);
+     mmc_add_host(pMMCHost_st);

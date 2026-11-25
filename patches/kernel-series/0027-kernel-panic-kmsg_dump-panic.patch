@@ -1,0 +1,41 @@
+From bc65d585dd528d88eab38aaa40f192181b495f2c Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 14:42:22 +0800
+Subject: [PATCH 27/29] =?UTF-8?q?kernel:=20panic=20=E5=8F=96=E8=AF=81?=
+ =?UTF-8?q?=E8=B0=83=E6=9F=A5=EF=BC=88kmsg=5Fdump=20=E5=A4=84=E7=90=86?=
+ =?UTF-8?q?=E5=99=A8=20+=20panic=20=E4=BD=93=E6=A0=87=E8=AE=B0=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+结论见 §34.64：
+1) 探针接管后 panic() 函数体不执行（线性映射标记验证）
+2) 去掉探针则 panic() 执行但 machine_restart 未实现 ⟹ 挂住，日志随断电丢失
+⟹ panic 取证必须做在探针 tramp 里（调用一个 noinline 的内核 C 函数）
+---
+ kernel/panic.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/kernel/panic.c b/kernel/panic.c
+index f08453f0d..9ea5b4e4b 100644
+--- a/kernel/panic.c
++++ b/kernel/panic.c
+@@ -790,6 +790,18 @@ EXPORT_SYMBOL(vpanic);
+ /* Identical to vpanic(), except it takes variadic arguments instead of va_list */
+ void panic(const char *fmt, ...)
+ {
++#if IS_ENABLED(CONFIG_M7642_PANIC_LOG)
++	/*
++	 * M7642 panic body marker: proves panic()'s body actually runs after our
++	 * checkpoint trampoline intercepted its entry.  Uses the linear map (__va),
++	 * so it is safe in panic context (no ioremap, no locks).
++	 */
++	{
++		u32 *m7642_p = (u32 *)__va(0x230a0000UL);
++		m7642_p[0] = 0x4d373634;	/* "M764" */
++		m7642_p[1] = 0xdeadbeef;
++	}
++#endif
+ 	va_list args;
+ 
+ 	va_start(args, fmt);

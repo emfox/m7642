@@ -1,0 +1,67 @@
+From eee092f510b444502107326eee37e7cb2d6fefad Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 14:12:44 +0800
+Subject: [PATCH 25/29] =?UTF-8?q?mmc:=20mstar-mci:=20CONFIG=5FM7642=5FMACR?=
+ =?UTF-8?q?O=5FVENDOR=EF=BC=88=E5=8E=82=E7=BC=96=E7=A0=81=20DDR=5FMODE=3D0?=
+ =?UTF-8?q?x1100=20+=20pll68=3D0x03=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+关键发现：macro 模式的编码是 BIT8|BIT12（厂内核 HS400 下 DDR_MODE=0x1100），
+不是 HAL 用的 BIT7（M7322 编码）。用厂编码后不再挂死，但卡失去响应 ——
+macro 通路需要整套 55 个 emmcpll 寄存器 + tuning 才能到位。
+
+仓库基线已恢复为已验证可用的 HS 配置：BUSY_LEVEL + HS_CLOCK_ONLY +
+VENDOR_STATIC + DMA_32BIT。
+---
+ drivers/mmc/host/Kconfig                   | 12 ++++++++++++
+ drivers/mmc/host/mstar-mci/eMMC_platform.c | 10 ++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index 26fc5af56..5f3713627 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -1402,3 +1402,15 @@ config M7642_PAD_SWITCH_MIN
+ 	  This runs only the FCIE-side part (FCIE_DDR_MODE |= BIT_8BIT_MACRO_EN)
+ 	  and leaves the pin mux and the eMMC PLL macro exactly as the bootloader
+ 	  left them.
++
++config M7642_MACRO_VENDOR
++	bool "m7642: use the vendor's macro-mode encoding (DDR_MODE 0x1100) on HS timing"
++	depends on MMC_MSTAR_MCI
++	help
++	  Measured on the vendor kernel while it runs this eMMC at HS400 / 200 MHz:
++
++	    FCIE_DDR_MODE = 0x1100   (BIT8|BIT12 -- NOT BIT7)
++	    emmcpll_0x68  = 0x0003   (reg_emmc_en | reg_emmc_ddr_en)
++
++	  The HAL's SDR branch sets BIT7 (BIT_8BIT_MACRO_EN, the M7322 encoding) and
++	  that alone locks the board up.  This uses the vendor encoding instead.
+diff --git a/drivers/mmc/host/mstar-mci/eMMC_platform.c b/drivers/mmc/host/mstar-mci/eMMC_platform.c
+index 83d7907c2..bc98bea0a 100644
+--- a/drivers/mmc/host/mstar-mci/eMMC_platform.c
++++ b/drivers/mmc/host/mstar-mci/eMMC_platform.c
+@@ -516,11 +516,21 @@ U32 eMMC_pads_switch(U32 u32Mode)
+ 
+         case FCIE_eMMC_SDR:
+             eMMC_debug(eMMC_DEBUG_LEVEL_HIGH, 1, "SDR 8-bit macro\n");
++#if IS_ENABLED(CONFIG_M7642_MACRO_VENDOR)
++            /* m7642: the vendor kernel runs this macro path with DDR_MODE 0x1100
++             * (BIT8|BIT12) and reg_emmc_en|reg_emmc_ddr_en set; the M7322
++             * encoding (BIT7 + reg_emmc_en only) locks the controller up. */
++            REG_FCIE_W(FCIE_DDR_MODE, 0x1100);
++            REG_FCIE_SETBIT(reg_emmcpll_0x68, BIT0|BIT1);
++            pr_info("M7642 macro (vendor encoding): DDR_MODE=%#x pll68=%#x\n",
++                    REG_FCIE_U16(FCIE_DDR_MODE), REG_FCIE_U16(reg_emmcpll_0x68));
++#else
+             // emmc_pll
+             REG_FCIE_SETBIT(reg_emmcpll_0x1c, BIT9);            //meta issue of clk4x and skew
+             REG_FCIE_SETBIT(reg_emmcpll_0x68, BIT0);            // reg_emmc_en
+             // fcie
+             REG_FCIE_SETBIT(FCIE_DDR_MODE, BIT_8BIT_MACRO_EN);             // reg_emmc_en
++#endif
+             break;
+ 
+         case FCIE_eMMC_DDR_8BIT_MACRO:

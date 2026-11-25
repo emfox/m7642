@@ -1,0 +1,116 @@
+From 94f1621f09d4cf872440f7318980d825975168b1 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 11:29:41 +0800
+Subject: [PATCH 13/29] =?UTF-8?q?mmc:=20mstar-mci:=20=E5=8A=A0=20M7642=20?=
+ =?UTF-8?q?=E5=9F=8B=E7=82=B9=E4=B8=8E=E5=BC=BA=E5=88=B6=E4=BD=8E=E9=80=9F?=
+ =?UTF-8?q?=E5=BC=80=E5=85=B3=EF=BC=88bring-up=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- mstar_mci_v5.c / eMMC_platform.c: 在 request / set_ios / mmc_add_host /
+  clock_setting 处加无条件 pr_info，用内核 dmesg 通道观察 rescan 过程
+- 新增 CONFIG_M7642_FORCE_LOWSPEED：清 MMC_CAP_MMC_HIGHSPEED、f_max=400 kHz
+
+实测结论（见 Documentation/mstar/m7642/confirmed-facts.md §34.43）：
+卡被完整识别（CID/CSD/EXT_CSD 都读到），但 CMD6(SWITCH,HS_TIMING) 之后
+CMD13 超时 10 s（FCIE_MIE_EVENT bit4 不来）。低速开关无效，因为 MMC 核心
+按 card->ext_csd.hs_max_dtr 决定是否切 HS，不看 host caps。
+---
+ drivers/mmc/host/Kconfig                   | 12 ++++++++++
+ drivers/mmc/host/mstar-mci/eMMC_platform.c |  1 +
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c  | 27 ++++++++++++++++++++++
+ 3 files changed, 40 insertions(+)
+
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index e6d7b24b8..4bff6f7f4 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -1186,3 +1186,15 @@ config MMC_MSTAR_MCI_STRICT_VERSION
+ 
+ 	  Say Y only for a production build where a silent storage stack would
+ 	  be worse than a hang.
++
++config M7642_FORCE_LOWSPEED
++	bool "m7642: keep the eMMC at the 400 kHz identification clock"
++	depends on MMC_MSTAR_MCI
++	help
++	  The vendor MCI driver's switch to 25 MHz / 8-bit high speed times out
++	  on the m7642 (eMMC_FCIE_PollingEvents never sees FCIE_MIE_EVENT bit 4),
++	  which leaves the card unusable.  This keeps the host at the 400 kHz
++	  identification clock so the card can still be enumerated: slow, but
++	  enough to read partitions while the high-speed path is investigated.
++
++	  Say Y for the m7642 bring-up.
+diff --git a/drivers/mmc/host/mstar-mci/eMMC_platform.c b/drivers/mmc/host/mstar-mci/eMMC_platform.c
+index 63882762b..4085ecd3a 100644
+--- a/drivers/mmc/host/mstar-mci/eMMC_platform.c
++++ b/drivers/mmc/host/mstar-mci/eMMC_platform.c
+@@ -947,6 +947,7 @@ U32 eMMC_clock_setting(U16 u16_ClkParam)
+ 	U16 u16_Tmp;
+ 
+     eMMC_debug(eMMC_DEBUG_LEVEL_LOW, 1, "eMMC_clock_setting(%Xh)\n", u16_ClkParam);
++    pr_info("MMCDBG: clock_setting(%#x) SD_MODE before=%#x\n", u16_ClkParam, REG_FCIE(FCIE_SD_MODE));
+ 
+     //eMMC_PlatformResetPre();
+ 
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index d690ff1a4..df5e88f25 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -2087,6 +2087,11 @@ static void mstar_mci_post_req(struct mmc_host *mmc, struct mmc_request *mrq, in
+ 
+ static void mstar_mci_request(struct mmc_host *pMMCHost_st, struct mmc_request *pMRQ_st)
+ {
++    if (pMRQ_st && pMRQ_st->cmd)
++        pr_info("MMCDBG: request opcode=%u flags=%#x arg=%#x datalen=%u\n",
++                pMRQ_st->cmd->opcode, pMRQ_st->cmd->flags, pMRQ_st->cmd->arg,
++                pMRQ_st->data ? pMRQ_st->data->blocks * 512 : 0);
++
+     struct mstar_mci_host *pMStarHost_st;
+ 
+     pMStarHost_st = mmc_priv(pMMCHost_st);
+@@ -2267,6 +2272,11 @@ static u32 mstar_mci_read_blocks(struct mmc_host *host, u8 *buf, ulong blkaddr,
+ 
+ static void mstar_mci_set_ios(struct mmc_host *pMMCHost_st, struct mmc_ios *pIOS_st)
+ {
++    if (pIOS_st)
++        pr_info("MMCDBG: set_ios clock=%u bus_width=%u timing=%u power_mode=%u vdd=%u\n",
++                pIOS_st->clock, pIOS_st->bus_width, pIOS_st->timing,
++                pIOS_st->power_mode, pIOS_st->vdd);
++
+     /* Define Local Variables */
+     struct mstar_mci_host *pMStarHost_st;
+     static u8 u8_IfLock=0;
+@@ -2987,6 +2997,21 @@ static s32 mstar_mci_probe(struct platform_device *pDev_st)
+     //---------------------------------------
+     pMMCHost_st->caps           = MMC_CAP_8_BIT_DATA | MMC_CAP_4_BIT_DATA | MMC_CAP_MMC_HIGHSPEED | MMC_CAP_NONREMOVABLE;
+ 
++    /*
++     * M7642 bring-up: the switch from the 400 kHz identification clock to
++     * 25 MHz / 8-bit high speed hangs the controller on this port
++     * (eMMC_FCIE_PollingEvents times out waiting for FCIE_MIE_EVENT bit 4).
++     * Until the pad/PLL part of that switch is understood, stay at the
++     * identification clock: slow, but if it works we get a usable block
++     * device.  M7642_FORCE_LOWSPEED=0 restores the vendor behaviour.
++     */
++#if IS_ENABLED(CONFIG_M7642_FORCE_LOWSPEED)
++    pMMCHost_st->caps          &= ~(MMC_CAP_MMC_HIGHSPEED | MMC_CAP_8_BIT_DATA);
++    pMMCHost_st->caps          |= MMC_CAP_4_BIT_DATA;
++    pMMCHost_st->f_max          = CLK_400KHz;
++    pr_info("M7642 force low speed: f_max=%u caps=%#x\n", pMMCHost_st->f_max, pMMCHost_st->caps);
++#endif
++
+     #if defined(ENABLE_EMMC_PRE_DEFINED_BLK) && ENABLE_EMMC_PRE_DEFINED_BLK
+     pMMCHost_st->caps           |= MMC_CAP_CMD23;
+     #endif
+@@ -3040,7 +3065,9 @@ static s32 mstar_mci_probe(struct platform_device *pDev_st)
+     INIT_WORK(&pMStarHost_st->async_work, mstar_mci_send_data);
+     #endif
+ 
++    pr_info("MMCDBG: mmc_add_host (host=%p caps=%#x)\n", pMMCHost_st, pMMCHost_st->caps);
+     mmc_add_host(pMMCHost_st);
++    pr_info("MMCDBG: mmc_add_host done\n");
+     platform_set_drvdata(pDev_st, pMMCHost_st);
+ 
+     #if defined(ENABLE_eMMC_INTERRUPT_MODE) && ENABLE_eMMC_INTERRUPT_MODE

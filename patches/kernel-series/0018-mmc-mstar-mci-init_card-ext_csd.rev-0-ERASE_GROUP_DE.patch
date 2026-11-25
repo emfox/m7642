@@ -1,0 +1,34 @@
+From 8dc731dc76647301188d8d524b68a3b5f9f1531c Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 12:54:53 +0800
+Subject: [PATCH 18/29] =?UTF-8?q?mmc:=20mstar-mci:=20init=5Fcard=20?=
+ =?UTF-8?q?=E9=87=8C=E6=8A=8A=20ext=5Fcsd.rev=20=E6=8A=A5=E6=88=90=200?=
+ =?UTF-8?q?=EF=BC=8C=E5=85=B3=E6=8E=89=20ERASE=5FGROUP=5FDEF(0xAF)=20?=
+ =?UTF-8?q?=E7=AD=89=20rev>=3D3=20=E7=9A=84=20CMD6?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index 37b47a38a..ee4012d68 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -2908,6 +2908,14 @@ static void mstar_mci_init_card(struct mmc_host *host, struct mmc_card *card)
+ 	card->ext_csd.bkops = false;
+ 	card->ext_csd.man_bkops_en = false;
+ 	card->ext_csd.auto_bkops_en = false;
++
++	/*
++	 * ERASE_GROUP_DEF (EXT_CSD index 0xAF) is switched on when rev >= 3 --
++	 * that is the CMD6 we still see after EXT_CSD is read.  Reporting rev 0
++	 * turns off every rev >= 3 feature (erase group def, some cache/trim
++	 * extras) which is exactly what we want while CMD6 cannot be used.
++	 */
++	card->ext_csd.rev = 0;
+ }
+ #endif
+ 

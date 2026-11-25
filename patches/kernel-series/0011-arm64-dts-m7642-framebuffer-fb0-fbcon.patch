@@ -1,0 +1,81 @@
+From 0144bfd150430c3407d3fff2ed5cc76fca8afe62 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 10:57:00 +0800
+Subject: [PATCH 11/29] =?UTF-8?q?arm64:=20dts:=20m7642:=20=E4=BF=AE?=
+ =?UTF-8?q?=E5=A5=BD=20framebuffer=EF=BC=88fb0=20+=20fbcon=20=E4=B8=8A?=
+ =?UTF-8?q?=E5=B1=8F=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+三个根因：
+1. framebuffer 节点原本在 /chosen 下，而 /chosen 没有 ranges，reg 无法翻译成
+   IORESOURCE_MEM ⟹ simplefb 报 "No memory resource"(-EINVAL)。节点移到根节点下。
+2. reserved-memory 那块非 no-map，内核先映射了，simplefb 的 ioremap_wc() 冲突失败
+   ⟹ -ENOMEM("cannot reserve video memory")。加 no-map。
+3. 驱动需 fbdev 版：CONFIG_FB_SIMPLE=y 且 !CONFIG_DRM_SIMPLEDRM（与 sysfb 的
+   screen_info 路径无关）。
+
+真机结果：fb0: simplefb registered! + Console: switching to colour frame buffer device 240x67
+（console=tty0 生效，内核日志直接显示在电视屏上）
+---
+ .../boot/dts/mstar/m7642-tcl-65s535d.dts      | 30 +++++++++++++------
+ 1 file changed, 21 insertions(+), 9 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts b/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
+index 91462c519..2d32f9bbd 100644
+--- a/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
++++ b/arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts
+@@ -20,6 +20,20 @@ aliases {
+ 		serial0 = &uart0;
+ 	};
+ 
++	framebuffer@2d100000 {
++		compatible = "simple-framebuffer";
++		/*
++		 * Must be a child of the root (not /chosen): /chosen has no ranges,
++		 * so reg cannot be turned into an IORESOURCE_MEM there and simplefb
++		 * fails with "No memory resource".
++		 */
++		reg = <0x0 0x2d100000 0x0 0x7e9000>;
++		width = <1920>;
++		height = <1080>;
++		stride = <7680>;
++		format = "a8r8g8b8";
++	};
++
+ 	chosen {
+ 		/*
+ 		 * maxcpus=1: see the CPU comment in m7642.dtsi.
+@@ -52,15 +66,6 @@ chosen {
+ 		#address-cells = <2>;
+ 		#size-cells = <2>;
+ 
+-		framebuffer@2d100000 {
+-			compatible = "simple-framebuffer";
+-			reg = <0x0 0x2d100000 0x0 0x7e9000>;
+-			width = <1920>;
+-			height = <1080>;
+-			stride = <7680>;
+-			format = "a8r8g8b8";
+-			status = "okay";
+-		};
+ 	};
+ 
+ 	/*
+@@ -97,8 +102,15 @@ reserved-memory {
+ 		 * any driver exists, so it has to be mapped.  It stays reserved,
+ 		 * so the allocator never hands it out.
+ 		 */
++		/*
++		 * no-map: the display controller scans this out and simplefb maps
++		 * it itself with ioremap_wc().  Without no-map the reserved-memory
++		 * code maps it first and simplefb's ioremap_wc() fails with
++		 * -ENOMEM ("cannot reserve video memory").
++		 */
+ 		framebuffer: framebuffer@2d100000 {
+ 			reg = <0x0 0x2d100000 0x0 0x7e9000>;
++			no-map;
+ 		};
+ 	};
+ };

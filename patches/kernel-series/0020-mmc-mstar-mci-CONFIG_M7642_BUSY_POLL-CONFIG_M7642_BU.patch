@@ -1,0 +1,97 @@
+From f461f7a79626c53db5711556da1457ea767231a9 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 13:17:45 +0800
+Subject: [PATCH 20/29] =?UTF-8?q?mmc:=20mstar-mci:=20CONFIG=5FM7642=5FBUSY?=
+ =?UTF-8?q?=5FPOLL=20=E4=B8=8E=20CONFIG=5FM7642=5FBUSYDBG=EF=BC=88DAT0=20?=
+ =?UTF-8?q?=E5=BF=99=E7=AD=89=E5=BE=85=E7=9A=84=E6=9C=BA=E5=88=B6=E8=B0=83?=
+ =?UTF-8?q?=E6=9F=A5=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ drivers/mmc/host/Kconfig                  | 24 +++++++++++++++++++++++
+ drivers/mmc/host/mstar-mci/eMMC_linux.h   |  4 ++++
+ drivers/mmc/host/mstar-mci/mstar_mci_v5.c | 20 +++++++++++++++++--
+ 3 files changed, 46 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/mmc/host/Kconfig b/drivers/mmc/host/Kconfig
+index 0863d70e6..7d8ee3841 100644
+--- a/drivers/mmc/host/Kconfig
++++ b/drivers/mmc/host/Kconfig
+@@ -1302,3 +1302,27 @@ config M7642_DMA_32BIT
+ 	  where the MIU0 translation is correct.
+ 
+ 	  Say Y for the m7642 bring-up.
++
++config M7642_BUSY_POLL
++	bool "m7642: detect the eMMC DAT0 busy phase by polling instead of hardware events"
++	depends on MMC_MSTAR_MCI
++	help
++	  mstar_mci_WaitD0High() can use either the controller's BUSY_END_INT event
++	  or a polling loop (eMMC_FCIE_WaitD0High_Ex).  The vendor config uses the
++	  event, and on this board that wait always times out right after CMD6 (the
++	  driver then retries and the card init gives up), which looks like "the
++	  card never releases DAT0".
++
++	  Selecting this uses the polling path, so we can tell "the card is really
++	  stuck busy" from "the controller's busy-end event never fires".
++
++config M7642_BUSYDBG
++	bool "m7642: dump FCIE registers when the DAT0 busy wait times out"
++	depends on MMC_MSTAR_MCI
++	help
++	  mstar_mci_WaitD0High() waits for the controller's BUSY_END_INT event and
++	  always times out after CMD6 on this board.  This prints SD_CTRL,
++	  SD_STATUS and MIE_EVENT on both the success and the failure path (first
++	  few times only) so we can tell "event never fires" from "card still busy".
++
++	  Log only; nothing is changed.
+diff --git a/drivers/mmc/host/mstar-mci/eMMC_linux.h b/drivers/mmc/host/mstar-mci/eMMC_linux.h
+index f476b54a7..e5ea10835 100644
+--- a/drivers/mmc/host/mstar-mci/eMMC_linux.h
++++ b/drivers/mmc/host/mstar-mci/eMMC_linux.h
+@@ -411,7 +411,11 @@ extern U32  mstar_SD_CardChange(void);
+ #define ENABLE_eMMC_RIU_MODE            0 // for debug cache issue
+ 
+ #define ENABLE_EMMC_POWER_SAVING_MODE   0
++#if IS_ENABLED(CONFIG_M7642_BUSY_POLL)
++#define ENABLE_FCIE_HW_BUSY_CHECK       0   /* m7642: poll DAT0 instead of BUSY_END_INT */
++#else
+ #define ENABLE_FCIE_HW_BUSY_CHECK       1
++#endif
+ 
+ #define ENABLE_EMMC_ASYNC_IO            0
+ #define ENABLE_EMMC_PRE_DEFINED_BLK     1
+diff --git a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+index ddc00f109..4d1dfe9f4 100644
+--- a/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
++++ b/drivers/mmc/host/mstar-mci/mstar_mci_v5.c
+@@ -1413,9 +1413,25 @@ u32 mstar_mci_WaitD0High(u32 u32_us)
+     REG_FCIE_SETBIT(FCIE_MIE_INT_EN, BIT_BUSY_END_INT);
+     #endif
+ 
+-    if(eMMC_FCIE_WaitEvents(FCIE_MIE_EVENT, BIT_BUSY_END_INT, u32_us) != eMMC_ST_SUCCESS)
+     {
+-        return eMMC_ST_ERR_TIMEOUT_WAITD0HIGH;
++        u32 w0h_err = eMMC_FCIE_WaitEvents(FCIE_MIE_EVENT, BIT_BUSY_END_INT, u32_us);
++
++#if IS_ENABLED(CONFIG_M7642_BUSYDBG)
++        {
++            static u8 u8_shown = 0;
++
++            if (w0h_err != eMMC_ST_SUCCESS || u8_shown < 3) {
++                if (u8_shown < 200)
++                    u8_shown++;
++                pr_info("M7642 W0H %s: SD_CTRL=%#x SD_STATUS=%#x EVENT=%#x SD_MODE=%#x\n",
++                        w0h_err == eMMC_ST_SUCCESS ? "ok" : "TIMEOUT",
++                        REG_FCIE_U16(FCIE_SD_CTRL), REG_FCIE_U16(FCIE_SD_STATUS),
++                        REG_FCIE_U16(FCIE_MIE_EVENT), REG_FCIE_U16(FCIE_SD_MODE));
++            }
++        }
++#endif
++        if (w0h_err != eMMC_ST_SUCCESS)
++            return eMMC_ST_ERR_TIMEOUT_WAITD0HIGH;
+     }
+ 
+     return eMMC_ST_SUCCESS;

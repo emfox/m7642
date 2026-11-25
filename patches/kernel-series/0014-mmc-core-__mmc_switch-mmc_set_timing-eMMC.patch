@@ -1,0 +1,45 @@
+From 645b983763ddb24ee8571dd798dc96258b2ee5c3 Mon Sep 17 00:00:00 2001
+From: Emfox Zhou <emfox@debian.org>
+Date: Wed, 25 Nov 2026 11:41:45 +0800
+Subject: [PATCH 14/29] =?UTF-8?q?mmc:=20core:=20=E4=B8=B4=E6=97=B6?=
+ =?UTF-8?q?=E5=9F=8B=E7=82=B9=EF=BC=88=5F=5Fmmc=5Fswitch=20=E6=88=90?=
+ =?UTF-8?q?=E5=8A=9F=E8=B7=AF=E5=BE=84=20/=20mmc=5Fset=5Ftiming=EF=BC=89?=
+ =?UTF-8?q?=EF=BC=8C=E7=94=A8=E4=BA=8E=E5=88=A4=E5=AE=9A=20eMMC=20?=
+ =?UTF-8?q?=E5=8D=A1=E7=82=B9?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+结论：埋点一条都没打印 ⟹ __mmc_switch 在 CMD6 处就 goto out ⟹ 失败的是 CMD6(SWITCH)
+本身，不是后续时序切换。见 Documentation/mstar/m7642/confirmed-facts.md §34.45。
+（这两个 pr_info 是 bring-up 用的，最终要删。）
+---
+ drivers/mmc/core/core.c    | 1 +
+ drivers/mmc/core/mmc_ops.c | 2 ++
+ 2 files changed, 3 insertions(+)
+
+diff --git a/drivers/mmc/core/core.c b/drivers/mmc/core/core.c
+index 29e80e5f9..dea4d6212 100644
+--- a/drivers/mmc/core/core.c
++++ b/drivers/mmc/core/core.c
+@@ -1278,6 +1278,7 @@ int mmc_set_uhs_voltage(struct mmc_host *host, u32 ocr)
+  */
+ void mmc_set_timing(struct mmc_host *host, unsigned int timing)
+ {
++	pr_info("MMCDBG: set_timing %u -> %u\n", host->ios.timing, timing);
+ 	host->ios.timing = timing;
+ 	mmc_set_ios(host);
+ }
+diff --git a/drivers/mmc/core/mmc_ops.c b/drivers/mmc/core/mmc_ops.c
+index a952cc826..4840e386d 100644
+--- a/drivers/mmc/core/mmc_ops.c
++++ b/drivers/mmc/core/mmc_ops.c
+@@ -651,6 +651,8 @@ int __mmc_switch(struct mmc_card *card, u8 set, u8 index, u8 value,
+ 
+ out_tim:
+ 	/* Switch to new timing before check switch status. */
++	pr_info("MMCDBG: __mmc_switch index=%u value=%u timing=%u send_status=%d err=%d\n",
++		index, value, timing, send_status, err);
+ 	if (timing)
+ 		mmc_set_timing(host, timing);
+ 
