@@ -4796,3 +4796,42 @@ tvcertificate / impdata / persist / tcluserdata / tclconfig   →  ext4
    延迟工作，且它在 `console=tty0` 下一直在跑）
 4. 拿到确切的临界点之后，再用**不带 dump** 的探针（避免第 5 条的副作用）读 stash 判断
    是 panic 还是挂死
+
+## 34.74 临界点收窄到 15–30 秒；排除 lockup/hung-task 检测器（2026-11-25 16:4x）
+
+### 时间二分
+
+| `/init` 存活目标 | 结果 |
+|---|---|
+| 15 秒 | ✓ 正常完成、报告写入、交接正常 |
+| **30 秒** | ✗ 报告空；设备约 40 s 后自己回 Android（= 发生了 panic + 交接） |
+| 60 秒（sleep 或忙等） | ✗ 报告空；同上或挂死 |
+| 120 秒 | ✗ 报告空；挂死、80 W |
+
+⟹ 临界点在 **15 秒与 30 秒之间**。
+
+### 排除：我们自己在 eMMC 调查时打开的 lockup/hung-task 检测器
+
+怀疑理由：`SOFTLOCKUP_PANIC=1`（阈值 20 s）、`DETECT_HUNG_TASK` +
+`BOOTPARAM_HUNG_TASK_PANIC=1`（阈值 30 s）正好落在临界区，一个任务合法阻塞就会 panic。
+
+实验：把这四个开关全部关掉（`DETECT_HUNG_TASK` / `SOFTLOCKUP_DETECTOR` /
+`HARDLOCKUP_DETECTOR` / 三个 `BOOTPARAM_*_PANIC`），同样的 30 秒 `/init` 重跑：
+**仍然失败**（80 W、无 adb、报告空）⟹ **不是检测器** ✗。
+
+### 当前已排除清单（长时运行死亡）
+
+| 假设 | 依据 |
+|---|---|
+| PM51 切电 | 失败时插座 80 W（待机才是 11 W） |
+| CPU 空闲路径 | 忙等同样失败；`CONFIG_ARM_PSCI_CPUIDLE` 本来没开 |
+| mstar-mci 后台活动 | 整块去掉 mmc 驱动同样失败 |
+| lockup / hung-task 检测器 | 全部关掉同样失败 |
+
+### 下一步建议（按信息量/代价）
+
+1. **20–25 秒细化**（一次上机可夹到 5 秒精度）
+2. **关 `CONFIG_FRAMEBUFFER_CONSOLE`**：fbcon 有 ~200 ms 的 `fb_flashcursor` 延迟工作，
+   且 `console=tty0 console=ttyS0` 双控制台一直在跑，是"几十秒后才出事"的典型嫌疑
+3. 关 `CONFIG_PRINTK` 之外的中断/定时源逐个排除（RCU、workqueue、hrtimer）
+4. 用**不带 dump 的探针**（dump 本身会让某些情形挂死，§34.73）读 stash 判断 panic/挂死
