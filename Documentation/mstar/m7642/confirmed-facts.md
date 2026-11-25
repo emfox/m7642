@@ -4719,3 +4719,80 @@ SAVE_PA=0x23088000 SAVE_VA=0xffffffc082e08000 KERNEL=$O WORLD_VA=0 \
 失败发生在 printk 产生内容之前 ⟹ `start_kernel` 最前段或更早。
 **剩余差异**：`CONFIG_BUFFER_HEAD=y`（ext4 强制 select）+ JBD2/CRC16/MBCACHE。
 继续需要上面的工具升级（把检查点挂到 `start_kernel`、`mm_init` 等处做四段二分）。
+
+## 34.72 长时运行调查：内核活不过 ~40–60 秒（不是 PM51 切电），各分区全是 ext4（2026-11-25 16:0x）
+
+### 一、文件系统扫描（零风险，Android 侧读 /proc/mounts）
+
+厂内核实际挂载的 11 个分区**全部是 ext4**：
+
+```
+tvconfig / vendor / userdata / cache / factory_a / tvservice /
+tvcertificate / impdata / persist / tcluserdata / tclconfig   →  ext4
+```
+
+⟹ **没有 squashfs / erofs / f2fs** ⟹ "换一个不依赖 `CONFIG_BUFFER_HEAD` 的文件系统来绕开
+§34.68 那个 bug"这条路**不存在** ✗（这是本轮有价值的否定结果）。
+
+### 二、长时运行实验（用 `sleep(N)` / 忙等的 `/init` 探针）
+
+| 实验 | `/init` 行为 | 结果 |
+|---|---|---|
+| A | `sleep(120)` 后写报告 + panic | 报告页全空 ✗；设备未回来；**插座 80 W（电视开着，不是待机 11 W）** |
+| B | `sleep(60)` 后写报告 + panic | 报告页 `ver=0` ✗；设备约 30 s 后自己回到 Android |
+| C | **忙等** 60 s（不让 CPU 空闲）后写报告 | 同样 `ver=0` ✗；约 55 s 回到 Android |
+
+**结论**：
+
+1. **不是 PM51 切电** —— 失败时插座仍 80 W（待机才 11 W）⟹ 电视是**开着**的，
+   是我们的内核卡住/死了。
+2. **不是 CPU 空闲路径** —— 忙等版本一样失败（且本配置里 `CONFIG_ARM_PSCI_CPUIDLE` 本来就没开）。
+3. 内核在 **15 秒（能正常完成）与 60 秒之间**必然出问题。
+
+### 三、下一步的隔离方向
+
+已经用"整块去掉 mmc 驱动"（`# CONFIG_MMC_MSTAR_MCI is not set`）做隔离，判断是否
+驱动后台活动（异步 IO 线程 `sgp_eMMCThread_st`、周期 `mmc_rescan`）导致；
+若去掉 mmc 后能活过 60 s，就把范围锁到 mstar-mci 的后台活动上。
+
+### 四、本轮顺手修掉的工具问题
+
+| 问题 | 修法 |
+|---|---|
+| `build-postmmu.sh` 提示可用 `PANIC_DUMP_VA` 覆盖，但代码里无条件覆盖环境变量 | 改成 `if [ -z "${PANIC_DUMP_VA:-}" ]`，现在 env 覆盖生效；`PANIC_DUMP_VA=0` 可禁用 dump |
+| 无 mmc 驱动的构建里 `m7642_panic_dump` 符号不存在 ⟹ 硬报错 | 这是**预期行为**（§34.65 加的保护），用 `PANIC_DUMP_VA=0` 显式禁用 |
+| 检查点 stash 落在内核 `.rodata` | 已挪到 `0x23088000`（§34.69） |
+| tramp 增加独立槽 `save1/2/3` | 已实现（§34.71） |
+
+## 34.73 长时运行调查（续）：排除 mmc 驱动；带 dump 的 panic 路径会挂死（2026-11-25 16:2x）
+
+### 隔离实验矩阵（`/init` 都是"跑 N 秒后写报告再 panic"）
+
+| 实验 | 变量 | 结果 | 说明 |
+|---|---|---|---|
+| A | `sleep(120)` | 报告空、设备挂死、插座 **80 W** | 内核卡住（不是 PM51 切电，待机是 11 W） |
+| B | `sleep(60)` | 报告空、约 30 s 自动回 Android | 发生了 panic + 交接 |
+| C | **忙等** 60 s | 报告空、约 55 s 回 Android | 排除 CPU 空闲路径（且 `CONFIG_ARM_PSCI_CPUIDLE` 本就没开） |
+| D | **去掉 mmc 驱动** + `sleep(60)` | 报告空、约 50 s 回 Android | **排除 mstar-mci 的后台活动** |
+| E | 保留 mmc + `M7642_PANIC_LOG` + 忙等 60 s | **挂死、80 W、无 adb** | 加了 `kmsg_dump` 的 panic 路径本身会挂 |
+
+### 结论
+
+1. **不是 PM51 切电**（80 W ≠ 待机 11 W）
+2. **不是 CPU 空闲路径**（忙等同样失败）
+3. **不是 mmc 驱动**（整块去掉同样失败）
+4. 内核在 **15 秒（正常）到 60 秒之间**必然出问题，且**有时是 panic、有时是挂死**
+5. **带 `kmsg_dump` 的 panic 取证路径本身会让它挂死** ⟹ 在那种时机调 `kmsg_dump`
+   不安全（可能死锁在 printk 锁上）；取证只能用在"确定是 panic 且上下文干净"的情形
+
+### 下一步（按代价）
+
+1. **二分时间点**：把 `/init` 的等待改成 20/30/40/50 s，找出确切的临界点
+   （每次约 3–5 分钟；临界点本身能给出强线索，例如"正好 40 s" ⟹ 某个 40 s 超时）
+2. **二分子系统**：在 `/init` 里 `sleep(60)` 的同时，用 `echo 1 > /sys/.../` 或
+   `rmmod` 之类手段逐个关掉可疑的延迟工作（fbcon 的 `fb_flashcursor`、
+   ramoops/pstore、RCU 回调等）
+3. 特别值得试：**关掉 `CONFIG_FRAMEBUFFER_CONSOLE`**（fbcon 有个 ~200 ms 的光标闪烁
+   延迟工作，且它在 `console=tty0` 下一直在跑）
+4. 拿到确切的临界点之后，再用**不带 dump** 的探针（避免第 5 条的副作用）读 stash 判断
+   是 panic 还是挂死

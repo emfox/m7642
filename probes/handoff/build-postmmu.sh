@@ -58,7 +58,9 @@ HANDOVER_PA=$(python3 -c "print(hex($KADDR + $STUB_AT + 0x200))")
 DEFS="$DEFS -DHANDOVER_PA=$HANDOVER_PA -DSTUB_AT=$STUB_AT -DSAVE_PA=$SAVE_PA -DSAVE_VA=$SAVE_VA -DTABLE_PA=$TABLE_PA -DTABLE_VA=$TABLE_VA -DCOUNT_N=${COUNT_N:-1} $SYMDEFS"
 echo "defs: $DEFS  WORLD_VA=${WORLD_VA:-0}"
 # panic-dump entry (see confirmed-facts §34.64); 0 if the symbol is absent
-PANIC_DUMP_VA=$(awk '$3 == "m7642_panic_dump" { print $1; exit }' "$SYSMAP" 2>/dev/null)
+if [ -z "${PANIC_DUMP_VA:-}" ]; then
+	PANIC_DUMP_VA=$(awk '$3 == "m7642_panic_dump" { print $1; exit }' "$SYSMAP" 2>/dev/null)
+fi
 if [ -z "$PANIC_DUMP_VA" ]; then
 	echo "ERROR: m7642_panic_dump not found in $SYSMAP" >&2
 	echo "       (override with PANIC_DUMP_VA=<addr> or set it to 0 to disable)" >&2
