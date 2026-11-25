@@ -7769,3 +7769,106 @@ sscanf(buffer, RAMOOPS_KERNMSG_HDR "%lld.%lu-%c\n%n", &sec, &nsec, &type, &len)
 2. **persistent_ram 保留区的其它位置**：ramoops 只占 `0x41900000..0x41A00000`，
    保留区里可能还有 Android **完全不碰**的空隙
 3. **让 Android 侧主动取**：例如写一个 Android 会读的文件/属性（需 root 权限内）
+
+## 36.23 ★★★ eMMC 写不落盘的真根因：`DISABLE_CACHE` 是死代码（2026-11-27 00:2x）
+
+子代理 `emmc-path-analyst` 通读厂商 4.9、移植版、主线 mmc core/DMA 层后给出结论，
+**这是本项目关于 eMMC 写的最重要发现**。
+
+### 根因 A：关缓存的代码根本没生成
+
+```c
+/* drv/mstar_mci_v5.c:2935 —— init_card 整个被包在另一个开关里 */
+#if IS_ENABLED(CONFIG_M7642_NO_HS_SWITCH)
+static void mstar_mci_init_card(...)
+{
+        ...
+#if IS_ENABLED(CONFIG_M7642_DISABLE_CACHE)   /* :2979 你以为在这里生效 */
+        card->ext_csd.cache_size = 0;        /* :2988 */
+#endif
+}
+#endif                                        /* :2995 连带一起消失 */
+```
+
+```c
+/* :3060 .init_card 的注册同样被包着 */
+#if IS_ENABLED(CONFIG_M7642_NO_HS_SWITCH)   /* :3062 */
+    .init_card  = mstar_mci_init_card,      /* :3063 */
+#endif
+```
+
+当前配置：`# CONFIG_M7642_NO_HS_SWITCH is not set` + `CONFIG_M7642_DISABLE_CACHE=y`
+⟹ **`DISABLE_CACHE` 编译出来的指令数是 0**，一句警告都没有 ✗
+
+⟹ 于是主线 core 真的把卡内写缓存打开了：
+```c
+drivers/mmc/core/mmc.c:1907   if (card->ext_csd.cache_size > 0)
+                                  mmc_switch(card, ..., EXT_CSD_CACHE_CTRL, 1, ...);
+```
+
+### 根因 B：`sync()` 在裸块设备上不发 `FLUSH_CACHE`
+
+- `sync()` → `ksys_sync()` → 回写脏页，**不产生 `REQ_OP_FLUSH`**
+- 只有 `fsync(fd)` on 块设备 → `blkdev_fsync` → `blkdev_issue_flush` →
+  `REQ_OP_FLUSH` → `mmc_blk_issue_flush` → `_mmc_flush_cache` → CMD6(FLUSH_CACHE)
+- panic/强制重启**不走** `mmc_poweroff`，所以也不会 flush
+
+⟹ A+B 完美解释全部现象：
+| 观察 | 解释 |
+|---|---|
+| 同一次开机内读回正确（§34.58） | 读命中的是卡内缓存 |
+| 重启后全零 | 缓存没 flush，断电即失 |
+| 全程无报错 | 真的没有错误 |
+| §34.58（`NO_HS_SWITCH=y`）成功 | 那时 `init_card` 注册了，缓存被关掉 |
+| §34.79/§34.80（`NO_HS_SWITCH=n`）失败 | 缓存开着的 |
+
+### 修法 1（正解）：单独的 init_card，别动 timing/caps
+
+```c
+#ifdef CONFIG_M7642_DISABLE_CACHE
+static void mstar_mci_no_card_cache(struct mmc_host *host, struct mmc_card *card)
+{
+        pr_info("%s: M7642: card write cache %u KB kept off\n",
+                mmc_hostname(card), card->ext_csd.cache_size / 1024);
+        card->ext_csd.cache_size   = 0;
+        card->ext_csd.bkops        = false;
+        card->ext_csd.man_bkops_en = false;
+        card->ext_csd.auto_bkops_en = false;
+}
+#endif
+```
+注册：
+```c
+#ifdef CONFIG_M7642_DISABLE_CACHE
+    .init_card = mstar_mci_no_card_cache,
+#elif IS_ENABLED(CONFIG_M7642_NO_HS_SWITCH)
+    .init_card = mstar_mci_init_card,
+#endif
+```
+（**不要**简单地把 `:2935` 的条件改成 `|| DISABLE_CACHE` —— 那个 init_card 还会
+`host->caps &= ~(4BIT|8BIT)`、`hs_max_dtr=0`，会把已修好的 HS 打回去）
+
+时机关键：core 在 `mmc.c:1907` 才写 `CACHE_CTRL=1`，而 `init_card` 在 `mmc.c:1700` 被调
+⟹ 在 `init_card` 里清 `cache_size` 能让那一步被跳过。
+
+### 修法 2（不改内核，用来验证）：探针用 `fsync(fd)` 替代 `sync()`
+
+### 顺便修的两个静默失败点
+
+1. **`JOB_BL_CNT` 缺 `dmalen<512` 保护**（`:1144`）：`dmalen>>9` 在 `dmalen<512` 时得 0
+   ⟹ 控制器"0 块正常结束"、数据一个字节都不发、**不报错**
+   （读路径 `pre_adma_read():469` 有保护，写路径没有）
+2. **写路径不用 `eMMC_FCIE_ClearEvents()`**：`SD_STATUS` 的 `W_FAIL`/`W_CRC_ERR` 是
+   W1C 粘滞位，写路径只调 `ClearEvents_Reg0()` 不清它们 ⟹ 一旦出现过一次写失败，
+   **之后每一笔写都被判失败**
+
+### 明确"不用白改"的清单（避免重复劳动）
+
+1. `BIT_ADMA_EN` / `CONFIG_M7642_WRITE_NO_ADMA`：两个分支代码**完全相同**，且因
+   `ENABLE_FCIE_ADMA=0` 整块是死代码 ⟹ **这个开关改什么都无效**
+2. ADMA 描述符表：读写**都**构造了，不是"只给读构造"
+3. 写数据的 cache clean：`dma_map_sg(DMA_TO_DEVICE)` 在 arm64 非 coherent 设备上
+   已经 `dcache_clean_poc` ⟹ **不需要手工 flush，加了也没用**
+4. `BLK_SIZE`/`JOB_BL_CNT` 的 512 与 9 位：`eMMC_SECTOR_BYTECNT_BITS == eMMC_SECTOR_512BYTE_BITS == 9`
+5. 写完成中断：轮询模式 10 s 硬超时，超时会打印；没打印说明事件真的到了
+6. 两段式 job（命令 `0x0006` + 数据 `0x0218`）：厂商 HAL 的既有设计，不是 bug
