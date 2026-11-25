@@ -4249,3 +4249,45 @@ superblock FNV = 0x4a7fc278
 | ext4 结构 | ✅ | 超级块 magic 0xef53、2.5 GiB、4 KiB 块 |
 | 挂载 ext4 | ✗ | 需先解决 `EXT4_FS=y` 的早期 panic |
 | HS200/HS400 | ✗ | 需整体 PHY 配置（§34.59） |
+
+## 34.62 定论：`CONFIG_EXT4_FS=y` 让内核在 `/init` 之前 panic（与 /init、与 mmc 驱动无关）（2026-11-25 14:4x）
+
+### 判定方法（决定性）
+
+把 `/init` 换成**最简标记版**（ver=13：只 mount 伪文件系统、`sleep(15)`、往报告页写一个
+`0x4d3736340000` 标记、再 `sysrq-c`；**不打开 /dev/mmcblk0、不做任何读**），
+内核配置保持 `CONFIG_EXT4_FS=y`。
+
+结果（`m7642-tiny1.img`，md5 `0e37b645f7a71cafe6e7d54c28c185c7`）：
+
+```
+stash: 到达 panic ✓（magic M764、x30=panic+4）
+报告页: ver=0  marker=0x0        ⟹ /init 根本没能写标记
+```
+
+⟹ **内核在 `/init` 之前就 panic 了**。因为这一版 `/init` 完全不碰 mmc，
+所以**与 mmc 驱动/HS 时序无关**；又因为报告页全零，也不是 `/init` 崩溃。
+⟹ 问题在 **ext4 代码路径本身**（内核初始化阶段）。
+
+对照：只关掉 `EXT4_FS`、其余（镜像、/init、配置）不变 ⟹ 一切正常，能读到 `system` 的
+ext4 超级块（§34.61）。⟹ 因果关系明确。
+
+### 现状
+
+- **eMMC 能力完整可用**：识别、读、写、52 MHz/8-bit/HS、ext4 结构可读（超级块）
+- **挂载 ext4 被这个内核问题阻塞**：`EXT4_FS` 目前必须关闭
+- ramoops 控制台（cmdline 里的 `ramoops.mem_address=0x42300000`）在**交接后被厂内核覆盖**，
+  读回全为空白 ⟹ 这条"事后看 panic 文本"的路走不通
+
+### 下一步（挂载 ext4 之前必须解决的）
+
+1. 定位 ext4 引起的早期 panic：候选方向
+   - `CONFIG_EXT4_FS` 拉进来的依赖（`JBD2`、`CRC32C`、`CRYPTO_CRC32C`）在早期初始化阶段出错；
+   - 内核体积从 6,500,864 → 7,035,392 B 后，**内建 DTB 的位置/对齐**或 `.rodata` 布局改变
+     （之前踩过"内建 DTB 在 .init 段 + free_initmem 毒化"的坑，属同一类）；
+   - `panic_on_oops` 未开，所以 oops→panic 的路径也要确认。
+2. 可用的观测手段：在 `panic()` 入口把 `x0`（format 指针）和调用者的 LR 存进 stash；
+   或在 panic 前把 `dmesg` 尾部写到 DRAM 的固定页（用我们已有的 write 通道）。
+3. 挂载本身的实现路径：`system` 是 ext4、2.5 GiB、4 KiB 块、卷标 `/`；
+   分区没有 `mmcblk0p*`（厂商私有布局），所以要么加自定义分区解析，
+   要么用 loop 设备带 offset（`CONFIG_BLK_DEV_LOOP` 也要开）。
