@@ -7366,3 +7366,39 @@ dd:      33554432 bytes copied  ✓
 2. **临时去掉 `m7642-restart.c`**（从 Makefile 拿掉）重新构建 —— 它是"近期新增的
    `arch_initcall`"，最可疑
 3. 若都不行，用**二分 git 提交**（`git -C linux-git log --oneline` 找 `base15` 对应的提交）
+
+## 36.15 全部嫌疑排除完毕（2026-11-26 22:xx）
+
+### 最后两个候选也否掉了
+
+| 镜像 | 唯一变量 | 四项校验 | 结果 |
+|---|---|---|---|
+|  | 关掉 `BOOTPARAM_HUNG_TASK_PANIC` + `BOOTPARAM_SOFTLOCKUP_PANIC` | ✓ | 回 Android (+45s)，报告页空 ✗ |
+| `norestart` | 从 Makefile 去掉 `m7642-restart.o`（`nm` 确认符号数为 0） | ✓ | 回 Android，报告页空 ✗ |
+
+### 完整排除清单（全部在四项校验通过的镜像上）
+
+1. WiFi 栈（`MT7663U` 等） ✗
+2. `CONFIG_NETDEVICES`（`drivers/net/` 总开关） ✗
+3. `CONFIG_CFG80211` / `CONFIG_MAC80211` ✗
+4. `CONFIG_M7642_DISABLE_CACHE` ✗
+5. `/init` 二进制（换成最简的 `baseN`） ✗
+6. bootargs 里的 ramoops 地址 ✗
+7. `BOOTPARAM_HUNG_TASK_PANIC` / `BOOTPARAM_SOFTLOCKUP_PANIC` ✗
+8. `m7642-restart.c`（`arch_initcall`） ✗
+9. 配置层面（与 17:17 clean 快照实质等价） ✗
+
+### 剩下什么
+
+**当前构建都到不了 `/init`，而 `base15`（较早的镜像）能到。**
+
+尚未排除的层面：
+- DTS 改动（bootargs、emac 节点）—— 但 `simple2` 已撤销过 ramoops 地址 ✗
+- `tramp-postmmu.S` 的改动（`save1/2/3` 槽）
+- `mstar-mci` 的 `M7642_*` 选项组合
+- **`base15` 到底是用哪个 git 提交构建的**（最直接的下一步：二分 git 提交）
+
+### 建议
+
+下次接手时，**第一件事**是从 git 历史里找出 `base15` 对应的提交，
+然后 `git bisect` 那个区间。这比继续盲猜快得多。
