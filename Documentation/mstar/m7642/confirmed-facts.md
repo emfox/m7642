@@ -5078,3 +5078,49 @@ IRQ: 9（emac）、105（emac_man）
 2. eMMC 打点可用后，回去解第 2 项
 3. 第 3 项（reboot）相对独立且工作量小（厂树有 `MDrv_SYS_ResetAeon` + `0xA01FE000` 线索）
 4. 网络（第 4 项）和 ext4（第 5 项）都是"大工程"，建议各自独立排期
+
+## 34.82 第 3 项（reboot）：已实现真正的 restart handler（2026-11-25 18:3x）
+
+### 从厂源码挖出的完整复位序列
+
+`mdrv_system.c: MDrv_SYS_ResetAeon()`：
+
+```c
+REG_ADDR(MHEG5_CPU_STOP)        = 0x1;      /* 先停 AEON CPU */
+msleep(1);
+REG_ADDR(REG_SW_RESET_CPU_AEON) &= ~AEON_SW_RESET;   /* 清 */
+REG_ADDR(REG_SW_RESET_CPU_AEON)  = AEON_SW_RESET;    /* 再置（保持） */
+```
+
+寄存器寻址宏（`mdrv_system.h`）：
+
+```c
+#define REG_ADDR(addr) (*((volatile U16*)(mstar_pm_base + 0x00200000 + (addr << 1))))
+```
+
+⟹ **`mstar_pm_base` + 0x200000**（RIU bank 偏置）+ **索引左移 1 位**（16 位寄存器、2 字节步进）。
+这正是以前失败的原因：我们之前**漏了 `MHEG5_CPU_STOP` 这一步**，而且地址算法（`<<2` 还是 `<<1`、
+要不要 +0x200000）一直是文档里记着的"地址算术"坑。
+
+| 寄存器 | 索引 | 物理地址 |
+|---|---|---|
+| `MHEG5_CPU_STOP` | 0x0fe6 | **0x1F201FCC** |
+| `REG_SW_RESET_CPU_AEON` | 0x1086 | **0x1F20210C**（bit0 = AEON_SW_RESET） |
+
+### 实现
+
+新增 `arch/arm64/kernel/m7642-restart.c`（`CONFIG_ARCH_MSTAR` 编译），注册
+`restart_handler`（priority 200）：
+
+1. `writew(1, 0x1F201FCC)` + `msleep(1)`
+2. `writew(readw(0x1F20210C) & ~1, ...)` 然后 `writew(1, ...)`
+3. 若未生效则持续置位（`mdelay(10)` 循环）
+
+已单独编译通过（`CC arch/arm64/kernel/m7642-restart.o` ✓）。
+
+### 待验证
+
+需要一次上机：在我们的内核里执行 `reboot`（或 `sysrq-b`），观察是否**真正复位**
+（串口/uptime 归零、Android 正常启动）而不是切成待机。
+判据：如果成功 ⟹ 以后每轮实验的重启成本从"插座 + 红外 + 30 秒"降到一条命令，
+这对后续所有工作都是数量级的收益。
