@@ -36,8 +36,11 @@ tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash �
 
 ## 下一步（按优先级）
 
-1. **eMMC**：内核日志里有 `eMMC: no SD 1006` —— 厂 `mstar-mci` 的 `subsys_initcall` 确实在跑，
-   只是没认出卡；有了构建链 + 日志通道 + 报告页可以正经推进。
+1. **eMMC（进行中，§34.43）**：卡已被**完整识别并初始化**（CID/CSD/EXT_CSD 都读到），
+   卡在 **HS_TIMING 切换** —— CMD6(SWITCH) 之后 CMD13 超时 10 s
+   （`FCIE_MIE_EVENT` bit4 不来）。低速模式（`CONFIG_M7642_FORCE_LOWSPEED`）绕不过，
+   因为 MMC 核心只按 `ext_csd.hs_max_dtr` 决定是否切 HS。
+   下一步：静态读 `eMMC_hal_speed.c` 的 HS 路径，或让核心跳过 HS 先把 `mmcblk0` 拿出来。
 2. ~~屏幕控制台~~ **已完成并收口**（§34.41/§34.42）：定稿写法是 **`/chosen` + `memory-region`
    + reserved-memory `no-map` + `CONFIG_FB_SIMPLE=y` 且 `# CONFIG_DRM_SIMPLEDRM`**；
    用户态 `/dev/fb0` 全项验证通过（1920x1080x32、stride 7680、mmap 写读 OK）。

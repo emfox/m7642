@@ -3222,3 +3222,69 @@ simple-framebuffer chosen:framebuffer@2d100000: fb0: simplefb registered!
 
 `m7642-fbFinal.img` md5 `f34b835bfc16c010b6418b9e210c3595`（config：`CONFIG_FB_SIMPLE=y`、
 `# CONFIG_DRM_SIMPLEDRM is not set`、`CONFIG_FRAMEBUFFER_CONSOLE=y`）。
+
+## 34.43 eMMC：卡被完整识别，卡在 HS_TIMING 切换（2026-11-25 11:5x）
+
+### 已经确认的（真机，我们的 7.3 内核）
+
+厂驱动 `mstar-mci` 的 `subsys_initcall` → probe → `mmc_add_host` **全部正常**：
+`/sys/class/mmc_host/mmc0` 存在 ✓，`mmc_add_host` 之前版本门槛通过（mboot 的
+`FCIE_RESERVED_FOR_SW` = 3 ✓，与 `eMMC_DRIVER_VERSION` 一致）。
+
+**卡被识别并初始化**（CMD 序列，全部在我们内核下实测）：
+
+```
+CMD52/5/55/8 (探 SD/SDIO) → CMD0 → CMD1(SEND_OP_COND, MMC) → CMD2(ALL_SEND_CID 拿到 CID)
+→ CMD3(SET_RELATIVE_ADDR) → CMD9(SEND_CSD) → CMD7(SELECT_CARD)
+→ CMD8(SEND_EXT_CSD, 512B) → CMD6(SWITCH, HS_TIMING) → CMD13(SEND_STATUS) ✗ 超时
+```
+
+⟹ **卡协议层是通的**：CID/CSD/EXT_CSD 都读到了，说明控制器、时钟（400 kHz）、
+命令/响应通路、轮询等待在**慢速下都工作** ✓。
+
+### 卡点：HS_TIMING 切换之后
+
+```
+<3>[10.685] [ eMMC_FCIE_PollingEvents() Ln.124 ]
+<3>[10.685] eMMC Err: 10000000 us, Reg.0000h: 0000h, but wanted: 0010h
+<3>[10.699] eMMC Warn: retry wait D0 H.
+<6>[10.709] MMCDBG: clock_setting(0xd) SD_MODE before=0x1
+```
+
+`Reg.0000h` = `FCIE_MIE_EVENT`（0x1F222600），驱动等 bit4（命令完成）不来，10 s 超时。
+`CONFIG_M7642_FORCE_LOWSPEED`（清 `MMC_CAP_MMC_HIGHSPEED`、`f_max=400 kHz`）**不能绕过**：
+时钟确实停在 400 kHz，但 MMC 核心的 `mmc_select_hs()` 只看
+`card->ext_csd.hs_max_dtr`（不看 host caps），CSD/EXT_CSD 里有 HS 能力就会发 CMD6，
+切完卡就再也不回响应 ⟹ 卡与主机的**时序不再匹配**。
+
+### 寄存器快照（我们的内核，init 失败后 ~15 s，`/dev/mem` 读取）
+
+| 寄存器 | 我们 | 厂内核 P0（2026-11-18） |
+|---|---|---|
+| `FCIE_SD_MODE` (0x1F22262C) | `0x0000` | `0x0004` |
+| `FCIE_SD_STATUS` (0x1F222634) | `0x1002` | — |
+| `FCIE_DDR_MODE` (0x1F22263C) | `0x0505` | — |
+| `RESERVED_FOR_SW` (0x1F222640) | `0x0000` | `0x0003` |
+| `FCIE_RST` (0x1F2226FC) | `0x0106` | — |
+| `FCIE_NC_FUN_CTL` (0x1F22278C) | `0xff00` | `0x0000` |
+| `CLKGEN0+0x64` (0x1F201790) | `0x6400` | — |
+| `CLKGEN2+0x0C` (0x1F201430) | `0x0003` ✓ | `0x0001` |
+| `PAD_CHIPTOP+0x6E` (0x1F203DB8) | `0x0001` | — |
+| `EMMC_PLL+0x1A` (0x1F247E68) | `0x00f4` | `0x0035` |
+
+（`FCIE_RESERVED_FOR_SW` 变 0 与 `NC_FUN_CTL` 变 `0xff00` 说明驱动 init 半途改过控制器状态。）
+
+### 下一步（按最小代价排序）
+
+1. **静态读 `eMMC_hal_speed.c` 的 HS 路径**：`eMMC_pads_switch()` / `EMMC_PLL` /
+   `CLKGEN0 reg_ckg_fcie` 在 HS 与 legacy 下分别应该是什么；对照上表找出没配的那一项。
+2. **让核心跳过 HS**：`mmc_select_hs()` 由 `card->ext_csd.hs_max_dtr` 触发，所以要么给
+   驱动加一个"清掉 ext_csd.hs_max_dtr"的钩子（`init_card`），要么在 `set_ios` 里把
+   `MMC_TIMING_MMC_HS` 当作 LEGACY 处理。目标是先把 `mmcblk0` 拿出来（慢速可读）。
+3. 高速通了再谈 HS200/HS400（`execute_tuning` 已在驱动里）。
+
+### 附带修好的仪器
+
+- `/init` 现在会 `sleep(15)` 再 dump：MMC 的 rescan 是异步的，5 s 时超时信息还没出来
+  （第一次就是这样把"驱动无输出"误读成"驱动没跑"）。
+- `tools/host/readlog2.sh`：不依赖报告页布局，直接读满 64 KB 再截断尾部零。
