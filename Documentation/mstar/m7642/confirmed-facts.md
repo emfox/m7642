@@ -6273,3 +6273,40 @@ adb shell su -c 'cat /proc/iomem'
 
 写入 persistent_ram 会破坏 Android 的 pstore/ramoops 内容 ——
 但那是崩溃日志缓冲，对我们无害，而且我们本来就要用它。
+
+## 35.11 persistent_ram 里是 Android 的 pstore；探针要写在高偏移处（2026-11-26 08:xx）
+
+### 实验 `pr1`
+
+`/init`（ver=28）把报告写到 **0x41900000**（persistent_ram 第 1 块）、日志写到 0x41940000，
+并在旧地址 0x23081000 留一份对照，然后 panic（tramp 用 `PANIC_DUMP_VA=0` 纯交接）。
+
+结果：**烧写校验通过 → 设备 55 秒后自行回到 Android** ✓（说明探针跑完、交接成功 ✓）
+
+读回 0x41900000：
+
+```
+0000000041900000: 44 42 47 43 00 00 00 00 00 00 00 00 ff ff ff ff
+                  D  B  G  C
+```
+
+### 解读
+
+- `"DBGC"` 是 **Android ramoops/pstore 的头部签名** ⟹ 这块 persistent_ram 被 Android
+  用作崩溃日志缓冲，它**启动时会重写自己的头部** ⟹ 我们在偏移 0 写的数据被覆盖 ✗
+- 后面的 `0xff` 是擦除态，符合"只写了头部"的 pstore 行为
+
+### 结论与下一步
+
+persistent_ram **确实不会被普通内存分配碰到** ✓（这块方向是对的），
+但要避开 Android pstore 自己使用的偏移：
+
+1. 改写到**每块的末尾**（如 `0x4193F000`、`0x419FF000`），远离 pstore 头部与记录区
+2. 或者用**第 3、4 块**（`0x41980000`、`0x419C0000`），并写在 `+0x3F000` 处
+3. 下一轮三个偏移各写一份，一次上机就能确定哪块真正安全
+
+### 顺带修好的读取链路
+
+`busybox rmmod probeRW` 会失败（`chdir(/lib/modules): No such file or directory`），
+必须用系统的 **`/system/bin/rmmod`**，否则模块一直挂着、`insmod` 报 `File exists`，
+读取就会"无输出"。这个坑也踩了两轮，已记入工具脚本。
