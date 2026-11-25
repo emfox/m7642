@@ -8174,3 +8174,63 @@ panic=10 ramoops.mem_address=0x41940000 ramoops.mem_size=0x40000 ramoops.console
 ### 时间
 
 会话已 23 小时。设备和仓库都是干净状态：Android 正常、两个仓库已提交、文档已推送。
+
+## 36.30 ★★★ 两个真正的静态根因：ramoops 是 DT-only，且落点在 hole 里（2026-11-27 04:4x）
+
+### 根因一：7.3 的 `ramoops` **不再解析 cmdline**
+
+```c
+/* fs/pstore/ram.c —— 整个文件里没有 module_param */
+static int ramoops_probe(struct platform_device *pdev)
+{
+        if (dev_of_node(dev) && !pdata) {
+                pdata = &pdata_local;
+                err = ramoops_parse_dt(pdev, pdata);   /* 只从 DT 读 */
+        }
+```
+
+⟹ 我们一直写在 cmdline 里的 `ramoops.mem_address=...` **完全被忽略** ✗
+⟹ **我们内核的 ramoops 从来没有 probe 过** ✗
+⟹ 之前看到的 `0x41980000` 数据**一直是 Android 自己的** ✓
+
+**修法**：加 DT 节点（已加）
+```dts
+reserved-memory {
+        ramoops@41940000 {
+                compatible = "ramoops";
+                reg = <0x0 0x41940000 0x0 0x40000>;
+                console-size = <0x40000>;
+                no-map;
+        };
+};
+```
+
+**坑**：`m7642-dtb.o` 是 `.incbin` 生成的，`make dtbs` 后**不会自动重打** ⟹ 必须
+`rm arch/arm64/kernel/m7642-dtb.o` 再 `make`，否则镜像里的 DTB 还是旧的 ✗
+
+### 根因二：`0x41940000` 落在我们 DTS 的 **hole** 里
+
+```
+memory@20200000: 0x20200000 + 0x21600000 ⟹ 结束于 0x41800000
+memory@54400000: 0x54400000 + ...
+```
+
+⟹ `0x41800000..0x543fffff` 是**空洞**，`0x41940000` 在其中
+⟹ `pfn_valid()` 为假 ⟹ `persistent_ram_buffer_map` 走 `persistent_ram_iomap`
+⟹ `request_mem_region()` 若失败则 ramoops 创建失败
+
+**修法**：加 `no-map;`（已加）⟹ reserved-memory 不映射该区，`request_mem_region` 应成功
+
+### 但加了 DT 节点 + no-map 之后，record zone 仍然没被写
+
+`zon4`：五项校验通过 ✓、盒子 +165s 回来 ✓、`0x41940000` 读回仍是
+`sig=DBGC`、`start=size=0`、数据区 `ff` ✗
+
+⟹ 说明**我们的 ramoops probe 仍然失败**（或 console 后端没写）
+⟹ 下次要在 `ramoops_probe` 里加 `pr_info` 打印：`cprz` 是否创建、`buffer_size` 多少、
+   以及 `request_mem_region`/`ioremap` 的返回值
+
+### 累计确认的两个事实（本轮净收获）
+
+1. **7.3 的 ramoops 是 DT-only** —— 这条如果早点查到，能省掉十几个小时的 cmdline 瞎试
+2. **`0x41800000..0x543fffff` 是 DTS 里的空洞**，任何"把 ramoops 放这里"的方案都要 `no-map`
