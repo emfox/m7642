@@ -4976,3 +4976,36 @@ softlockup 检测器 ✓（本轮复核）、mmc 驱动、fbcon/VT、CPU 空闲�
 4. 建议做法：在 18 秒处用**轻探针**（写另一个页、只 msync 一次）记录当时的
    `/proc/interrupts`、`/sys/kernel/debug/clocksource` 快照（若 debugfs 可用），
    直接看定时中断计数是否还在增长
+
+## 34.79 用 eMMC 做持久化打点（用户建议）+ 发现基线丢了 eMMC 选项（2026-11-25 17:4x）
+
+### 思路（用户提出，采纳）
+
+DRAM 里的探针数据在插座断电后就没了；但我们已经有 eMMC 读写能力，
+所以可以把心跳/打点**写进 eMMC 的空闲尾部**（LBA 61000000 起，§34.58 确认 300 MB 未分区），
+这样内核挂死 + 断电之后数据还在，恢复后从 Android 读回即可 —— 比 DRAM 探针强得多。
+
+已实现两个探针：
+- `tools/probe-init-emmclog.c`（每秒一条心跳记录，含 uptime/中断计数）
+- `tools/probe-init-emmcw.c`（最小写测试：写一个 magic + fsync + 立即 panic）
+
+### 结果：写没有落盘 ✗
+
+两种探针跑完后从 Android 读 LBA 61000000，**全是零** ✗。
+
+### 发现的重要错误：基线里丢了 eMMC 的 bring-up 选项
+
+"恢复基线"（§34.77）时我从旧提交里拷了 config，结果 **`M7642_DMA_32BIT` /
+`M7642_BUSY_LEVEL` / `M7642_HS_CLOCK_ONLY` / `M7642_VENDOR_STATIC` 全部丢失** ✗
+⟹ 那个"基线"里 **eMMC 根本不能用**（难怪写不进去）。已修正并提交。
+
+### 但修正后仍然写不进去 ⟹ 新怀疑：HS 模式下的写路径
+
+对比：
+- **§34.58 写测试成功**时，eMMC 跑的是 **legacy / 1-bit**（`M7642_NO_HS_SWITCH=y`）
+- **§34.60 读校验成功**时，跑的是 **52 MHz / 8-bit**（`HS_CLOCK_ONLY`）
+- 现在基线是 52 MHz / 8-bit，**读**没问题，**写**落不下去
+
+⟹ 高度怀疑 **52 MHz / 8-bit 下的写路径有问题**（读通、写不通）。
+下一步：把基线切回 `NO_HS_SWITCH`（legacy/1-bit）重跑最小写测试，
+如果写成功了 ⟹ 确认是 HS 写路径问题，eMMC 打点就先用 legacy 模式跑。
