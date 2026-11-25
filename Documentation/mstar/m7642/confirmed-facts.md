@@ -5754,3 +5754,50 @@ dd: 33554432 bytes copied ✓
    验证方法：在 restart handler 里加 `pr_info`，用**DRAM 报告**确认它是否被调用
 2. 然后才是网络：用**校验过的烧写**重做"`CONFIG_NET` 是否真的挂死"
 3. eMMC 写路径也要用新流程重验一次
+
+## 34.99 ★ 复位寄存器序列是**对的**；问题在内核 handler 没被调用（2026-11-26 03:xx）
+
+### 隔离实验 `rst1`
+
+`/init` **从用户态**（`/dev/mem` + mmap）直接写复位寄存器，完全绕开内核 handler：
+
+```c
+wr16(0x1F201FCC, 1);      /* MHEG5_CPU_STOP */
+usleep(2000);
+wr16(0x1F20210C, 0);      /* clear AEON_SW_RESET */
+wr16(0x1F20210C, 1);      /* set   AEON_SW_RESET */
+```
+
+烧写全程校验通过（镜像 md5 `170cd317` ✓、槽内 md5 `7e1a1038` 一致 ✓）。
+
+**结果：设备自行复位，45 秒后回到 Android** ✓✓
+
+### 由此得到两个确定结论
+
+1. **AEON 复位序列（地址 0x1F201FCC / 0x1F20210C、CPU_STOP 先写 1、再 clear+set bit0）
+   在工作** ✓ —— 之前怀疑"序列错"是错的 ✓
+2. **内核的 `restart_handler` 没有被调用**（或没生效）✗
+   —— 因为同样的事情从用户态做就成功 ✓
+
+### 内核 handler 为什么可能没被调用
+
+`m7642-restart.c` 用 `arch_initcall` + `register_restart_handler(priority = 200)`。可能的原因：
+
+| 可能 | 说明 |
+|---|---|
+| **PSCI 抢先** | arm64 上 `psci_sys_reset` 也注册 restart_handler。若它的优先级更高，就先跑它；而这个 SoC 的 ATF **没有实现** PSCI SYSTEM_RESET（文档 §早期已确认），于是 PSCI 返回失败，随后 PM51 把机器切成待机 |
+| `arch_initcall` 太晚 | `/init` 在 initramfs 阶段就调 `reboot()`；不过 initcall 应该在 `/init` 之前跑完，可能性较低 |
+| `machine_restart` 路径不同 | 需要确认 7.x 的 `kernel_restart()` → `machine_restart()` → `do_kernel_restart()` 是否走到我们注册的链 |
+
+### 下一轮的做法
+
+1. **静态确认 PSCI 的优先级**（`drivers/firmware/psci/psci.c` 里 `PSCI_RESTART_PRIORITY`），
+   把我们的 handler 提到比它更高（数值更大）—— 这一条最可能直接解决问题
+2. 若仍不行，在 handler 里加 `pr_info`，并从 **Android 侧**读上一次启动的 kernel log
+   （若厂内核保留了 `pstore`/`last_kmsg`）确认它到底有没有跑
+
+### 附带收获
+
+`rst1` 这个"用户态复位"本身也很有用：即使内核 handler 修不好，
+也可以让 `/init` 或某个用户态程序用同样的方式复位 —— **item 3 的本质需求
+（不依赖插座/红外就能重启）已经可以用这个方案满足**。
