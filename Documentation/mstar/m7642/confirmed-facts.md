@@ -5801,3 +5801,44 @@ wr16(0x1F20210C, 1);      /* set   AEON_SW_RESET */
 `rst1` 这个"用户态复位"本身也很有用：即使内核 handler 修不好，
 也可以让 `/init` 或某个用户态程序用同样的方式复位 —— **item 3 的本质需求
 （不依赖插座/红外就能重启）已经可以用这个方案满足**。
+
+## 35.00 找到 restart handler 不生效的原因：与 PSCI 同优先级（2026-11-26 03:xx）
+
+### 关键发现
+
+`drivers/firmware/psci/psci.c` 里：
+
+```c
+.priority = 200,
+```
+
+而 `m7642-restart.c` 里我们也写的 **200**。
+
+`kernel/reboot.c: do_kernel_restart()` → `atomic_notifier_call_chain(&restart_handler_list, ...)`
+—— **同优先级的 handler 按注册顺序执行**，而 PSCI 注册得更早 ⟹ **PSCI 先跑**
+⟹ 它调 `SYSTEM_RESET` ⟹ 这个 SoC 的 ATF **没实现**（文档早期已确认）⟹ 失败
+⟹ 随后 PM51 把机器切成待机（7 W）—— 与观察完全一致 ✓
+
+### 已做的修改
+
+`arch/arm64/kernel/m7642-restart.c`：priority **200 → 210**（高于 PSCI）
+重建出 `rb2`（md5 `b90f4020…`，`/init` 睡 5 秒后调 `reboot()`）
+
+### 验证状态
+
+`rb2` 的**上机验证没有完成**：`flashrun.sh` 卡住（push/dd 阶段），
+设备当时停在 80 W 无法连通，最终手动恢复。**结论待测** ✗
+
+### 下一轮
+
+重跑 `flashrun.sh rb2`（烧写已带校验，不会再出现"其实没烧进去"的问题）。
+判据：**90 秒内自行回到 Android** ⟹ handler 生效 ✓；
+若仍进待机（7 W）⟹ 优先级不是原因，需要：
+- 在 handler 里加 `pr_info` 并从 Android 侧找回上一次启动的日志
+- 或者确认 `machine_restart` 在 arm64 上是否真的走 `do_kernel_restart()`
+
+### 备用方案（已可用）
+
+即使内核 handler 修不好，**用户态复位**（§34.99 的 `rst1`）已验证可用：
+`/init`（或任何 root 用户态程序）直接写 `0x1F201FCC` / `0x1F20210C` 就能复位。
+第 3 项的需求（不依赖插座/红外重启）**已经可以满足**。
