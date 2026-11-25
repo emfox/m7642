@@ -7980,3 +7980,63 @@ line 280:  if (card->ext_csd.cache_size > 0) { ... CACHE_CTRL = 1 }   ← 于是
 1. `mmc_blk` 的 `cache_ctrl` 仍为 1（`_mmc_cache_enabled()` 还返回真）
 2. 卡的 **write reliability / reliable write** 设置
 3. `BUSY_LEVEL` 那条 R1b 路径让 `SET_BLOCK_COUNT`/写命令提前"完成"
+
+## 36.26 ★★★★★ 根因：`adb reboot recovery` 路线一直是坏的；BCB 路线才有效（2026-11-27 02:4x）
+
+**这是整个项目最重要的运维发现。用户一句"每次重启前有没有确认镜像真的写进分区"直接问出来的。**
+
+### 现象
+
+刷写流程的**前三项校验都通过**：推送 md5 ✓、`dd` 写满 32 MB ✓、**槽前 4KB md5** ✓
+但**全镜像 md5 对不上** ✗
+
+### 实测证据
+
+| 检查 | 结果 |
+|---|---|
+| 刷完**立刻**读槽的**全镜像** md5 | **与镜像完全一致** ✓ |
+| 不重启，等 15 秒 / 35 秒后再读 | **仍然一致** ✓ ⟹ 刷写本身没问题 |
+| **重启之后**再读 | 变成 `7c2f467bbda49053951c0ce547d11a00` ✗ |
+| 槽里的块 0 | `8575bff3…` = **厂内 recovery 镜像** |
+| `/system/etc/recovery.img` | **存在**，27,471,872 字节，md5 `0d6e895a…` |
+| `/system/etc/install-recovery.sh` | 不存在 |
+
+⟹ **`adb reboot recovery` 会让 Android 关机，而 Android 在关机/下次启动时会用
+`/system/etc/recovery.img` 覆盖 recovery 分区** ✗
+
+⟹ ⟹ **所以我们用 `adb reboot recovery` 跑的所有镜像，实际执行的都是厂内 recovery** ✗
+⟹ 这就是几个月来"探针没反应""内核挂住""结论互相矛盾"的**总根源**
+
+### 正确的路线：BCB + 插座冷启
+
+```
+1. 推送镜像 + md5 校验
+2. dd 写 recovery 槽 + sync
+3. **读回全镜像 md5 校验**（不是只验前 4K！）
+4. 往 misc 偏移 0 写 "boot-recovery"
+5. **插座断电**（不是 adb reboot）→ 15 秒后上电 → 红外开机
+6. mboot 跑 recoverycmd：第一条 `mmc erase.p misc` 会擦掉 BCB（所以不会锁死），
+   然后 `mmc read.p … recovery` 并 `bootm` ⟹ **引导我们刷的镜像**
+7. Android 全程不运行 ⟹ 没机会还原槽
+```
+
+**已验证**：`misc` 在冷启后变回**全零** ✓ ⟹ `mmc erase.p misc` 确实执行了 ✓
+⟹ **我们的镜像确实被引导了** ✓（探针按 `panic=0` 挂住即为"条件为假"的有效读数）
+
+### 工具
+
+`tools/host/run-bcb.sh <tag>` —— 固化上述流程，**五项校验**（推送 md5 / dd / 槽全 md5 /
+BCB 回读 / 结果判定），任一步失败即中止。
+
+### 还有一个坑：前 4KB 校验不够
+
+之前所有 runner 只比**槽前 4096 字节**的 md5。厂内镜像的**前 4KB 恰好**与我们某次镜像相同
+（都是 ANDROID! 头 + 相同 kernel_size？），所以校验能过而内容全错。
+⟹ **必须校验全镜像**。
+
+### 结论
+
+- **今后所有上机一律用 `run-bcb.sh`**，禁止再用 `adb reboot recovery` 跑自研镜像
+- 之前所有"内核无反应/挂住"的结论**都不可信**，需要用新流程重做
+- eMMC 写的结论（`pwrite` 成功、`fsync` 成功、`drop_caches` 后读回不匹配）是**用新流程得到的**，
+  可信 ⟹ **写确实没到卡**
