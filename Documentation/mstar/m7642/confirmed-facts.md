@@ -5037,3 +5037,44 @@ DRAM 里的探针数据在插座断电后就没了；但我们已经有 eMMC 读
 2. 探针里**写完后先读回校验、再 panic**，并把校验结果写进 eMMC 的下一个扇区
    （自证式记录：只要任何一次写成功，就能看到"上一次写的结果"）
 3. 写完后加 `sleep(2)` 再 panic，排除落盘时机问题
+
+## 34.81 第 4 项（网络）静态摸底：所有硬件事实已拿到（2026-11-25 18:1x）
+
+### 现状
+
+- **我们的 DTS 里没有任何网络节点** ✗ ⟹ 当前内核没有以太网
+- 厂树有完整实现：`drivers/mstar2/drv/emac/`（`mdrv_emac_v3.c` + `.h`）、
+  `drivers/mstar2/drv/noe/eth/`（NOE 卸载引擎）、`drivers/mstar2/hal/m7322/emac/`（HAL）
+- **没有 MStar WiFi 驱动**在 `drivers/mstar2` 下 ⟹ WiFi 走的是通用 mediatek/mt76 那套（未确认型号）
+
+### 厂 DTB（`~/Debian/m7642-build/diag/live.dtb`）里的以太网节点
+
+```
+emac          { compatible = "mstar-emac"; }                  ← 驱动匹配串
+emac_int      { compatible = "emac_int";     interrupts = <0 9 4>;     }   ← SPI 9
+emac_man_int  { compatible = "emac_man_int"; interrupts = <0 105 4>;   }   ← SPI 105（管理口）
+```
+
+注意 `emac` 节点**没有 reg**（厂驱动从硬编码常量算基址）。
+
+### 寄存器地址（从 HAL 头文件算出，RIU 窗口 = `mstar_pm_base` = 0x1F000000）
+
+```
+REG_EMAC0_BANK        = 0x1020   ⟹ 16 位窗口 = 0x1F000000 + ((0x1020*0x100)<<1) = 0x1F204000
+REG_EMAC0_XIU32_BANK  = 0x1D21   ⟹ 32 位窗口 = 0x1F000000 + ((0x1D21*0x100)<<1) = 0x1F3A4200
+IRQ: 9（emac）、105（emac_man）
+```
+
+### 移植工作量评估
+
+和 eMMC 那次同量级：厂驱动是 `mdrv_emac_v3.c`（数千行，含 NOE/DMA/描述符），
+需要像 `mstar-mci` 那样整体搬过来 + 写 4.9→7.3 的 shim + 补 DTS 节点 + 接 PHY/mdio。
+**不是一次能做完的**，建议独立排期。
+
+### 建议顺序（结合当前卡点）
+
+1. 先把 eMMC **写路径回归**修好（§34.80）——它是"跨断电持久化打点"的前提，
+   而那是查第 2 项（长时运行死亡）唯一可靠的手段
+2. eMMC 打点可用后，回去解第 2 项
+3. 第 3 项（reboot）相对独立且工作量小（厂树有 `MDrv_SYS_ResetAeon` + `0xA01FE000` 线索）
+4. 网络（第 4 项）和 ext4（第 5 项）都是"大工程"，建议各自独立排期
