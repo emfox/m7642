@@ -8234,3 +8234,52 @@ memory@54400000: 0x54400000 + ...
 
 1. **7.3 的 ramoops 是 DT-only** —— 这条如果早点查到，能省掉十几个小时的 cmdline 瞎试
 2. **`0x41800000..0x543fffff` 是 DTS 里的空洞**，任何"把 ramoops 放这里"的方案都要 `no-map`
+
+## 36.31 用 1-bit 通道给 `ramoops_probe` 做自报（2026-11-27 05:2x）
+
+### 思路
+
+"读不到内核打印"是循环难题。绕开的办法：**让 probe 的结果决定盒子会不会重启**。
+
+在 `fs/pstore/ram.c` 的成功路径（`mem_size = pdata->mem_size;` 之前）插入：
+
+```c
+	{
+		u32 *rp = (u32 *)__va(0x23081000UL);
+
+		rp[0] = 0x4d524f50;              /* "PORM" */
+		rp[1] = (u32)cxt->console_size;
+		rp[2] = cxt->cprz ? (u32)cxt->cprz->buffer_size : 0xffffffff;
+		rp[3] = (u32)cxt->phys_addr;
+		dsb(sy);
+	}
+```
+
+失败路径（`fail_out:`）写 `"FAIL"` + `err`。
+
+`/init` 用 `/dev/mem` 读 `0x23081000`（`memtest` 已证明**同启动内**读写正常 ✓）：
+- `rp[0] == "PORM"` → `reboot()` → 盒子回来 ⟹ **ramoops probe 成功**
+- 否则 → 挂住 ⟹ **probe 失败**
+
+⟹ 一次上机就能回答"我们的 ramoops 到底有没有 probe 成功"，**不需要任何持久化通道** ✓
+
+### 踩的坑
+
+- 一开始用 `#ifdef CONFIG_M7642_PROBE_REPORT` 包着，但 `fs/pstore/Kconfig` 里加选项的 sed 没生效，
+  编译报 `#endif without #if` ⟹ 改成**无条件插入**（调试构建，不影响正常使用）
+- `sr` 镜像两次上机都因 **adb 读取空**导致槽校验失败、工具正确中止 ⟹ **结论未取得**
+
+### 仍未回答的问题
+
+**我们内核的 ramoops 到底有没有 probe 成功？** 这个 1-bit 自报实验已经做好，只差一次成功的上机。
+
+### 已知的两个静态事实（本轮确认）
+
+1. **7.3 的 ramoops 是 DT-only**（`fs/pstore/ram.c` 无 `module_param`）⟹ cmdline 参数无效
+2. **`0x41800000..0x543fffff` 是 DTS 空洞**，放 ramoops 需要 `no-map`
+
+### adb 稳定性经验（反复踩到）
+
+- `adb kill-server` 后再 `connect` 能恢复大部分"命令返回空"的情况
+- 上机脚本必须在**每一步**校验返回值，任一步失败就中止（`run-bcb.sh` 的九步校验就是为此）
+- 读**全镜像** md5 比读前 4KB 可靠得多
