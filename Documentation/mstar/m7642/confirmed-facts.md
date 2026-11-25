@@ -3604,3 +3604,39 @@ EXT_CSD 读对之后、`mmc0: new` 之前，还有 **一次 CMD6**（arg `0x3af0
 - 埋点锚点必须**唯一**（本轮两次把打印插进了别的函数导致编译失败/无输出）。
 - 报告页必须按对应 `ver` 布局解码（ver=6/7/8 三种布局都在用）。
 - 探针期望 `x30` 必须从当前 `System.map` 现算（`panic` 已从 0x…2a22c 漂到 0x…2a244）。
+
+## 34.50 eMMC：命令伪造 CMD6 成功 → 挂死（否掉这条路）（2026-11-25 12:4x）
+
+在驱动 `request` 里对 `opcode==6` 直接 `cmd->error = 0` + `mmc_request_done()` 伪造成功，
+上机结果是**内核挂死**（150 s 无 Android，报告页/日志都读不到）。
+
+⟹ MMC 核心对 CMD6 的**响应/R1b 忙状态**有真实依赖，不能只回一个成功；
+伪造还可能让 `mmc_switch_status()` 或后续状态机死等。**这条路否掉。**
+
+### 当前 eMMC 状态小结（可复现）
+
+| 步骤 | 结果 |
+|---|---|
+| 卡识别（CID/CSD/EXT_CSD） | ✓ CSD 正常（capacity=2097152） |
+| EXT_CSD 数据（512 B） | ✓ **sec_count=61071360 = 31.27 GB, rev=8**（DMA mask 32 位修复后） |
+| 跳过 CMD6（`init_card` 清 `hs_max_dtr` + 去 4/8-bit caps） | ✓ `mmc0: new MMC card at address 0001` 出现过一次 |
+| 后续仍有一次 CMD6（arg `0x3af0101`，索引 `0xB7`/`0xAF` 类） | ✗ 超时 10 s ⟹ 初始化中止 ⟹ `mmcblk0` 未注册 |
+| 伪造 CMD6 成功 | ✗ 内核挂死，否掉 |
+
+### 下一步（唯一没试的方向）
+
+**在 `init_card` 里把"会触发剩下那个 CMD6 的能力"也清掉**，而不是拦命令：
+
+- 那个 CMD6 的 index 不是 `HS_TIMING`（0xB9），是 `0xB7`/`0xAF` 一类 ⟹ 大概率是
+  **cache 控制（`ext_csd.cache_size`）**、**掉电通知（`power_off_notification`）**、
+  或 **BKOPS（`bkops_en`/`auto_bkops_en`）** 之一；
+- 在 `init_card` 里一次性把它们清零（`cache_size = 0`、`power_off_notification = 0`、
+  `bkops_en = 0`），核心就不会再发 CMD6；
+- 判据不变：日志出现 `mmc0: new MMC card` + `mmcblk0: ... 31.27 GB`，
+  且 `/init` 报告页里 `read(512)` > 0。
+
+### 本轮方法论教训
+
+- 伪造设备响应（假装命令成功）在 MMC 这种有状态机上**不能试**——直接挂死，
+  而且挂死后无数据（中断关闭路径，lockup 检测器也救不了）。
+- 埋点锚点必须唯一；报告页按 ver 解码；探针期望值必须现算。
