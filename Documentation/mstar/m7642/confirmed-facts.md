@@ -5916,3 +5916,63 @@ wr16(0x1F20210C, 1);      /* set   AEON_SW_RESET */
   每轮实验平均要 10–15 分钟且成功率约一半
 
 建议后续每轮只做**一个**明确的实验，并且优先选择"即使失败也能拿到信息"的。
+
+## 35.03 静态定位：handler 被调用了，但它的 ioremap 可能失败（2026-11-26 05:xx）
+
+### 静态确认的关键事实
+
+`arch/arm64/kernel/process.c: machine_restart()`：
+
+```c
+local_irq_disable();
+smp_send_stop();
+if (efi_enabled(EFI_RUNTIME_SERVICES))
+        efi_reboot(reboot_mode, NULL);
+do_kernel_restart(cmd);          /* ← 我们注册的 handler 在这里被调用 */
+printk("Reboot failed -- System halted\n");
+while (1);                       /* ← 死循环 */
+```
+
+⟹ 我们的 restart handler **确实会被调用** ✓
+⟹ 如果它没能复位，内核就打印 "Reboot failed" 然后**死循环** ——
+   这**正好**解释了硬件上观察到的 **80 W 挂死** ✓✓
+
+### 推断出的具体 bug
+
+原来的 handler：
+
+```c
+void __iomem *stop = ioremap(0x1f201fcc, 2);   /* 未对齐的 2 字节 ioremap */
+void __iomem *rst  = ioremap(0x1f20210c, 2);
+if (stop) { ... }        /* ← ioremap 若返回 NULL，这里静默跳过 */
+if (rst)  { ... }        /* ← 同上，于是什么都没做，直接进死循环 */
+```
+
+对未对齐的设备地址做 2 字节 `ioremap` **可能失败**，而 NULL 保护让失败被吞掉 ✗
+
+### 已做的修改（`rb3`）
+
+改成**映射整个 RIU 窗口一次**（和 emac 驱动完全相同的做法）：
+
+```c
+void __iomem *riu = ioremap(0x1f000000, 0x00a00000);
+if (!riu) { pr_emerg("cannot map RIU window"); return NOTIFY_DONE; }
+stop = riu + 0x00200000 + (0x0fe6 << 1);
+rst  = riu + 0x00200000 + (0x1086 << 1);
+```
+
+映射失败也不再静默（真的什么都不做只会换回 80 W 挂死，不如早点暴露）。
+
+`rb3` 已构建（md5 `f820adf3…`，`/init` = 睡 5 秒调 `reboot()`）。
+
+### 下一轮
+
+用 `tools/host/probe-cycle.sh rb3` 上机验证。
+判据：**90 秒内自行回到 Android** ⟹ 修复有效 ✓；
+若仍是 80 W 挂死 ⟹ 说明 RIU 窗口映射成功、但寄存器写到别处，需要另找原因。
+
+### 设备链路的现实
+
+这一轮多次尝试上机都卡在 adb 推送/运行阶段（每轮 8–10 分钟仍无结果）。
+`probe-cycle.sh` 已经把流程固化，但**设备侧的不稳定仍是主要限制**。
+后续每轮会先试上机，若卡住则转做静态工作并记录，避免空转。
