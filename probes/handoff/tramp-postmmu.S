@@ -281,6 +281,14 @@ _start_restore:
 	tlbi	vmalle1
 	dsb	nsh
 	isb
+#if (M7642_PANIC_DUMP_VA != 0)
+	/* dump the kernel log before handing over (see §34.64) */
+	movz	x16, #(M7642_PANIC_DUMP_VA & 0xffff)
+	movk	x16, #((M7642_PANIC_DUMP_VA >> 16) & 0xffff), lsl #16
+	movk	x16, #((M7642_PANIC_DUMP_VA >> 32) & 0xffff), lsl #32
+	movk	x16, #((M7642_PANIC_DUMP_VA >> 48) & 0xffff), lsl #48
+	blr	x16
+#endif
 	adr	x16, 1b			/* the common path (it precedes us) */
 	movz	x17, #(KIMAGE_OFFSET & 0xffff)
 	movk	x17, #((KIMAGE_OFFSET >> 16) & 0xffff), lsl #16

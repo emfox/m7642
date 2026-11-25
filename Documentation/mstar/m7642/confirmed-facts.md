@@ -4389,3 +4389,49 @@ ext4 超级块（§34.61）。⟹ 因果关系明确。
 - 无探针 + panic = 挂死（需要插座恢复）；这对将来"关了探针做实验"是一个**重要风险**。
 - `machine_restart` 未实现这一条应该写进 HANDOFF/NEXT-SESSION：任何依赖"panic 自恢复"
   的方案在这台机器上都不可行。
+
+## 34.65 探针内 panic 取证：机制接通，但运行时还不生效（2026-11-25 15:3x）
+
+### 已实装
+
+1. 驱动里加 `void noinline m7642_panic_dump(void)`（非 static、noinline，System.map 里可见
+   `T m7642_panic_dump`），内部调 `kmsg_dump(KMSG_DUMP_PANIC)`；
+   `kmsg_dump` 处理器改用 **`__va()` 直写** 0x230a0000（原来是 `memremap`，会睡眠，
+   panic 上下文不安全）。
+2. `build-postmmu.sh` 从 `System.map` 解析该符号，作为 `-DM7642_PANIC_DUMP_VA=...` 传给汇编；
+3. `tramp-postmmu.S` 的 `restore` 槽（恢复 TTBR0/TCR 之后、跳公共路径之前）加：
+
+```asm
+	movz/movk × 4	x16 = M7642_PANIC_DUMP_VA
+	blr		x16
+```
+
+### 踩的两个坑（都已修）
+
+- **`SYSMAP` 解析静默失败**：`grep|awk` 拿不到符号时脚本不报错，`PANIC_DUMP_VA` 变成 0，
+  `#if` 直接把代码块裁掉。改成解析失败就 `exit 1`。
+- **`-D` 值缺 `0x` 前缀**：`-DM7642_PANIC_DUMP_VA=ffffffc080374550` 在预处理器里
+  被当成**未定义标识符 = 0** ⟹ `#if (… != 0)` 恒假，代码永远不汇编进去。
+  改为 `-DM7642_PANIC_DUMP_VA=0x${PANIC_DUMP_VA#0x}`。
+
+修好后验证：`tramp-postmmu.bin` 的 `0x53c`/`0x540` 处出现 dump 地址的两个 16 位片段 ✓
+（可以用这个检查在任何一次构建后确认调用真的进 blob 了）。
+
+### 运行时结果：还不通
+
+`m7642-fdump3.img`（ext4 + panic 钩子 + 探针 dump）实测：
+
+```
+stash: magic M764 ✓ 但 x30=0xffffffc0803c5150（tramp 区域，不是 panic+4）
+panic log 页 0x230a0000: magic=0 ✗
+```
+
+⟹ stash 里的 x30 落在 tramp 内部，说明这条路径的上下文与预期不同（`save`/`restore`
+两个槽的交互）；dump 也没有真正写出日志。**下一步**：
+
+1. 先只验证"探针能调用内核 C 函数"这一件事：把 `m7642_panic_dump()` 改成一个
+   只往 0x230a0000 写 magic 的空函数（不碰 kmsg），跑一发看 magic 是否出现；
+2. 若出现，再换成 `kmsg_dump`（可能需要先 `local_irq_save`/关抢占，或改成直接
+   解析 `prb`/`log_buf` 数据符号）；
+3. 若一直不出现，考虑把 dump 调用移到 `save` 槽（它在 `d0` 检查点也执行，便于验证，
+   代价是每次检查点都会多写一次日志）。
