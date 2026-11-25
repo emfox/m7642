@@ -3962,3 +3962,67 @@ mmcblk0boot0: 4.00 MiB   mmcblk0boot1: 4.00 MiB   mmcblk0rpmb: 4.00 MiB
 做法：**逐个**把 `eMMC_pads_switch()` / `eMMC_clock_setting()` 里 HS 分支涉及的写
 替换/绕过为上述值，每改一项单独上机（一次只动一个变量），直到能去掉 `CAP_CLOCK`
 而仍然正常 ⟹ 那时才是真正的 HS 速度。
+
+## 34.57 ★★★★★ eMMC 跑在真正的 HS：52 MHz / 8-bit，数据与低速逐位相同（2026-11-25 14:0x）
+
+### 配置（`m7642-real1.img`，md5 `fecf3ed7ede6b2b639d440514088a722`）
+
+```
+CONFIG_M7642_BUSY_LEVEL=y      # BIT_SD_CARD_BUSY 电平轮询（BUSY_END_INT 事件不工作）
+CONFIG_M7642_HS_CLOCK_ONLY=y   # HS 时序只做 eMMC_clock_setting，跳过 eMMC_pads_switch
+CONFIG_M7642_VENDOR_STATIC=y   # 1.8V IO 使能（本来已开）
+CONFIG_M7642_DMA_32BIT=y       # DMA 必须落 4GiB 以下
+# CAP_CLOCK / NO_PAD_SWITCH / NO_HS_SWITCH 全部关闭 ⟹ 真实高速
+```
+
+### 实测
+
+```
+set_ios clock=400000  timing=1                 ← 核心请求 HS 时序
+M7642: HS timing: clock_setting only (no pads_switch)
+set_ios clock=52000000 timing=1                ← ★ 52 MHz
+set_ios clock=52000000 bus_width=3 timing=1    ← ★ 8-bit 总线
+mmc0: new high speed MMC card at address 0001
+mmcblk0: mmc0:0001 BJTD4R 29.1 GiB
+```
+
+数据校验（`/init`，52 MHz 下）：
+
+```
+read(512)=512 errno=0  sum=31749 nonzero=298 mbr_sig=0xd428
+```
+
+与 400 kHz 时、以及与厂内核读同一扇区**逐位相同** ✓。
+
+### 二分过程（每一步一次上机，全部实测）
+
+| 步骤 | 内容 | 结果 |
+|---|---|---|
+| A | HS 分支：`clock_setting` + `pads_switch` 都做 | ❌ 挂死 |
+| B | 只做 `clock_setting(FCIE_DEFAULT_CLK=200M PLL)` | ✅ 正常 |
+| C | 只做 `pads_switch` 里的 `FCIE_DDR_MODE \|= BIT_8BIT_MACRO_EN` | ❌ 挂死 |
+| D | 跳过 `pads_switch`、放开 f_max（52 MHz） | ✅ **正常，真 HS** |
+
+⟹ 致命的是 **"8-bit macro"数据通路切换**（`BIT_8BIT_MACRO_EN` + 配套的
+`emmcpll_0x*`/`chiptop_*` 写入，全是 M7322 的值）；但**不需要它**：
+保持 mboot 配好的 **BYPASS pad 模式**，只把时钟经 PLL 拉到 52 MHz 即可，
+8-bit 总线照样能工作。
+
+### 当前 eMMC 能力
+
+| 项目 | 状态 |
+|---|---|
+| 速率 | **52 MHz / 8-bit / HS 时序**（比 400 kHz 快 130×，厂内核 HS400 200 MHz 的 1/4） |
+| 设备 | `mmcblk0` 29.1 GiB + `boot0`/`boot1`/`rpmb` 各 4 MiB |
+| 数据 | ✓ 与厂内核逐位一致 |
+| 写入 | ✗ 仍未验证（P4） |
+| HS200 / HS400 | ✗ 需要 macro 数据通路（即上面 C 步那条死路，得先搞清 M7642 的 PHY 配置） |
+
+### 下一步
+
+1. **写路径验证**（P4）：先写一个不被使用的扇区再读回比对，最后才动分区；
+2. HS200/HS400：要打开 macro 通路，需要 M7642 真实的 `emmcpll_0x*` 序列——
+   可以从厂内核**动态差值**推：在厂内核里跑 `probeRW` 读全 `emmcpll_0x00..0x80`，
+   与我们的值逐项对比（这次 PAD+0x6E 照抄导致挂死的教训：**整寄存器照抄危险**，
+   要按位差分析）；
+3. 分区表：厂商自有布局，照抄 Android 侧 `/dev/block/by-name/*` 的偏移。

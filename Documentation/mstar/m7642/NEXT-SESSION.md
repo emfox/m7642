@@ -44,7 +44,11 @@ tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash �
       （`CONFIG_M7642_BUSY_LEVEL`，§34.54）；
    ③ HS 时序会触发 `eMMC_pads_switch/eMMC_clock_setting` 写 M7322 的 PLL/pad 值
       ⟹ 锁死；用 `CONFIG_M7642_NO_PAD_SWITCH` 跳过（§34.56）。
-   限制：时钟仍限 400 kHz（`CAP_CLOCK`），写路径未验证，分区表是厂商自有布局。：卡已被**完整识别并初始化**（CID/CSD/EXT_CSD 都读到），
+   **现在跑在真正的 HS：52 MHz / 8-bit**（§34.57，比 400 kHz 快 130×，数据与厂内核逐位一致）。
+   要点：HS 时序只调 `eMMC_clock_setting()`，**不要**调 `eMMC_pads_switch()`
+   （它的 `BIT_8BIT_MACRO_EN` + M7322 PLL/pad 写会锁死；BYPASS pad 模式够用）。
+   限制：写路径未验证；HS200/HS400（200 MHz）需要 macro 数据通路，尚未打通；
+   分区表是厂商自有布局。：卡已被**完整识别并初始化**（CID/CSD/EXT_CSD 都读到），
    卡在 **HS_TIMING 切换** —— CMD6(SWITCH) 之后 CMD13 超时 10 s
    （`FCIE_MIE_EVENT` bit4 不来）。低速模式（`CONFIG_M7642_FORCE_LOWSPEED`）绕不过，
    因为 MMC 核心只按 `ext_csd.hs_max_dtr` 决定是否切 HS。
