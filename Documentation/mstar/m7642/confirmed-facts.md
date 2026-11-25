@@ -4943,3 +4943,36 @@ tvcertificate / impdata / persist / tcluserdata / tclconfig   →  ext4
 1. 用**最简探针**重跑 N=20 / 25 / 30，确认临界点（此前 30 秒必挂是含污染配置得出的，需复核）
 2. 若最简探针在 30 秒也挂 ⟹ 用 §34.75 的轻量心跳方案（写另一个页、不反复 msync）
 3. 之后才是 reboot 驱动 / 网络 / ext4
+
+## 34.78 干净基线上的单变量结论：去掉 softlockup 检测器**无效**（2026-11-25 17:2x）
+
+在**恢复后的基线**上只关 `SOFTLOCKUP_DETECTOR`（其它不动），用最简探针跑 20 秒：
+
+- 第一发：设备进待机（7 W），失败形态异常
+- 复跑：**80 W 卡住、无 adb、报告空** ⟹ 与基线表现一致
+
+⟹ **softlockup 检测器不是长时运行死亡的根因** ✗（此前"关检测器无效"的结论，
+在干净基线上得到确认 ✓）。
+
+### 当前干净基线下的时间线
+
+| `/init` 目标 | 结果 |
+|---|---|
+| 15 s | ✓ 通过（最简探针） |
+| 20 s | ✗ 必死（80 W 卡住或 30–55 s 后回 Android） |
+
+### 累计排除（含干净基线复核）
+
+softlockup 检测器 ✓（本轮复核）、mmc 驱动、fbcon/VT、CPU 空闲路径、PM51 切电、
+文件系统代码、eMMC/DMA。
+
+### 下一轮优先怀疑（20 秒量级的机制）
+
+1. **RCU stall**：`CONFIG_RCU_CPU_STALL_TIMEOUT` 默认 21 秒 —— 与 20 秒临界点吻合；
+   若某 CPU 长时间不响应 RCU 会打印 stall（不开 panic 则不致命，但可能伴随真正挂死）
+2. **时钟源 watchdog**：`clocksource_watchdog` 每 0.5 s 校验一次，若 arch timer 读数
+   不稳会被 disable 并可能连带问题
+3. 某个**20 秒的一次性延迟工作**（workqueue/hrtimer）
+4. 建议做法：在 18 秒处用**轻探针**（写另一个页、只 msync 一次）记录当时的
+   `/proc/interrupts`、`/sys/kernel/debug/clocksource` 快照（若 debugfs 可用），
+   直接看定时中断计数是否还在增长
