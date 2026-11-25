@@ -8989,3 +8989,59 @@ rp[3] = (u32)card->ext_csd.cache_size;
 
 **写数据通路正常、卡的命令通路正常、唯一坏掉的是"FLUSH_CACHE 的完成判定"。**
 修好它，`fsync` 就能把卡缓存提交到 NAND，跨重启持久化就通了。
+
+## 36.47 ★★★★ 两个重要更正 + `card_busy` 缺失（2026-11-27 18:0x）
+
+### 更正一：`CMD6 CACHE_CTRL=0` **是成功的**
+
+`c6` 探针（1-bit 自报：`mmc_switch` 返回 0 **且** 读回 `cache_ctrl == 0` 才 reboot）：
+**盒子回来了** ✓ ⟹ **CMD6 成功、卡的写缓存真的被关掉了** ✓
+
+⟹ 我之前判"卡拒绝"是**错的** ✗（那次盒子没回来是别的原因）
+
+### 更正二：7.3 要求驱动实现 `.card_busy`，而我们没有
+
+```c
+/* 7.3 mmc_poll_for_busy */
+*busy = host->ops->card_busy(host);
+if (!host->ops->card_busy) { ... }     /* 门控 */
+```
+
+- **厂内核 4.9 没有这个回调**（它用 CMD13 轮询）⟹ 移植时自然漏掉了 ✗
+- 我们的 `sg_mstar_mci_ops` 里**确实没有** `.card_busy` ✗
+- ⟹ **`FLUSH_CACHE` 的完成判定永远失败** ⟹ `fsync` 挂死 ✓✓ **这是根因**
+
+### 已实现
+
+```c
+/* 驱动已经有 DAT0 读取原语，直接复用 */
+static int mstar_mci_card_busy(struct mmc_host *host)
+{
+        return (mstar_mci_WaitD0High(0) == eMMC_ST_SUCCESS) ? 0 : 1;
+}
+...
+.card_busy = mstar_mci_card_busy,
+```
+
+同时清掉了撤销缓存补丁时留下的悬空 `.init_card` 引用。
+
+### 但写入**仍然不持久**
+
+`card_busy` 补丁编译通过、镜像已上机，LBA 61000000 仍是 Android 写的 `"ANDROIDWR"` ✗
+
+### 现在的矛盾
+
+- 卡缓存**已关**（CMD6 成功 ✓）
+- `card_busy` **已实现** ✓
+- 写入**仍然**只到卡缓冲区、不到 NAND ✗
+
+⟹ 说明还有第三个东西在挡着。候选：
+1. **`mstar_mci_WaitD0High(0)` 的参数 0 可能表示"不等待"** ⟹ `card_busy` 立即返回 0（不忙）
+   ⟹ 需要确认这个函数的语义
+2. **卡把数据收进自己的 RAM 缓冲（不是 cache）**，需要 `CMD12`/`STOP` 或特定序列才编程
+3. **FCIE 控制器的 `BLK_CNT` / 写序列**没到卡认为"完整"的程度
+
+### 下一步
+
+先确认 `mstar_mci_WaitD0High(u32_us)` 里 `0` 的语义（静态读实现），
+如果是"不等待"，`.card_busy` 就等于永远返回"不忙"，等于没实现 ✗
