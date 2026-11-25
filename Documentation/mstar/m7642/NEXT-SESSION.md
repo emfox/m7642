@@ -1,3 +1,64 @@
+# 下次从这里开始（2026-11-26 01:xx 更新）
+
+## 五项总览
+
+| # | 目标 | 状态 | 卡在哪 |
+|---|---|---|---|
+| 1 | 零风险扫描 | ✅ 完成 | 各分区全 ext4（无 squashfs/erofs 退路）；DTS 原本无网络节点 |
+| 2 | 长时运行 | 🔍 调查充分，未解决 | **内核 15–20 秒必死** |
+| 3 | **reboot** | ✅ **完成** | `arch/arm64/kernel/m7642-restart.c`，实测能自行复位回 Android |
+| 4 | 网络 | 🚧 驱动已移植完并链入内核 | **`CONFIG_NET` 一开就挂** |
+| 5 | ext4/根文件系统 | 🔍 已排除 ext4/xfs/体积/地址 | 早期 `BUFFER_HEAD` panic |
+
+## ★ 核心认知（最重要的一条）
+
+**第 2、4、5 项共享同一个根本障碍：内核活不长。**
+
+- 无网络的最小内核：能活 **15–20 秒**，然后死
+- 加了 `CONFIG_NET`（哪怕最小 NET+PACKET+ETHERNET、且移除 emac 驱动）：**8 秒内**就死
+
+⟹ 继续分别调驱动没有意义，必须先把"内核为什么活不长"解决。
+⟹ 已排除的方向（都有实测证据，见 §34.4x–§34.9x）：
+  PM51 切电、CPU idle、mmc 驱动、lockup/hung-task 检测器、fbcon/VT、文件系统代码、
+  eMMC/DMA、emac 驱动、内核大小撞保留区（`_end` = 0x20A50000，余量 40 MB）
+
+## 下一步的具体实验（按优先级）
+
+### A. 抓"死亡前最后 1–2 秒的 dmesg"（不需要 eMMC）
+
+结构已验证可行（`wloop` 那种"到 N 秒就写 DRAM 再 panic"）：
+`/init` 在 **14 秒**时把 `syslog` 写到 `0x23082000` 并 panic ⟹ 探针交接后读回来。
+看最后几行在做什么。若 14 秒还是空的，就往**前**试 10、8、6 秒（找"从什么时候开始不再有输出"）。
+
+### B. 静态扫内核里 15–20 秒量级的机制
+
+已扫过我们自己的驱动（无 10 秒以上的固定延时 ✗）。
+下一步扫 `net/core`、`kernel/`、`mm/` 里的 `schedule_delayed_work`/`queue_delayed_work`/
+`timer_setup` 里接近 15–20 秒的常量。
+
+### C. 网络那条线（等 A/B 有结果再回来）
+
+驱动本身已经完整：
+- `drivers/net/ethernet/mstar/emac/`（~7,200 行 + 6 个厂头 + shim）
+- 已链入 vmlinux（`nm vmlinux | grep mstar_emac` 有符号）
+- DTS 节点已加（`compatible = "mstar-emac"`、`interrupts = <GIC_SPI 9 …>`）
+- 卡点：`CONFIG_NET` 一开就挂
+
+## 环境与运维要点（都是踩过的坑）
+
+- **恢复链路**：红外/插座走米家云，远程 IP 不影响；`adb 192.168.10.60` 才依赖 WireGuard
+- **米家 token 会过期**：现象是 `ir-send` 卡住（给多长超时都没用）；修复 `mihome-ctl extract --relogin`
+- **恢复槽管理**：每轮实验结束刷回 `m7642-base15.img`，否则一进 recovery 就挂、恢复要两轮
+- **探针要轻**：不要每秒 `msync` 到 `/dev/mem`
+- **排除实验一次只改一个变量**（这条我违反过两次，都白白多花了好几轮）
+- **构建**：`export PATH=$HOME/Debian/m7642-build/toolchain/gcc13/bin:$PATH` —— 忘了导 PATH 会让
+  `make olddefconfig` 失败但错误被 `2>&1` 掩盖，看起来像"符号不生效"
+- **驱动接线**：`obj-y += <dir>/` 在这棵树里对新目录不生效，要直接按路径列文件
+  （见 `drivers/net/Makefile`）；`CONFIG_MII` 是隐藏符号，要给它加 prompt 才能开
+- **镜像位置**：`~/Debian/m7642-build/out/m7642-<tag>.img`
+
+---
+
 # 下次从这里开始（2026-11-25 19:2x 收尾）
 
 ## 当前状态一览
