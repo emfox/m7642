@@ -6908,3 +6908,60 @@ Makefile: obj-$(CONFIG_MT7663U) += mt7663u.o
 | 自定义寄存器 | 大量（RIU 窗口、MDIO、NOE） | 无（走标准 USB） |
 | 固件 | 不需要 | 需要，但**已从设备取出** |
 | 依赖 | 需要 `CONFIG_NET`（曾导致挂死） | 同样需要，但 `mac80211` 路径更标准 |
+
+## 36.05 WiFi 栈已建成并进核；同时确认内核仍活不到 10 秒（2026-11-26 14:xx）
+
+### ★ Kconfig 的关键发现：`CONFIG_NETDEVICES`
+
+之前一直设不上 `WLAN` / `WLAN_VENDOR_MEDIATEK` / `MT7663U` —— 根因是
+**`CONFIG_NETDEVICES` 没开**。它控制整个 `drivers/net/` 设备驱动子树：
+
+```
+CONFIG_NETDEVICES=y   ⟹   WLAN=y  ⟹  WLAN_VENDOR_MEDIATEK=y  ⟹  MT7663U=y
+                          MT76_USB=y, MT7615_COMMON=y, MT7663_USB_SDIO_COMMON=y
+```
+
+⟹ 这也**解释了之前 emac（以太网）为什么必须用 `obj-y` 硬塞才能编译** ——
+   因为 `NETDEVICES` 关着，`drivers/net/ethernet/` 根本没被处理 ✗
+   （现在 `ETHERNET=y` 正常了）
+
+### WiFi 栈构建结果
+
+- vmlinux **11,084,144 字节**（从 10.2 MB 增长）
+- `nm vmlinux | grep mt7663\|mt7615` → **174 个符号** ✓
+- 固件已嵌入 initramfs：`/lib/firmware/mediatek/mt7663_n9_rebb.bin` + `mt7663pr2h_rebb.bin` ✓
+- 镜像 `wifi1`（9.57 MB，md5 `6a811b07…`）
+
+### 上机结果
+
+```
+✓ 烧写校验通过
+✓ 回到 Android (+70s)      ← 没有死锁
+=== 数据（DRAM 空洞 0x43000000）:
+  magic=0x0   ⟹ 没有我们的报告
+```
+
+### 解读（两个结论）
+
+1. **内核仍然活不到 10 秒** —— `/init` 是 sleep(10) 之后才写空洞，
+   空洞为零 ⟹ 那段代码没执行到 ⟹ 内核在那之前就死了 ✗
+2. **`mdelay` 修复很可能生效了** —— 以前挂死时盒子不会自己回来（要插座），
+   这次 70 秒自己回来了 ⟹ 说明 panic → `machine_restart` → 我们的 handler →
+   `mdelay(1)` → AEON 复位 → 重启 ⟹ **panic 路径现在能自动恢复了** ✓
+
+### 因此剩下的核心问题仍是那一个
+
+**内核为什么活不过 10 秒。** 网络栈、eMMC 写、ext4 都排在它后面。
+
+### 剩余 11 轮的判断
+
+在这个可观测性条件下，"内核活不过 10 秒"这个问题很难在 11 轮内解决：
+- 无法读到死亡前的 dmesg（DRAM 通道未验证成功、eMMC 写不通、无串口）
+- 每次实验只有一个二值信号（能回来 / 不能回来）
+
+**建议把剩余轮次用于**：
+1. 把本轮所有发现整理成完整交接文档（含 `NETDEVICES` 这个坑、WiFi 全套配置与固件位置）
+2. 至少把"WiFi 驱动 probe 是否挂"这个问题用二值信号测出来
+   （镜像只启用 WiFi、不跑任何 /init 逻辑，只 sleep 3 秒后 panic：
+   能回来 ⟹ probe 没挂；不能回来 ⟹ probe 挂死了）
+3. 保持仓库干净、文档与代码全部提交
