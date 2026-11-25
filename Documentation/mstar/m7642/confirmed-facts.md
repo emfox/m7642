@@ -9045,3 +9045,66 @@ static int mstar_mci_card_busy(struct mmc_host *host)
 
 先确认 `mstar_mci_WaitD0High(u32_us)` 里 `0` 的语义（静态读实现），
 如果是"不等待"，`.card_busy` 就等于永远返回"不忙"，等于没实现 ✗
+
+## 36.49 ★★★★★ 第二个子代理的逐行对比：找到"卡忙判定是假的"（2026-11-27 19:4x）
+
+子代理 `write-path-differ` 做了**全量 `diff -u` 对比**，结论非常有价值。
+
+### 前提很硬：两个驱动的写路径在寄存器层面几乎相同
+
+- `eMMC_hal_speed.c` / `eMMC_utl.c` / `eMMC_prg.c` / 全部头文件 —— **逐字节相同**
+- `eMMC_hal_v5.c` —— 只差 41 行 `pr_info`，**无逻辑改动**
+- `mstar_mci_v5.c` —— 差 520 行，其中约 300 行是调试输出，**真正的逻辑改动只有 6 处**
+
+⟹ **所以问题不在"哪个寄存器写错了"**
+
+### ★ 核心发现（D1）：卡忙判定读的是一个恒为 0 的位
+
+**实测的 `SD_STATUS` 值**（`CONFIG_M7642_BUSYDBG` 日志）：
+```
+M7642 W0H ok:      SD_CTRL=0x100 SD_STATUS=0xff00 EVENT=0x10 SD_MODE=0x1
+M7642 W0H TIMEOUT: SD_CTRL=0x106 SD_STATUS=0xff00 EVENT=0x0  SD_MODE=0x1
+```
+⟹ `0xff00` ⟹ **`BIT_SD_CARD_BUSY`(bit6) 永远是 0** ✗
+
+而我们两处都用它：
+- `mstar_mci_WaitD0High()`（`CONFIG_M7642_BUSY_LEVEL=y`）
+- `mstar_mci_card_busy()`（我这一轮新加的）
+
+⟹ **两个都恒返回"不忙"** ✗
+
+**厂内核 4.9 没有 `.card_busy`** ⟹ 4.9 core 回落到 **CMD13 + R1 `CURRENT_STATE`** ⟹ **问卡自己**
+⟹ 而 7.3 core 只要 `host->ops->card_busy` 存在就**不再问卡** ⟹ 我们**主动放弃了唯一的可信忙信号** ✗
+
+### 完整因果链
+
+```
+写 → DMA_END（控制器把最后一位推出去）
+  → 卡开始编程，DAT0 拉低（期间不响应除 CMD13 外的命令）
+  → 我们 WaitD0High 立即返回"OK"（bit6 恒 0）
+  → fsync → FLUSH_CACHE (CMD6) → 撞在忙卡上 → CMD_END 1s 超时 → retry 10 次 → 放弃
+  → 数据永远停在卡缓存 → PM51 切电 → 丢失
+```
+
+⟹ **这一条同时解释了三个独立观测**：O_DIRECT 同启动内匹配（在缓存里）、跨重启丢失（没 flush）、`fsync` 挂死（CMD6 撞忙卡）✓✓
+
+### 已实施的修复
+
+1. **删掉 `.card_busy` 注册** ⟹ 7.3 自动回落 CMD13 + R1 `CURRENT_STATE`，
+   **与厂内核 4.9 逐位等价** ✓
+2. **写完最后一笔后 `msleep(20)`**（子代理建议的最小验证）⟹ 给卡编程的固定宽限期 ✓
+
+### 子代理另外指出的四个次要差异
+
+| 编号 | 差异 | 影响 |
+|---|---|---|
+| **D2** | `CONFIG_M7642_DISABLE_CACHE` 是死代码（`.init_card` 被 `NO_HS_SWITCH` 的 `#if` 包住） | 但是**单独做不够**（§36.46 实测过） |
+| **D3** | `ENABLE_FCIE_ADMA` 1→0，我们走的是厂内核**从未编译过**的 SGDMA 分支 | 单块等价；多段有风险 |
+| **D4** | 我们把 `ClearEvents_Reg0()` 换成了 `ClearEvents()` | 会 W1C 掉 `SD_STATUS` 的 sticky 写错误位 ⟹ **掩盖失败证据** |
+| **D5** | `BLK_SIZE=dmalen`（<512）的 guard | 几乎打不到 |
+
+### 专答"厂内核有没有某个我们没有的提交动作"
+
+**没有。** 写完后厂内核**不等 busy**、**不查 R1 CURRENT_STATE**、**不发额外命令** ——
+比我们还宽松。唯一真正的"提交"是 `FLUSH_CACHE`（CMD6），而它是 core 发的，
+**两边都有**，差别只在**它那边能完成、我们这边撞忙卡超时**。
