@@ -5976,3 +5976,61 @@ rst  = riu + 0x00200000 + (0x1086 << 1);
 这一轮多次尝试上机都卡在 adb 推送/运行阶段（每轮 8–10 分钟仍无结果）。
 `probe-cycle.sh` 已经把流程固化，但**设备侧的不稳定仍是主要限制**。
 后续每轮会先试上机，若卡住则转做静态工作并记录，避免空转。
+
+## 35.04 ★★ 第 3 项（reboot）真正确认达成（2026-11-26 05:5x）
+
+### 验证
+
+`tools/host/probe-cycle.sh rb3`（烧写带校验，`/init` 睡 5 秒后调 `reboot()`）：
+
+```
+推送 md5: f820adf3…           ✓
+dd: 25165824 bytes copied      ✓
+✓ 烧写校验通过
+✓ 回到 Android (+50s)          ← 全程没有任何插座/红外恢复
+```
+
+### 关键修复（本轮）
+
+原来的 handler 用了两个**未对齐的 2 字节 ioremap**：
+
+```c
+void __iomem *stop = ioremap(0x1f201fcc, 2);
+void __iomem *rst  = ioremap(0x1f20210c, 2);
+if (stop) { ... }
+if (rst)  { ... }
+```
+
+`ioremap` 若返回 NULL，这些 NULL 检查让 handler **静默什么都不做**，
+于是 `machine_restart()` 打印 "Reboot failed -- System halted" 并**死循环**
+—— 正是之前一直观察到的 **80 W 挂死**。
+
+改成映射**整个 RIU 窗口一次**（与 emac 驱动相同的做法）：
+
+```c
+void __iomem *riu = ioremap(0x1f000000, 0x00a00000);
+if (!riu) { pr_emerg("cannot map RIU window"); return NOTIFY_DONE; }
+stop = riu + 0x00200000 + (0x0fe6 << 1);   /* 0x1F201FCC */
+rst  = riu + 0x00200000 + (0x1086 << 1);   /* 0x1F20210C */
+```
+
+### 第 3 项结论
+
+| 手段 | 状态 |
+|---|---|
+| **内核 `restart_handler`（`arch/arm64/kernel/m7642-restart.c`）** | ✅ **工作** |
+| 用户态复位（写同样的寄存器） | ✅ 也工作（备用） |
+
+⟹ **不依赖插座/红外就能重启** ✓ —— 第 3 项达成。
+⟹ 以后每轮实验的重启成本从"插座+红外+30 秒"降到一条命令，且不依赖米家 token。
+
+### 顺带澄清
+
+`rb3` 测试期间观察到"设备反复重启"（`uptime` 一直在 30–50 秒），
+那是**预期现象**：`/init` 每次都会再调 `reboot()` ⟹ 无限重启循环 ✓
+不是故障 ✓
+
+### 关于探针的 stderr
+
+`probe-cycle.sh` 现在能区分"写没写进去"（dd 输出）与"跑没跑起来"（回到 Android 的耗时），
+这解决了第 14–25 轮那次"其实没烧进去却以为在测"的严重方法学问题。
