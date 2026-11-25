@@ -42,6 +42,9 @@ tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash �
    因为 MMC 核心只按 `ext_csd.hs_max_dtr` 决定是否切 HS。
    下一步（§34.45 已定论：失败的是 **CMD6(SWITCH) 本身**——核心埋点在成功路径，
    一条都没打印，说明 `mmc_wait_for_cmd(CMD6)` 就返回了错误。详见下述细化）：
+   **§34.48 已再否掉两个假设**：`reg_ckg_fcie_syn` 本来就是 0x1（不是问题）；
+   LEGACY 下用固定慢时钟是**设计如此**（PLL 只在 HS/HS200 启用），所以 `reg_ckg_fcie=0x6400` 也正常。
+   现在最该做的是 **在 `request` 里对 `opcode==6` dump 现场**（只加日志、不改行为，风险最低）。
    ① 日志显示 CMD6 之后**没有 `set_ios(timing=HS)`** ⟹ 主机从未切 HS，而卡切了 ⟹ CMD13 采样错。
       先验证 `mmc_set_timing()` 为何没有触发 `set_ios`（或驱动内部把 HS 当 LEGACY 处理）。
    ② `reg_ckg_fcie_syn` 实测 `0x0003`，驱动要求 `01`；厂版自带自检，可先让自检跑起来。

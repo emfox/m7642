@@ -3496,3 +3496,55 @@ EMMC_PLL 1X = 0xB, 2X = 0xC（写进 BIT2..5）
 - 只做 (3)：`reg_ckg_fcie_syn` 强制 `0x0001`，其余完全保持原样（一行改动，风险最低）；
 - 或者只做 (1) 的一半：仅跳过 `emmcpll_0x*` 的写，保留 `chiptop_0x6E/6F/50`；
 - 每一步都先静态确认"如果在 x 处挂死，会损失什么"，避免再出现"零数据"的发数。
+
+## 34.48 eMMC：两个最小单点实验，否掉「syn」和「时钟源」两个假设（2026-11-25 12:2x）
+
+### 实验 1（`syn1`）：强制 `reg_ckg_fcie_syn = 0x0001` —— 否掉
+
+```
+<6>[0.195] M7642 force reg_ckg_fcie_syn=0x0001 (was 0x1)
+```
+
+**它本来就是 0x1** ⟹ §34.46 里我们内核读到 `0x0003` 是 **init 失败之后**的状态，
+不是 init 时的值。CMD6 依旧超时。**这个假设结案（不成立）。**
+
+### 实验 2（`ckg1`）：在 PLL 分支强制 `reg_ckg_fcie = 0x00f0` —— 否掉
+
+日志里**没有**那行 force 打印 ⟹ `eMMC_clock_setting()` 走的是**非 PLL 分支**。
+读 `mstar_mci_set_ios()` 得到原因：LEGACY timing 下按设计就是
+
+```c
+if (timing == MMC_TIMING_LEGACY) {
+        eMMC_pads_switch(FCIE_eMMC_BYPASS);
+        if (clock > CLK_400KHz) eMMC_clock_setting(FCIE_SLOW_CLK);   // 固定慢时钟
+```
+
+PLL（`eMMC_PLL_FLAG` 0x80 位）只在 HS/HS200 才启用，而 HS timing 是 **CMD6 成功之后**
+才设置的 ⟹ 命令发出时主机仍在"慢时钟 + LEGACY"，`reg_ckg_fcie=0x6400` 是**正常的慢时钟配置**，
+不是错的。**这个假设结案（不成立）。**
+
+### 现在的准确状态
+
+- 卡在 400 kHz/慢时钟下**完全正常**（CID/CSD/EXT_CSD 都读到 ✓）；
+- 失败的**唯一**动作是 **CMD6(SWITCH, HS_TIMING=1)**：控制器等
+  `FCIE_MIE_EVENT` bit4 十秒不来（`Reg.0000h: 0000h, but wanted: 0010h`），
+  `mmc_wait_for_cmd()` 返回错误，核心 `goto out`；
+- 主机侧时钟源/同步时钟都**不是**原因（本节的两次实验）。
+
+### 下一步候选（按价值）
+
+1. **在驱动 `request` 里专门对 `opcode==6` 打印现场**：发命令前后各 dump
+   `FCIE_SD_MODE / SD_CTRL / SD_STATUS / MIE_EVENT / MIE_FUNC_CTL` 与命令 FIFO（0x1F222680 起），
+   判断是「命令没写进 FIFO」「写进去了卡不回」还是「卡回了但事件位不置」。
+   这一步只加日志、不改行为，**风险最低**，且能一次把 CMD6 的失败点夹死。
+2. 若确认是"卡不回"：考虑 eMMC 4.5 的 `CMD6` 在 1-bit/慢时钟下需要更长 `generic_cmd6_time`，
+   可在驱动里对 opcode 6 放宽超时（`pMRQ_st->cmd->busy_timeout`）。
+3. 若确认是"事件位不置"：查 `FCIE_MIE_FUNC_CTL` 的 bit4 语义（`0x0010`）与 `FCIE_SD_CTRL`
+   的使能位是不是在 CMD6 前被别的代码清掉了。
+
+### 方法论提醒（本轮两次踩到）
+
+- 探针"期望 x30"必须**从当前构建的 System.map 现算**：本轮 `panic` 从 `0x...2a22c`
+  漂到 `0x...2a244`，我第一发用旧值把一次**成功**判成了 INCONCLUSIVE。
+- 读报告页时必须按**该 `ver` 的布局**解码：`ver=6`（枚举版）用 `ver=7`（寄存器版）的偏移解出来
+  全是垃圾（出现过 `SD_CTRL=0x30636d6d`，其实是 "mmc0" 字符串残渣）。
