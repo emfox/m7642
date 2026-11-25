@@ -8950,3 +8950,42 @@ rp[3] = (u32)card->ext_csd.cache_size;
 说明根因还在更下面一层。**每个修复都必须先验证"这个修复本身生效了没有"**
 （CMD6 返回值和 `EXT_CSD` 读回），否则会像 `cache_size` 那次一样，
 把"补丁没生效"误当成"机制不对"。
+
+## 36.46 eMMC 的完整结论链：最后一个待修环节是 FLUSH_CACHE 的忙等（2026-11-27 17:4x）
+
+### 四次修复尝试的完整记录
+
+| # | 修复 | 依据 | 结果 |
+|---|---|---|---|
+| 1 | 清 `card->ext_csd.cache_size = 0` | 以为能关缓存 | **有害** ✗（废掉三条 flush 路径，子代理 H1 指出） |
+| 2 | 真的发 `CMD6 CACHE_CTRL=0` | 子代理 H1 修法一 | **卡拒绝** ✗（1-bit 自报：盒子没回来） |
+| 3 | 写完成后补 `WaitD0High()` | 子代理 H8 | **无效** ✗（跨重启仍丢） |
+| 4 | **撤销 #1，恢复 `cache_size`** | 子代理 H1 修法二 | `fsync` 现在会**真的发 FLUSH** ✓ 但 **`fsync` 挂死** ✗ |
+
+### 因此 eMMC 的状态完全清楚了
+
+```
+写 → 到达卡的缓冲区 ✓（O_DIRECT 判据确认）
+   → 永不提交 NAND ✗
+   → 想关缓存：卡拒绝 ✗
+   → 想显式 FLUSH：R1b 忙等挂死 ✗
+```
+
+### 最后一个待修环节：`_mmc_flush_cache()` 的 R1b 忙等
+
+`fsync` → `blkdev_issue_flush` → `_mmc_flush_cache()`
+→ `mmc_switch(card, EXT_CSD_CMD_SET_NORMAL, EXT_CSD_FLUSH_CACHE, 1, 0)`
+→ `__mmc_switch()` 里 `send_status`/忙等 R1b
+→ 在 `mstar_mci` 驱动里**永远等不到 busy 结束** ✗
+
+**修法**（下次）：
+1. 看 `mstar_mci_v5.c` 里 R1b busy 的等待实现（`M7642_BUSY_LEVEL` 相关的轮询）
+2. 与厂内核 4.9 的同函数逐行对比（厂内核的 FLUSH 是能工作的 —— Android 关机时会 flush）
+3. 关键：`EXT_CSD_FLUSH_CACHE` 的 timeout 参数传的是 **0**（`mmc_switch(..., FLUSH_CACHE, 1, 0)`）
+   ⟹ 用 **默认最大超时** ⟹ 如果驱动把"busy 一直高"当成"还没完成"，就会等满超时
+4. 也可能需要轮询 `SD_STATUS` 的 `DAT0` 而不是等中断
+
+### 这一夜的 eMMC 结论（一句话）
+
+**写数据通路正常、卡的命令通路正常、唯一坏掉的是"FLUSH_CACHE 的完成判定"。**
+修好它，`fsync` 就能把卡缓存提交到 NAND，跨重启持久化就通了。
