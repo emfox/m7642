@@ -28,7 +28,9 @@ have() { [ "$(timeout 5 $ADB -s $TV shell getprop sys.boot_completed 2>/dev/null
 slot_md5() { timeout 120 $ADB -s $TV shell "su -c '/vendor/bin/busybox dd if=/dev/block/by-name/recovery bs=4096 2>/dev/null | /vendor/bin/busybox md5sum'" </dev/null 2>/dev/null | tr -d '\r' | cut -d' ' -f1; }
 
 [ -f "$SRC" ] || { echo "  ✗ 镜像不存在: $SRC"; exit 1; }
-timeout 6 $ADB connect $TV >/dev/null 2>&1
+# adb server 会积累坏状态，导致 su/dd 命令静默返回空
+timeout 10 $ADB kill-server >/dev/null 2>&1; sleep 2
+timeout 15 $ADB connect $TV >/dev/null 2>&1; sleep 2
 have || { echo "  ✗ 设备未就绪"; exit 1; }
 
 # 1) 推 + 校验

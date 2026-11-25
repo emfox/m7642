@@ -8040,3 +8040,57 @@ BCB 回读 / 结果判定），任一步失败即中止。
 - 之前所有"内核无反应/挂住"的结论**都不可信**，需要用新流程重做
 - eMMC 写的结论（`pwrite` 成功、`fsync` 成功、`drop_caches` 后读回不匹配）是**用新流程得到的**，
   可信 ⟹ **写确实没到卡**
+
+## 36.27 仪器的正确用法 + 两个被忽略的前提（2026-11-27 02:3x）
+
+### ★ 发现一：cmdline 里**没有 `panic=` 参数**
+
+默认 `panic=0` ⟹ **panic 之后挂死、永不重启** ✗
+⟹ 这解释了为什么所有 "plain"（不带 tramp）镜像都回不来。
+**已修**：cmdline 加 `panic=10`。
+
+### ★ 发现二：`PANIC_LOG` 有**两个入口**，`PANIC_DUMP_VA` 才是开关
+
+```c
+m7642_kmsg_dump()    /* kmsg_dump_register 注册的处理器 */
+m7642_panic_dump()   /* 给 tramp 调："the trampoline calls this instead"
+                      * 因为探针拦截了 panic() 入口，函数体永远不执行 */
+```
+
+落点 `M7642_PANICLOG_PA = 0x230a0000`，布局 `u32 magic 'M764' | u32 length | text`。
+
+⟹ **正确用法**是 `PANIC_DUMP_VA=<m7642_panic_dump 的地址>`（例如 `0xffffffc08036b794`）
+⟹ 我一直设 `PANIC_DUMP_VA=0`，等于**把它关掉了** ✗
+
+### ★ 发现三：`adb reboot recovery` **确实能跑我们的镜像**
+
+实测：刷完 → `adb reboot recovery` → 回来后读槽，**在重启前**槽的全 md5 = 我们的镜像 ✓
+⟹ 之前"槽被还原"发生在**我们的内核跑完之后**（Android 启动时），**不影响交接** ✓
+
+### 但 `0x230a0000` 仍然是零
+
+两种做法都试过：
+| 做法 | 结果 |
+|---|---|
+| `pmlog2`：plain 镜像（panic 体完整）+ `panic=10` | 回来了 ✓，`0x230a0000` 全零 ✗ |
+| `pdump`：tramp + `PANIC_DUMP_VA=m7642_panic_dump` | 回来了 ✓，`0x230a0000` 全零 ✗ |
+
+⟹ 最可能的解释：**`0x230a0000` 和 `0x23081000` 一样是普通 System RAM，被 Android 启动时分配并清零** ✗
+   （与 §36.16 的 `memtest` 结论一致：`/dev/mem` 能写，但跨 Android 启动不保留）
+
+⟹ 文档里"这几个页已验证能存活"的说法，**在当前的 Android 状态下不成立** ✗
+
+### 本轮的确定收获（下次可直接用）
+
+1. **`run-bcb.sh`**：五项校验的上机工具（推送 md5 / dd / **槽全 md5** / BCB 回读 / 结果判定）
+2. **`adb reboot recovery` 能跑我们的镜像**（前提是刷写已验证）
+3. **必须给 cmdline 加 `panic=<n>`**，否则 panic 后挂死
+4. **`PANIC_DUMP_VA` 要指向 `m7642_panic_dump`**，不能设 0
+5. **校验必须比全镜像**，前 4KB 会骗人
+
+### 下次的方向
+
+既然普通 System RAM 活不过 Android 启动，只剩：
+1. **eMMC**（唯一真持久介质）—— 但写不落盘，且已确认 `pwrite`/`fsync` 都返回成功却不到卡
+2. **ramoops 保留区**（`0x41900000..0x41A00000`）—— 它是 Android 唯一不会清零的内存；
+   目前 console zone 被 Android 自己的日志覆盖，**record zone 还没试过正确写法**
