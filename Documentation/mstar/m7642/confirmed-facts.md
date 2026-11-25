@@ -8644,3 +8644,71 @@ PM51 会在约 40 秒时**直接切电**（这是第 2 项的核心问题）。
 **从"某个能力可行"直接跳到"这就是原因"，没有做最小验证。**
 正确做法：只改一个变量 → 只观察一次结果 → 再决定下一步。
 这一夜的多次误判（`size=0`≠失败、`ATTR_EL0`、这个还原来源）都是这个毛病。
+
+## 36.40 ★★★★★ 独立子代理推翻了我的 eMMC 补丁方向（2026-11-27 14:2x）
+
+子代理 `persist-analyst` 的独立分析发现：**我那个"关缓存"的补丁不但没用，而且方向是反的** ✗
+
+### 代码链条（都在本树里可复核）
+
+```c
+/* drivers/mmc/core/block.c —— 卡有缓存，队列才声明"我有写缓存" */
+} else if (mmc_cache_enabled(card->host)) {
+        features |= BLK_FEAT_WRITE_CACHE;
+
+/* block/blk-flush.c:blk_insert_flush() */
+if (blk_queue_write_cache(q)) policy |= REQ_FSEQ_PREFLUSH;
+else { /* policy == 0 */ blk_mq_end_request(rq, 0); }   /* flush 被"成功"吞掉 */
+```
+
+⟹ 我把 `card->ext_csd.cache_size` 清成 0 ⟹ `mmc_cache_enabled()` 变假 ⟹ 队列**不再声明**
+`BLK_FEAT_WRITE_CACHE` ⟹ **`fsync()` 的 FLUSH 变成空操作且返回 0** ✗
+（"加了 DISABLE_CACHE 后 fsync 不再挂死"，那个"不挂死"本身就是空操作的证据 ✗）
+
+同一条链还让：
+- `_mmc_flush_cache()` 在关机路径**也被门挡住** ⟹ `reboot(2)` 的 `device_shutdown` 刷不动 ✗
+- `power_off_notification = POWER_ON` ⟹ 连"我要断电了，你快落盘"也掐了 ✗
+- **而卡侧的 `EXT_CSD[0xA1] CACHE_CTRL` 从来没被改过** ⟹ 卡的缓存一直开着 ✗
+  （我改的只是 **Linux 的认知** ✗）
+
+⟹ **这一个机制就足以解释"写成功、重启后变回旧内容"** ✓✓
+  （"旧内容"而不是"垃圾"正是卡缓存的典型签名）
+
+### 已改用正确的修法
+
+```c
+/* drivers/mmc/core/mmc.c，mmc_read_ext_csd 之后 */
+if (card->ext_csd.cache_size) {
+        int rc = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+                            EXT_CSD_CACHE_CTRL, 0,
+                            card->ext_csd.generic_cmd6_time);
+
+        pr_info("%s: M7642: CMD6 CACHE_CTRL=0 -> %d (cache was %u KB)\n", ...);
+}
+```
+
+⟹ **真的给卡发 CMD6** 把 `CACHE_CTRL` 置 0 ⟹ 卡不缓存 ⟹ 每笔写自己落 NAND ⟹
+  不需要任何 flush ✓ 而 `cache_size` 保持原值，`fsync`/关机 flush 路径也恢复正常 ✓
+
+### 子代理还指出两个我忽略的判据缺陷
+
+1. **`pwrite`→`fsync`→`pread` 一致** ⟹ `pread` 命中**页缓存**，与数据到没到卡无关 ✗
+   ⟹ 判据必须换成 `O_DIRECT` 或 `drop_caches` 之后再读
+2. **ramoops 的 `sig=DBGC` + `size=0`** ⟹ 是"**Android 探测过这块**"的指纹 ✗
+   （`post_init` 在尺寸非法时自己写 sig 再 zap）⟹ 不是"我们没写进去"的证据
+   ⟹ 判据必须换成**数据区内容**，而不是头部
+
+### 其它待验证的机制（子代理给的排序）
+
+| 机制 | 说明 |
+|---|---|
+| **H3 测试 LBA 被 Android 覆盖** | LBA 61000000 可能落在 ext4 区，每次启动被 journal/fsck 重写 |
+| **H4 槽还原者** | 用**槽尾部空闲区（LBA 60000）写魔数**一发分开"还原者 / 写没落地 / 没人还原" |
+| **H6 DDR 每次启动被重新初始化** | 用**6 个地址的魔数图谱**一次拿到"全丢/部分保留/全保留" |
+| **H8 FCIE 写完成语义** | `DMA_END` ≠ 卡写完；写路径缺"等 DAT0 释放"和完整 R1 校验 |
+
+### 这一条的教训
+
+**我自己写的补丁，因为没有做"改动前后行为对比"，反而制造了一个新的失败模式，
+并且让"fsync 不再挂死"这个假信号看起来像是修好了。**
+子代理从代码链条出发独立推导，一眼就看出方向反了 —— 这正是"独立复核"的价值。
