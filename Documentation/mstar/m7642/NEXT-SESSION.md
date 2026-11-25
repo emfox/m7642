@@ -48,6 +48,15 @@ tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash �
 
 ---
 
+
+## 设备当前落点（2026-11-25 10:35）
+
+- `boot` 槽：厂值（未动）⟹ 正常开机进 Android ✓（adb `192.168.10.60:5555` 可达）
+- `recovery` 槽：**我们的探针镜像 `m7642-fix3.img`**（不是厂值）
+  ⟹ 不要跑 `boottest.sh arm`（它会把当前槽内容当厂值备份），除非先恢复厂值；
+  `misc` 的 BCB 已被 `recoverycmd` 擦掉，断电后不会锁 recovery。
+- 恢复设备：`tools/host/socket.sh recover`（OFF → 10 s → ON → 3 s → IR POWER）。
+
 # 历史记录（倒序，仅作追溯）
 
 **2026-11-23 晚 ★★★★★ world B 解锁；卡点 = `kmem_cache_init()` 内部**
