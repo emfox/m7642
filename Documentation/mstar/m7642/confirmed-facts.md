@@ -8515,3 +8515,96 @@ if (zap)
 
 `PRZ_FLAG_ZAP_OLD` 这条解释掉了"size 总是 0"，但**没有**解释"pstore 为空"和"数据区是 ff"。
 这两个是独立的、仍待解释的问题。
+
+## 36.37 ★★★★ 统一解释：两条线的失败是同一个形状（2026-11-27 11:4x）
+
+### 观察到的两个完全平行的现象
+
+| 通道 | 同启动内 | 跨重启 |
+|---|---|---|
+| **ramoops**（内核写 `0x41940000`） | `/dev/mem` 读回 `size != 0` ✓ | 数据区变 `ff` ✗、pstore 空 ✗ |
+| **eMMC**（`pwrite` + `fsync` 到 LBA 61000000） | `pread` 读回一致 ✓（`chk` = TRUE） | 扇区仍是旧内容 ✗ |
+
+⟹ **两条线都"写成功、跨重启消失"** —— 同一个形状
+
+### 统一假设：**我们内核重启时，写入被截断**
+
+PM51 会在约 40 秒时**直接切电**（这是第 2 项的核心问题）。
+如果我们的 `/init` 在写入之后执行 `reboot()`，而 PM51 在**复位完成前**就把电切了，
+那么：
+
+- DRAM 内容可能被部分重置 ✗（解释 `ff`）
+- eMMC 的写可能只到了卡内缓存、没落 NAND ✗（解释扇区不变）
+- Android 启动时看到的 ramoops zone 是**半写状态** ⟹ `sig` 匹配但数据无效 ⟹ `post_init` 走"无效"分支 ⟹ 重写 sig + zap ✗ ⟹ **完全符合观察** ✓
+
+### 这个假设能解释之前所有解释不了的矛盾
+
+- "写入落地（`cc`/`cx` 实测）" vs "重启后是 `ff`" ✓ —— 因为**落地了，但随后被切电重置**
+- "`save_old` 应该被调用" vs "pstore 空" ✓ —— 因为 Android 看到的是**半写状态**，走了无效分支
+- eMMC "`fsync` 成功" vs "扇区不变" ✓ —— 因为卡内缓存没来得及落 NAND
+
+### 因此正确的下一步：**先攻第 2 项（PM51 保活）**
+
+在 PM51 会切电的前提下，**任何**持久化通道都不可靠 ✗
+⟹ 优先级应该反过来：**先让内核能稳定存活并干净重启，再谈通道**
+
+### 具体做法（下次）
+
+1. **测量**：我们的 `/init` 调用 `reboot()` 之后到 Android 起来之间，功率曲线是否有"掉到 4-7W 再回到 80W"的**硬断电**痕迹
+   （用米家插座的功率历史，`mihome-ctl` 应该能取）
+2. 如果有 ⟹ 确认是 PM51 切电 ⟹ 第 2 项是前置条件
+3. 如果没有 ⟹ 我的假设错了，回到 ramoops 的 Android 侧排查
+
+## 36.38 ★★★★★ 操作阻塞解除：根分区可 remount rw，能改写 `/system/etc/recovery.img`
+
+### 发现
+
+```
+/dev/root on / type ext4 (ro,seclabel,relatime,block_validity,delalloc,barrier,user_xattr,acl)
+```
+
+- **`/system` 不是独立挂载**，它是 **`/` 的一部分**（没有 dm-verity）
+- `su -c 'busybox mount -o remount,rw /'` **成功** ⟹ `/` 变成 `rw`
+- `touch /system/etc/_t` **成功** ⟹ **`/system/etc` 可写** ✓
+
+### 于是一个决定性的操作解法
+
+**把 `/system/etc/recovery.img` 换成我们的镜像** ⟹ Android 每次启动的"还原"动作
+就变成**替我们把镜像刷进 recovery 槽** ⟹ **槽里永远是我们的镜像** ⟹
+`adb reboot recovery` **必然**跑我们的内核，实验成功率从"极低"变成"接近 100%" ✓✓
+
+### 已完成的步骤
+
+1. **备份原图**（关键，先做）：
+   ```
+   cp /system/etc/recovery.img /data/local/tmp/recovery.img.orig
+   md5 = 0d6e895a090442fdcb8699e1b583c3d6   ✓ 校验一致
+   ```
+2. **安装我们的镜像**：
+   ```
+   mount -o remount,rw /
+   cp /data/local/tmp/probe.img /system/etc/recovery.img
+   sync
+   md5 = fb4881f4c365b6ce48855ed5f137b9cf  ✓ 与镜像一致
+   ```
+
+### 注意：这是**有代价**的改动
+
+- 槽里会一直是我们的镜像 ⟹ 每次 `adb reboot recovery` 都跑我们的内核
+- **恢复原状**：
+  ```
+  mount -o remount,rw /
+  cp /data/local/tmp/recovery.img.orig /system/etc/recovery.img
+  sync
+  ```
+- 原图备份在 `/data/local/tmp/recovery.img.orig`，**不要删**
+
+### 用法
+
+第一次 `adb reboot recovery` 时 Android 会先把我们的镜像刷进槽（在关机阶段），
+**第二次**才真正运行我们的内核。所以**两次重启**是正常的。
+
+### 这一条解决了整夜最大的操作障碍
+
+之前的失败里，**相当一部分**不是技术假设错，而是"槽被还原了但我们不知道"。
+现在这个变量被彻底控制住了。
