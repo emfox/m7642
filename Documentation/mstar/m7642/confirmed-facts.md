@@ -6839,3 +6839,72 @@ wlan_mt76x3_usb_prealloc  16384
 1. 这颗 MT76x3 是 USB 还是 SDIO 接口（模块名 `wlan_mt76x3_usb` 指向 USB，但需从 DTS/USB 枚举确认）
 2. 是否需要厂商固件（mainline 的 `mt7663` 固件在 linux-firmware 里叫 `WIFI_RAM_CODE_MT7663.bin` 之类）
 3. 我们的 DTS 里有没有 USB 控制器节点（厂树有 `usb: ehci` 的移植记录）
+
+## 36.04 ★ 第 4 项改走 WiFi：全部前置条件已确认并备齐（2026-11-26 13:xx）
+
+放弃厂商那个 7200 行的以太网驱动，改走 **MT7663 USB WiFi** —— 工作量小一个数量级，
+而且完全不依赖 eMMC 写路径。
+
+### 已确认的四个事实
+
+**① 芯片型号与接口（从 Android 读）**
+
+```
+/sys/bus/usb/devices/3-1   0e8d:7663   Wireless_Device
+```
+
+`0e8d` = MediaTek，`7663` = **MT7663**，挂在 **USB** 上。
+
+**② 我们的 DTS 里已经有对应的 EHCI 控制器**
+
+`arch/arm64/boot/dts/mstar/m7642.dtsi` 里已写明：
+
+```
+ehci3  0x2600  virq 68  -> SPI 36  bus usb3  (MT7663 wifi/BT)
+compatible = "mstar,m7642-ehci", "generic-ehci";
+```
+
+⟹ **mainline 的通用 EHCI 驱动**直接匹配 ✓
+
+**③ mainline 7.3.5 有现成驱动**
+
+`drivers/net/wireless/mediatek/mt76/mt7615/`：
+
+```
+config MT7663U          ← "MT7663U 802.11ac 2x2:2 wireless devices"
+	select MT76_USB
+	select MT7663_USB_SDIO_COMMON
+	depends on MAC80211
+	depends on USB
+Makefile: obj-$(CONFIG_MT7663U) += mt7663u.o
+```
+
+**④ 固件已在设备上，并已取出**
+
+| 设备上的文件 | 大小 | mainline 期望的名字 |
+|---|---|---|
+| `/vendor/firmware/WIFI_RAM_CODE_MT7663.bin` | 445,800 | `mediatek/mt7663_n9_rebb.bin` |
+| `/vendor/firmware/mt7663_patch_e2_hdr.bin` | 278,558 | `mediatek/mt7663pr2h_rebb.bin` |
+| `/vendor/firmware/EEPROM_MT7663.bin` | 1,536 | （备用，mainline 通常从芯片读 EEPROM） |
+
+已保存到 `~/Debian/m7642-build/fw-mt7663/`（按 mainline 命名放好 `mediatek/` 子目录）。
+**没有放进 git 仓库**（固件是厂商资产，不入库；文档里记了获取方法）。
+
+### 下一轮的施工清单
+
+1. 打开配置：`CONFIG_MT7663U`（会 select `MT76_USB`、`MT7663_USB_SDIO_COMMON`）
+   + `CONFIG_CFG80211`、`CONFIG_MAC80211` + `CONFIG_USB`、`CONFIG_USB_EHCI_HCD`、
+   `CONFIG_USB_EHCI_HCD_PLATFORM`
+2. 把两个固件放进 initramfs 的 `/lib/firmware/mediatek/`
+3. 编译 → 镜像 → 上机
+4. **观测信号**（仍然只有二值）：内核是否**不挂**、`mt7663u` 是否 probe 成功
+   （若 probe 成功，可以再尝试让它的 MAC/PHY 初始化产生可观测的副作用）
+
+### 为什么这条路比以太网更值得
+
+| | 以太网（mstar-emac） | WiFi（MT7663U） |
+|---|---|---|
+| 驱动代码 | 7200 行厂商代码 + shim，已移植但**从未跑通** | mainline 现成，几千行**通用代码** |
+| 自定义寄存器 | 大量（RIU 窗口、MDIO、NOE） | 无（走标准 USB） |
+| 固件 | 不需要 | 需要，但**已从设备取出** |
+| 依赖 | 需要 `CONFIG_NET`（曾导致挂死） | 同样需要，但 `mac80211` 路径更标准 |
