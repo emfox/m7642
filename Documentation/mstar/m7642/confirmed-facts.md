@@ -8414,3 +8414,48 @@ console zone **不需要 `====` 头** ⟹ Android 的 `post_init` 会 `save_old`
 
 **ramoops 内核侧打通**：DT 节点 + `no-map` + 正确落点 ⟹ probe 成功、console 写入确认。
 这是这一夜最有价值的进展，比任何 eMMC 试验都更接近目标。
+
+## 36.35 ★★★ 最终结论：内核侧三层全部确认，只差 Android 导出（2026-11-27 09:3x）
+
+### 三个 1-bit 自证实验——全部通过
+
+| 探针 | 判据 | 结果 |
+|---|---|---|
+| `sr` | `/init` 读到 `PORM`（probe 成功标记）→ reboot | **回来** ✓ ⟹ `ramoops_probe` **成功** |
+| `cc` | `PORM` **且** `0x41940000` 的 `size != 0` → reboot | **回来** ✓ ⟹ 该地址的写**落地** |
+| `cx` | `0x41980000` 的 `size != 0` → reboot | **回来** ✓ ⟹ 该地址的写**也落地** |
+
+⟹ **内核侧完全打通**：probe 成功 ✓、console 后端收数据 ✓、`/dev/mem` 物理读回非零 ✓
+⟹ 两个不同地址（`0x41940000` / `0x41980000`）都能写 ✓
+
+### 唯一的失败点：Android 不导出
+
+每次回到 Android 后：
+- `0x41940000` / `0x41980000`：`sig=DBGC`、`start=size=0`、数据区 `ff`
+- `/sys/fs/pstore`：**空**（按名字读 `console-ramoops` / `dmesg-ramoops-0` 也都是空）
+
+### 分析：record zone 的读路径会拒绝无头记录
+
+```c
+/* ramoops_pstore_read，record(dmesg) zone 分支 */
+header_length = ramoops_read_kmsg_hdr(persistent_ram_old(prz), ...);
+if (!header_length) {
+        persistent_ram_free_old(prz);
+        persistent_ram_zap(prz);      /* 没有 ==== 头 ⟹ 拒绝并清空 */
+}
+```
+
+我们的 **console** 数据没有 `====` 头 ⟹ 放在 record zone 里会被拒 ✗
+⟹ 正确做法是让 **`pstore_dump`**（panic 时）写带头的记录 —— `fin` 镜像
+（`record-size` 节点 + plain panic + `panic=10`）就是为此构建的，但那次运行挂住了，
+**结论未取得**。
+
+### 方法学教训（重要）
+
+**不要用运行中途的功率读数判断结果。** 有三次我因为看到 "80 W 无 adb" 就判定实验失败，
+而实际上探针还在跑、随后正常回来了（`cx` 就是典型）。**以脚本的最终判定为准。**
+
+### eMMC 那边
+
+已确认：`pwrite`/`fsync` 返回成功、同启动读回一致，但跨重启丢失 —— 与 ramoops 的
+问题**同一个形状**（写以为成功、跨内核丢失）。两条线的最后障碍都指向"**数据如何跨内核留存**"。
