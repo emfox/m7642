@@ -5359,3 +5359,59 @@ Android 下读写正常 ⟹ 问题在"我们内核的 mmc 运行环境"，但**�
 
 ⟹ **下一轮开始移植 mstar-emac**（第 4 项）：DTS 节点（IRQ 9/105、寄存器窗口 0x1F204000/0x1F3A4200）
 + 厂驱动 `mdrv_emac_v3.c` + HAL 的 shim。这是纯工程、不依赖已卡住的写路径。
+
+## 34.89 第 4 项：以太网驱动移植已开工（2026-11-25 21:2x）
+
+### 规模评估（比 eMMC 小一半）
+
+| 文件 | 行数 |
+|---|---|
+| `mdrv_emac_v3.c` + `.h` | 4,639 + 373 |
+| `mhal_emac_v3.c` + `.h`（HAL） | 1,606 + 579 |
+| 合计 | **约 7,200 行**（eMMC 是 14,571） |
+
+依赖很干净：只有 `request_irq`(1) 与 `mii_*`(9)，**没有** PHY 框架 / clk / regulator / dma_alloc 依赖
+⟹ 是个自包含的 `platform_driver`（`compatible = "mstar-emac"`、`net_device_ops`、`module_init`）。
+
+### 已搭好的骨架
+
+新增 `drivers/net/ethernet/mstar/emac/`：
+
+- 4 个驱动源文件（原样搬入）
+- 5 个厂内公共头：`mdrv_types.h`、`mst_platform.h`、`mdrv_system_st.h`、
+  `chip_int.h`、`chip_setup.h`（后两个来自 `hal/m7322/cpu/arm64/`）
+- `mstar/mstar_chip.h`（MIU 基址等，83 行）
+- 已确认**不需要**的两个头：`mhal_chiptop_reg.h`（在 MIPS 分支里）、
+  `mhal_rng_reg.h`（在未启用的 `CONFIG_EMAC_SUPPLY_RNG` 里）✓
+- 构建：`obj-y`（本地树不做可选性），挂在 `drivers/net/ethernet/Makefile`
+
+### include 层面的修正（已完成）
+
+| 原 | 改为 |
+|---|---|
+| `<asm/arm-boards/prom.h>` / `<asm/mach/map.h>` | 去掉（ARM64 下未使用） |
+| `<asm/uaccess.h>` | `<linux/uaccess.h>` |
+| `<asm/compat.h>` | `<linux/compat.h>` |
+| `<mach/platform.h>`（chip_int.h） | 去掉（未使用） |
+| `<mstar/mstar_chip.h>` | `"mstar/mstar_chip.h"`（相对路径，`-I$(src)` 对直接 .o 构建不生效） |
+
+### 剩余编译错误（下一轮的清单）
+
+```
+mdrv_emac_v3.c:744   void value not ignored as it ought to be
+mdrv_emac_v3.c:801   'SIOCDEVON' undeclared     ← 厂自定义 ioctl
+mdrv_emac_v3.c:805   'SIOCDEVOFF' undeclared
+mdrv_emac_v3.c:1036  del_timer_sync → timer_delete_sync (7.x 改名)
+mdrv_emac_v3.c:3559  get_boot_mem_info / EMAC_MEM undeclared  ← 厂 bootinfo API，需要 shim
+mhal_emac_v3.h:163   CONFIG_EMAC_RX_DESC_NUMBER undeclared     ← 厂配置项，给默认值
+```
+
+数量有限、性质明确，属于**纯编译修订**工作，不需要上机。
+
+### 下一步
+
+1. 逐条修上面的错误（补 `SIOCDEVON`/`SIOCDEVOFF`、`CONFIG_EMAC_*` 默认值、
+   `get_boot_mem_info` shim、`del_timer_sync` 改名、744 行的返回值）
+2. 编过之后写 **DTS 节点**（已有数据：`compatible = "mstar-emac"`、IRQ **9** 与 **105**、
+   16 位窗口 **0x1F204000**、32 位窗口 **0x1F3A4200**）
+3. 再上机（有网络之后，第 2 项就有了一条不依赖 eMMC 的数据出口）
