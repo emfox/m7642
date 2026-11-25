@@ -7506,3 +7506,60 @@ Android 起来后用 probeRW 读 0x23081000
 3. **1-bit 通道**（已验证可用，但每轮只有 1 bit）
 
 其中 **1-bit 通道是当前唯一可靠且可立即使用的手段**。
+
+## 36.18 ★ ramoops 注入几乎成功：Android 认出了我们的 sig（2026-11-26 23:xx）
+
+### Android 侧实测的 ramoops 参数（只读获得）
+
+```
+mem_address  = 1099956224 = 0x41900000
+mem_size     = 1048576 (1 MiB)
+record_size  = 262144 (0x40000)
+console_size = 262144
+pmsg_size    = 262144
+ecc          = 0
+```
+
+而且 **pstore 已经挂载**（`mount -t pstore` 报 "Device or resource busy"），
+`/sys/fs/pstore` 是**空**的（没有有效记录）。
+
+⟹ 这正是注入的**理想条件** ✓
+
+### 注入实验 `psinj`（写 console zone 0x41940000）
+
+按 `persistent_ram_buffer` 格式写入：`sig="DBGC"`、`start=0`、`size=len`、然后 dmesg 文本。
+
+事后读回 `0x41940000`：
+
+```
+44 42 47 43 | 00 00 00 00 | 00 00 00 00 | ff ff ff ff
+D  B  G  C  | start=0     | size=0      |
+```
+
+**sig 是我们写的** ✓ ⟹ 写入成功、Android **读到了并认出了它** ✓
+但 `size` 被清零 ⟹ Android 的 `post_init` 判定记录**无效**并 `zap` 了它
+（`persistent_ram_zap` 会把 start/size 归零、保留 sig）
+
+⟹ 机制**通了 90%** ✓，只差"记录被判有效"这一步
+
+### 为什么被判无效（候选）
+
+1. **zone 偏移不对** —— 我们的文本写到了 Android 认为的**别的 zone** 里
+   （vendor 4.9 的 zone 顺序可能与 mainline 不同）
+2. **size 语义** —— `start` 是"下次写入位置"、`size` 是"有效字节数"，
+   我们的取值组合没通过校验（`size <= buffer_size` 且 `start <= size`）
+3. 文本需要特定头部（console zone 通常不需要，dmesg zone 需要 `====`）
+
+### 一个失败的尝试（记录下来避免重犯）
+
+`psinj4` 一次写全部四个 zone（0x41900000/40000/80000/c0000）。
+**0x419c0000 + 0x40000 = 0x41a00000 已经超出 1 MiB ramoops 区域**，
+落进那个"没有内存的空洞" ⟹ **内核挂住** ✗
+
+⟹ 教训：**ramoops 只覆盖 0x41900000..0x41A00000**，不要越过。
+
+### 下一次（很接近了）
+
+**一次只写一个 zone**，按 `0x41940000`（console）→ `0x41900000`（record）→ `0x41980000`（pmsg）
+的顺序逐个试，每次跑完看 `/sys/fs/pstore`。
+若某个 zone 出来的 `size` 不是 0，就说明那个 zone 对了，再看导出内容。
