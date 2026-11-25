@@ -7872,3 +7872,111 @@ static void mstar_mci_no_card_cache(struct mmc_host *host, struct mmc_card *card
 4. `BLK_SIZE`/`JOB_BL_CNT` 的 512 与 9 位：`eMMC_SECTOR_BYTECNT_BITS == eMMC_SECTOR_512BYTE_BITS == 9`
 5. 写完成中断：轮询模式 10 s 硬超时，超时会打印；没打印说明事件真的到了
 6. 两段式 job（命令 `0x0006` + 数据 `0x0218`）：厂商 HAL 的既有设计，不是 bug
+
+## 36.24 ★★★ eMMC 写：`pwrite` 在系统调用层就失败，根本没到硬件（2026-11-27 01:2x）
+
+### 用 1-bit 通道逐步二分写路径
+
+条件用"盒子能不能自己回来"编码（`panic=0` 让 panic 挂住，所以内核提前死亡不会被误判为真）：
+
+| 探针 | 条件 | 结果 |
+|---|---|---|
+| `pw` | `pwrite() == 512` | **FALSE** ✗（设备掉到 4 W 深度待机） |
+
+⟹ **`pwrite()` 返回的不是 512** ⟹ 写请求在**系统调用层就失败了** ✗
+⟹ 这意味着**根本没有请求送到驱动/控制器** ⟹ 之前改缓存、改 DMA、改 ADMA **全都不可能有效** ✓
+
+### 这解释了所有"改了也没用"的实验
+
+| 实验 | 为什么没用 |
+|---|---|
+| `CONFIG_M7642_DISABLE_CACHE`（清 `cache_size`） | 请求没到卡，缓存无关 |
+| `CONFIG_M7642_WRITE_NO_ADMA` | 同上 |
+| 三个驱动补丁（顺序无所谓） | 同上 |
+| `fsync` vs `sync` | 同上 |
+
+### 但 `ef1`/`efcache`/`ebp2` 三个探针"回来了"—— 需要重新理解
+
+它们的行为是 `pwrite` → `fsync` → `sync` → **无条件** `reboot()`，
+所以"回来"**不证明写成功** ✓（只有 `pw`/`chk`/`emmcbit` 这类**有条件**的探针才有意义）。
+它们的扇区读回全零，与 `pwrite` 失败**完全一致** ✓
+
+### 下一步（很具体）
+
+`pwrite` 失败的原因只剩几种，都是**可静态确认**的：
+1. **`-EROFS`**（设备只读）：`mmc_blk` 在 `card->ext_csd` 报只读、或 `set_disk_ro()` 被调用时
+   会把 `bdev` 设为只读 ⟹ 需要看 `mmc_blk_probe`/`mmc_read_only` 的判断依据
+2. **`-EIO`**：`blkdev_write_iter` → `blkdev_direct_IO`/`generic_perform_write` 报错
+3. **`-ENOSPC`**：写超出设备容量（LBA 61000000 × 512 = 31.2 GB，设备 29.1 GiB
+   = 61,071,360 LBA ⟹ **只是在容量边缘**，如果实际可用更少就会 ENOSPC）
+4. `open(O_RDWR)` 本身就失败（权限/设备节点）
+
+**最快验证**：把 `pwrite` 改到**设备开头附近的空闲区**（例如 LBA 60,000,000 或更保守的
+LBA 1,000,000 之后找一个未分区区域），并把 `pwrite` 的**返回值编码**成 1-bit 条件。
+
+## 36.25 ★★★ 两点决定性突破：`init_card` 时机 bug + Android 对照实验（2026-11-27 02:0x）
+
+### ① 找到 `DISABLE_CACHE` 无效的**真正原因**：时机反了
+
+`drivers/mmc/core/mmc.c` 里 `mmc_init_card()` 的顺序：
+
+```
+line  73:  host->ops->init_card(host, card);      ← 先调 init_card
+line 120:  err = mmc_read_ext_csd(card);          ← 然后才读 ext_csd
+line 280:  if (card->ext_csd.cache_size > 0) { ... CACHE_CTRL = 1 }   ← 于是缓存又被打开
+```
+
+⟹ 在 `init_card` 里清 `card->ext_csd.cache_size` **会被随后的 `mmc_read_ext_csd()` 覆盖掉** ✗
+⟹ 子代理指出的机制**是对的**（缓存被打开、`sync()` 不 flush），但**修的时机放错了** ✗
+
+**正确修法**（已实现）：在 `mmc_read_ext_csd()` **之后**清：
+
+```c
+/* drivers/mmc/core/mmc.c，mmc_read_ext_csd 调用点之后 */
+#ifdef CONFIG_M7642_DISABLE_CACHE
+        pr_info("%s: M7642: forcing write cache off (card reports %u KB)\n",
+                mmc_hostname(card->host), card->ext_csd.cache_size / 1024);
+        card->ext_csd.cache_size = 0;
+        card->ext_csd.bkops = false;
+        card->ext_csd.man_bkops_en = false;
+        card->ext_csd.auto_bkops_en = false;
+        card->ext_csd.power_off_notification = EXT_CSD_POWER_ON;
+#endif
+```
+
+### ② Android 对照实验：那个 LBA 完全可写
+
+从 **Android 侧**往同一个 LBA 写 `"ANDROIDWR"`：
+
+```
+写入: 9 bytes copied
+读回: 41 4e 44 52 4f 49 44 57 52  = "ANDROIDWR"   ✓
+```
+
+⟹ **LBA 61000000 可写、硬件正常、扇区没问题** ✓
+⟹ **问题在我们 7.3 的写路径** ✗（不是"分区只读"、不是容量、不是 ENOSPC）
+
+### ③ 同启动内的写路径其实是"成功"的
+
+`chk` 探针（1-bit，条件 = 五个全过）判定 **TRUE**：
+`open` ✓、`pwrite == 512` ✓、`fsync == 0` ✓、`pread == 512` ✓、**`memcmp == 0`** ✓
+
+⟹ 写请求被块层/卡**接受**了，同启动内读回一致 ✓
+⟹ 但**重启后是零**（或 Android 之前写的内容）✗
+
+### ④ 当前状态
+
+| 项 | 状态 |
+|---|---|
+| LBA 可写性 | ✅ Android 侧可写（对照已做） |
+| 我们的 `pwrite`/`fsync` | ✅ 返回成功（`chk`=TRUE） |
+| 跨重启留存 | ❌ 仍然丢失 |
+| 卡缓存 | 已在 `mmc_read_ext_csd` 之后强制关闭（新补丁），**待验证** |
+| `power_off_notification` | 已强制 `EXT_CSD_POWER_ON`，**待验证** |
+
+### 下一步
+
+新补丁（`noc2`）已构建并上机，结果待读。若仍不落盘，则剩下的可能是：
+1. `mmc_blk` 的 `cache_ctrl` 仍为 1（`_mmc_cache_enabled()` 还返回真）
+2. 卡的 **write reliability / reliable write** 设置
+3. `BUSY_LEVEL` 那条 R1b 路径让 `SET_BLOCK_COUNT`/写命令提前"完成"
