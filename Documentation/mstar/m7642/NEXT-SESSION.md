@@ -175,6 +175,18 @@
   ③ 把 `free_initmem` 毒化挂死的原因收口（`.init` 里还有什么被后续使用）；④ 上游化 DTS/驱动。
 
 
+**2026-11-25 10:30 ★★★★★ 工具链回归已修复，5:24 状态用源码重建复现**
+
+- 两个自伤：①`mkimage.sh` 把 Image 包成容器 ⟹ 与 `mk-mainline-abort.py` 形成嵌套容器；
+  ②把对齐点从 `__pi_early_map_kernel+0x3c` 改成字节搜索，匹配到巧合的 `0x465224`，
+  真正的 2 MB 对齐修正从未生效。两处都已加硬断言。
+- 复现验证：干净构建树 `linux-735-clean` + initramfs 配置 + `d0=save`/`panic` 探针 ⟹
+  `android up +22s`、`magic=M764MM`、`x30=panic+4` ✅；随后读到报告页与 **6879 字节内核日志**
+  （含 `Run /init as init process`）。
+- 镜像（含元数据）：`m7642-fix3.img` md5 `b10d6f18e6f239e187a45b82b2a928f1`。
+- 下一步：`FB_SIMPLE`（屏幕控制台）/ `eMMC: no SD 1006`。
+
+
 ## 停下点（2026-11-22 15:1x）
 
 设备**硬挂**，需要一次物理拔插（红外救不回，见 §34.9 的退化说明）。
