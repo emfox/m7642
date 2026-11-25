@@ -3548,3 +3548,59 @@ PLL（`eMMC_PLL_FLAG` 0x80 位）只在 HS/HS200 才启用，而 HS timing 是 *
   漂到 `0x...2a244`，我第一发用旧值把一次**成功**判成了 INCONCLUSIVE。
 - 读报告页时必须按**该 `ver` 的布局**解码：`ver=6`（枚举版）用 `ver=7`（寄存器版）的偏移解出来
   全是垃圾（出现过 `SD_CTRL=0x30636d6d`，其实是 "mmc0" 字符串残渣）。
+
+## 34.49 ★★★★★ eMMC 根因：DMA 地址翻译（高内存）—— EXT_CSD 已能读对（2026-11-25 12:4x）
+
+### 三步定位
+
+1. **CMD6 现场 dump**（`mstar_mci_send_command` 里，命令发出前后）：
+   `SD_STATUS=0xff00`（RSP_TIMEOUT 等标志全亮）、`EVENT=0x10` 是上一条命令的残留，
+   FIFO 已空 ⟹ **命令发出去了，卡不回**。
+2. **抑制所有 CMD6**（`CONFIG_M7642_NO_HS_SWITCH`，在 `init_card` 里清
+   `ext_csd.hs_max_dtr` 并去掉 4/8-bit caps；`init_card` 在 `mmc_select_timing()` 之前被调用，
+   已核实）⟹ **卡枚举成功**：
+   ```
+   mmc0: new MMC card at address 0001
+   mmcblk0: mmc0:0001 BJTD4R 0 B        ← 名字对，容量 0
+   ```
+3. **容量为 0 的原因**：`mmc_decode_csd()` 的 CSD 响应正常（`capacity=2097152`），
+   但 **EXT_CSD（CMD8 的 512 字节数据）全 0** ⟹ 数据通路问题。
+
+### 根因：DMA 地址落在 ≥4 GiB 的高内存，翻译成垃圾
+
+`mstar_mci_pre_dma_read()` 把 `sg_dma_address()` 换算成 MIU 窗口偏移，只写了 32 位版本：
+
+```
+M7642 rd pre: sg_dma=0x180089a00 dmalen=512 -> programmed addr=0x160089a00 (MIU0 base 0x20000000)
+M7642 rd post: buf=00 00 00 00 00 00 00 00  EVENT=0x13 SD_STATUS=0xff00
+```
+
+缓冲区 DMA 地址 `0x1_8008_9a00`（落在我们 DTS 的第三个 RAM 窗口 0x1_0000_0000 以上），
+而 64 位分支需要的 `MSTAR_MIU1_BUS_BASE_H` / `ARM_MIU1_BASE_ADDR` **没有定义**，
+于是只做了 `dmaaddr -= 0xA0000000` ⟹ 编程进去 **0x1_6008_9a00**（36 位）⟹ 控制器哪儿都没写。
+
+**修复**：`CONFIG_M7642_DMA_32BIT` —— 在 probe 里
+`dma_set_mask_and_coherent(mmc_dev(host), DMA_BIT_MASK(32))`（返回 0 ✓），
+DMA API 改用低内存（bounce），偏移换算回到 MIU0 正确区间。
+
+**修复后（实测）**：
+
+```
+M7642 ext_csd raw: 00 00 00 00 00 00 00 00 | sec_count=61071360 rev=8
+```
+
+`61071360 × 512 = 31.27 GB` ⟹ **板载 32 GB eMMC 的容量读对了**（EXT_CSD rev=8 = eMMC 5.x）。
+
+### 当前剩余问题
+
+EXT_CSD 读对之后、`mmc0: new` 之前，还有 **一次 CMD6**（arg `0x3af0101`，索引 `0x01` = HS_TIMING）
+超时 10 s ⟹ 初始化中止，`mmcblk0` 未注册。`hs_max_dtr` 已清零仍未挡住 ⟹
+这个 CMD6 来自别的路径（`mmc_select_hs_ddr` / HS400 / 缓存控制 / 掉电通知之一），
+下一步：在驱动 `request` 里对 **所有** `opcode==6` 打印并使用者的线索（cmd->arg 的 index/access），
+或者干脆让驱动对 CMD6 直接返回失败以外的"已忽略"处理。
+
+### 附带修好的仪器经验
+
+- 埋点锚点必须**唯一**（本轮两次把打印插进了别的函数导致编译失败/无输出）。
+- 报告页必须按对应 `ver` 布局解码（ver=6/7/8 三种布局都在用）。
+- 探针期望 `x30` 必须从当前 `System.map` 现算（`panic` 已从 0x…2a22c 漂到 0x…2a244）。

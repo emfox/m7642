@@ -36,7 +36,7 @@ tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash �
 
 ## 下一步（按优先级）
 
-1. **eMMC（进行中，§34.43）**：卡已被**完整识别并初始化**（CID/CSD/EXT_CSD 都读到），
+1. **eMMC（进行中，§34.49 已到最后一关）**：卡已被**完整识别并初始化**（CID/CSD/EXT_CSD 都读到），
    卡在 **HS_TIMING 切换** —— CMD6(SWITCH) 之后 CMD13 超时 10 s
    （`FCIE_MIE_EVENT` bit4 不来）。低速模式（`CONFIG_M7642_FORCE_LOWSPEED`）绕不过，
    因为 MMC 核心只按 `ext_csd.hs_max_dtr` 决定是否切 HS。
