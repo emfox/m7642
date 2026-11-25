@@ -38,9 +38,10 @@ tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash �
 
 1. **eMMC**：内核日志里有 `eMMC: no SD 1006` —— 厂 `mstar-mci` 的 `subsys_initcall` 确实在跑，
    只是没认出卡；有了构建链 + 日志通道 + 报告页可以正经推进。
-2. ~~屏幕控制台~~ **已完成**（2026-11-25 11:0x）：`fb0` + fbcon 上屏，见 `confirmed-facts.md` §34.41。
-   要点：fb 节点放**根节点**（`/chosen` 无 `ranges`）、reserved-memory 加 **`no-map`**、
-   `CONFIG_FB_SIMPLE=y` 且 `# CONFIG_DRM_SIMPLEDRM`。
+2. ~~屏幕控制台~~ **已完成并收口**（§34.41/§34.42）：定稿写法是 **`/chosen` + `memory-region`
+   + reserved-memory `no-map` + `CONFIG_FB_SIMPLE=y` 且 `# CONFIG_DRM_SIMPLEDRM`**；
+   用户态 `/dev/fb0` 全项验证通过（1920x1080x32、stride 7680、mmap 写读 OK）。
+   定稿镜像 `m7642-fbFinal.img` md5 `f34b835bfc16c010b6418b9e210c3595`。
 3. **毒化机制**：`free_initmem` 里那段 0xcc memset 为何会挂，仍未收口（已用 `-1` 绕过）。
 
 ## 纪律提醒（今晚血账）

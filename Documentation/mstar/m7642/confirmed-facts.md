@@ -3168,3 +3168,57 @@ simple-framebuffer 2d100000.framebuffer: fb0: simplefb registered!
 - **`resolve-params.py` 必须识别裸镜像/容器**：payload 基址对裸 Image 是 0、对容器是 page_size；
   之前写死 2048，导致所有偏移错 0x800。
 - **对齐补丁点**只取 `ckpt.py` 的 `zfix_align`（`__pi_early_map_kernel+0x3c`）并校验 `0x92405279`。
+
+## 34.42 framebuffer 收口：两种 DTS 写法都实测，定稿 `/chosen` + `memory-region`（2026-11-25 11:2x）
+
+### DT 语义（为什么 `/chosen` 下的 `reg` 会失效）
+
+- `reg` 是"**父节点地址空间**里的地址"；要变成 CPU 物理地址，内核沿父链逐级套 `ranges`。
+- **`ranges` 缺失 ≠ `ranges` 为空**：缺失 = 无法翻译；为空（`ranges;`）= 1:1 恒等映射。
+- `/chosen` 不是总线、没有 `ranges` ⟹ 其下子节点的 `reg` **翻译失败** ⟹
+  `of_platform_device_create()` 建出的 platform device **没有 IORESOURCE_MEM** ⟹
+  `platform_get_resource()` 返回 NULL ⟹ `simplefb_probe` 报 `No memory resource` 并返回 -EINVAL。
+- 内核仍会为 `/chosen` 下的 `simple-framebuffer` 建**设备**（`drivers/of/platform.c` 里
+  `of_platform_default_populate_init()` 有专门代码：`of_get_compatible_child(of_chosen,
+  "simple-framebuffer")` → `sysfb_disable()` → `of_platform_device_create()`）——这就是日志里
+  设备名叫 `chosen:framebuffer@2d100000` 的原因，但**没有资源**。
+
+### 两种写法（都实测通过，功能等价）
+
+| | 变体 A | 变体 B（**定稿**） |
+|---|---|---|
+| 节点位置 | 根节点下 | **`/chosen` 下**（绑定文档要求） |
+| 内存描述 | `reg`（根地址空间可直接翻译） | **`memory-region = <&framebuffer>`**（绑定允许，优先于 `reg`） |
+| reserved-memory | 需 `no-map` | 需 `no-map` |
+| platform device 名 | `2d100000.framebuffer` | `chosen:framebuffer@2d100000` |
+| 实测 | `fb0: simplefb registered!` + fbcon | 同左 |
+
+选 B 的理由：`simple-framebuffer.yaml` 明确规定是 `/chosen` 的子节点；`memory-region` 是绑定
+给出的正路（"If present, overrides the reg property"），且**完全绕过地址翻译**。
+
+### 用户态验证（比"日志说注册成功"更硬）
+
+`/init` 打开 `/dev/fb0`、`FBIOGET_VSCREENINFO`/`FBIOGET_FSCREENINFO`、mmap、写图案、读回，
+全部结果写进报告页（`0x23081000`，ver=5）后再 SysRq 崩溃交接。实测（A、B、以及 B 的复跑三次一致）：
+
+```
+open(/dev/fb0)=0 errno=0
+var: 1920x1080 (virtual 1920x1080) bpp=32
+fix: line_length=7680  smem_len=0x7e9000  smem_start==0x2d100000: 1
+mmap=0x7f8ebeb000 errno=0   pattern_written=1  readback_nonzero=1
+```
+
+内核日志：
+
+```
+Console: switching to colour frame buffer device 240x67
+simple-framebuffer chosen:framebuffer@2d100000: fb0: simplefb registered!
+```
+
+⟹ `console=tty0` 真正生效（现场能看到内核日志）；**但远程仍不可用**（见 `discipline.md`
+「远程调试时看屏幕不是可用通道」）。
+
+### 定稿镜像
+
+`m7642-fbFinal.img` md5 `f34b835bfc16c010b6418b9e210c3595`（config：`CONFIG_FB_SIMPLE=y`、
+`# CONFIG_DRM_SIMPLEDRM is not set`、`CONFIG_FRAMEBUFFER_CONSOLE=y`）。
