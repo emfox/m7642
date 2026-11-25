@@ -5415,3 +5415,49 @@ mhal_emac_v3.h:163   CONFIG_EMAC_RX_DESC_NUMBER undeclared     ← 厂配置项�
 2. 编过之后写 **DTS 节点**（已有数据：`compatible = "mstar-emac"`、IRQ **9** 与 **105**、
    16 位窗口 **0x1F204000**、32 位窗口 **0x1F3A4200**）
 3. 再上机（有网络之后，第 2 项就有了一条不依赖 eMMC 的数据出口）
+
+## 34.91 第 4 项：HAL 也编过了，但 Kbuild 接线卡住（2026-11-25 22:xx）
+
+### 已完成
+
+- `mhal_emac_v3.o` **编译通过** ✓（20,080 字节）
+- `mdrv_emac_v3.o` 编译通过 ✓（28,888 字节）
+
+HAL 需要 `mstar_pm_base`，而厂头只给了 ARM（0xFD000000）和 MIPS（0xBF000000）两个分支：
+- 加 ARM64 分支 `extern ptrdiff_t mstar_pm_base;`（**类型必须是 ptrdiff_t**，
+  与厂内 `chip_setup.h:73` 的声明一致，否则 "conflicting types"）
+- 驱动 `module_init` 里 `ioremap(0x1F000000, 0xA00000)` 把 RIU 窗口映射好，
+  与 eMMC 驱动的做法完全一致
+
+### 卡住的点：新目录无法进入构建
+
+试过四种方式，**驱动都不进 vmlinux**（`strings vmlinux | grep "RIU window mapped"` = 0）：
+
+| 方式 | 结果 |
+|---|---|
+| `obj-y += mstar/`（子目录形式） | 不生效 ✗ |
+| `obj-$(CONFIG_MSTAR_EMAC) += mstar/` + Kconfig | 符号不出现 ✗ |
+| `obj-y += mstar/emac/mdrv_emac_v3.o`（直接列文件） | 不生效 ✗ |
+| 删除 `built-in.a` 强制重建 | 仍不含 ✗ |
+
+已确认的前提：
+- Kconfig **确实被解析**（故意制造语法错误，`olddefconfig` 能报出来 ✓）
+- `ARCH_MSTAR=y`、`NET=y`（依赖都满足）
+- 工具链 PATH 问题已排除（`olddefconfig` 干净通过 ✓）
+- 对比参考：`mstar-mci`（eMMC 驱动）用 `obj-$(CONFIG_MMC_MSTAR_MCI) += mstar-mci/` **工作正常** ✓
+
+### 下一轮的做法（绕过去，不再纠缠）
+
+**把这两个目标文件挂到一个已知能正常构建的复合对象里** —— 最直接的是
+`drivers/mmc/host/mstar-mci/Makefile` 里已有的 `mstar-mci-y`（它构建、链接、工作都正常）：
+把 `mdrv_emac_v3.o`/`mhal_emac_v3.o` 的编译产物加进去，或者更干净些：
+在 `drivers/net/Makefile` 里 `obj-y += ethernet/mstar/emac/...`（同样待验证）。
+
+先让它**能进内核**、能上机验证 probe 是否正常 —— 工程洁癖留到后面再收拾。
+
+### 之后（一旦进内核）
+
+1. 写 DTS 节点（数据齐备：`compatible = "mstar-emac"`、IRQ **9**/**105**、
+   16 位窗口 **0x1F204000**、32 位窗口 **0x1F3A4200**）
+2. 上机看 probe：不挂 + 出现 `eth0` 就是实质进展
+3. 网络通了 ⟹ 第 2 项获得一条不依赖 eMMC 的数据出口
