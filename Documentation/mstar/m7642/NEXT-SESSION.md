@@ -1,7 +1,59 @@
 # 下次从这里开始
 
-> **当前状态请看 [HANDOFF.md](HANDOFF.md)** —— 它是最新的、经过更正的交接。
-> 本文件只保留"环境与运维要点"这一节（都是踩过的坑），其余历史内容在文末按时间倒序。
+> **当前状态请看 [HANDOFF.md](HANDOFF.md)**。本文件保留"环境与运维要点"和**最新一轮的具体下一步**。
+
+## ★ ramoops 通道：只剩一步（2026-11-27 10:0x）
+
+### 已经确认可用的（三个 1-bit 自证实验，全部通过）
+
+1. **`ramoops_probe` 成功** —— 需要 **DT 节点**（7.3 的 ramoops 是 DT-only，cmdline 完全无效）
+2. **console 后端收到数据** —— `PSTORE_FLAGS_CONSOLE` 已置位
+3. **写入真的落到物理内存** —— `/dev/mem` 物理读回 `size != 0`（`0x41940000` 和 `0x41980000` 都验过）
+
+### 唯一没打通的：Android 不导出
+
+Android 的 `ramoops_pstore_read` 对 **record zone** 会校验 `====` kmsg 头：
+```c
+header_length = ramoops_read_kmsg_hdr(persistent_ram_old(prz), ...);
+if (!header_length) { persistent_ram_free_old(prz); persistent_ram_zap(prz); }
+```
+而 **只有 `pstore_dump`（panic 时）才写这个头**。
+
+### 下次要跑的那一发（已构建好：`m7642-fin.img`）
+
+现成镜像 `~/Debian/m7642-build/out/m7642-fin.img`（md5 `8f0a046b…`），它同时具备：
+- DTS `ramoops@41940000 { reg=0x41940000/0x40000; record-size=<0x40000>; no-map; }`
+- cmdline 有 `panic=10`
+- **plain 镜像**（不含 tramp，`panic()` 函数体完整执行）
+- `/init` 先往 `/dev/kmsg` 写 `M7642-PANIC-MARKER-ZZZZ9999`，然后 `echo c` 触发真 panic
+
+**预期**：`pstore_dump` 写带 `====` 头的记录 → `panic=10` 重启 → Android 的
+`post_init` `save_old` → `/sys/fs/pstore/dmesg-ramoops-0` 出现我们的日志 ✓
+
+**跑法**（必须用 `adb reboot recovery`，不要 BCB）：
+```bash
+# 烧写并校验（用 run-bcb.sh 前四步的校验逻辑，但最后要 adb reboot recovery）
+adb push out/m7642-fin.img /data/local/tmp/fin.img
+adb shell "su -c '/vendor/bin/busybox md5sum /data/local/tmp/fin.img'"   # 必须有输出
+adb shell "su -c '/vendor/bin/busybox dd if=/data/local/tmp/fin.img of=/dev/block/by-name/recovery bs=4096 conv=notrunc'"
+adb shell "su -c '/vendor/bin/busybox sync'"
+adb shell "su -c '/vendor/bin/busybox dd if=/dev/block/by-name/recovery bs=4096 2>/dev/null | /vendor/bin/busybox md5sum'"  # 必须等于镜像的全 md5
+adb reboot recovery
+# 等 60~200 秒回来后：
+adb shell "su -c '/vendor/bin/busybox ls -la /sys/fs/pstore'"
+adb shell "su -c '/vendor/bin/busybox head -20 /sys/fs/pstore/dmesg-ramoops-0'"
+```
+
+### 如果还是没有
+
+排查顺序：
+1. 那个 **`panic()` 到底有没有执行** —— `fin` 是 plain 镜像，如果 `panic=10` 也不重启，
+   说明 panic 路径本身有问题（`m7642-restart.c` 的 handler 在 panic 上下文可能挂住）
+2. **`pstore_dump` 有没有写** —— 可以在 `ramoops_pstore_write` 的 dmesg 分支加自报点
+   （照 `sr`/`cc` 的做法写 `0x23081000`）
+3. **Android 的 `post_init` 有没有跑** —— 它只在 `ramoops_probe` 时跑一次，
+   如果 Android 的 ramoops 是 built-in 且 probe 早于我们的写入（不可能，因为我们在它之前启动），
+   就只能是它自己把记录判无效了
 
 ## 环境与运维要点（都是踩过的坑）
 
