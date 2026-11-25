@@ -40,7 +40,8 @@ tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash �
    卡在 **HS_TIMING 切换** —— CMD6(SWITCH) 之后 CMD13 超时 10 s
    （`FCIE_MIE_EVENT` bit4 不来）。低速模式（`CONFIG_M7642_FORCE_LOWSPEED`）绕不过，
    因为 MMC 核心只按 `ext_csd.hs_max_dtr` 决定是否切 HS。
-   下一步（§34.44 已细化为两条）：
+   下一步（§34.45 已定论：失败的是 **CMD6(SWITCH) 本身**——核心埋点在成功路径，
+   一条都没打印，说明 `mmc_wait_for_cmd(CMD6)` 就返回了错误。详见下述细化）：
    ① 日志显示 CMD6 之后**没有 `set_ios(timing=HS)`** ⟹ 主机从未切 HS，而卡切了 ⟹ CMD13 采样错。
       先验证 `mmc_set_timing()` 为何没有触发 `set_ios`（或驱动内部把 HS 当 LEGACY 处理）。
    ② `reg_ckg_fcie_syn` 实测 `0x0003`，驱动要求 `01`；厂版自带自检，可先让自检跑起来。

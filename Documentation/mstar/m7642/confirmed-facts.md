@@ -3341,3 +3341,52 @@ CMD13 的响应采样不对 ⟹ 10 s 超时。这是下一步要验证的第一�
 修正代码（`eMMC_platform.c:997`）要求 `(val & 0x3) == BIT0`（即 `01`），厂版还在
 `eMMC_platform.c:1630` 有自检会 `eMMC_debug(0,1,"Wrong reg_ckg_fcie_syn (=%04X) setting!!!")`。
 ⟹ 要么修正没生效（地址/时序问题），要么之后被别的代码改回 `11`。
+
+## 34.45 eMMC 卡点定论：失败的是 CMD6(SWITCH) 本身（2026-11-25 12:0x）
+
+### 证据
+
+在核心 `drivers/mmc/core/mmc_ops.c` 的 `__mmc_switch()` **成功路径**（`out_tim:` 标签，
+就在 `if (timing) mmc_set_timing(...)` 之前）和 `core.c` 的 `mmc_set_timing()` 各加了一条
+`pr_info`，然后重跑。结果：
+
+- 44 条 `MMCDBG` 驱动侧日志都打出来了（`request` opcode 序列、`set_ios`、`mmc_add_host`）；
+- **`MMCDBG: __mmc_switch` 和 `MMCDBG: set_timing` 一条都没有**。
+
+`__mmc_switch()` 的结构是：
+
+```c
+	err = mmc_wait_for_cmd(...);          /* 发 CMD6 */
+	if (err) goto out;                     /* ← 走的是这条 */
+	...
+out_tim:
+	pr_info("MMCDBG: __mmc_switch ...");   /* ← 我们的埋点在这里，没执行 */
+	if (timing) mmc_set_timing(host, timing);
+```
+
+⟹ **CMD6（SWITCH, HS_TIMING=1）在控制器层就没完成**：`eMMC_FCIE_PollingEvents()` 轮询
+`FCIE_MIE_EVENT`(0x1F222600) 的 bit4 十秒不来（`Reg.0000h: 0000h, but wanted: 0010h`），
+`mmc_wait_for_cmd()` 返回错误，核心 `goto out`，于是**主机侧从未切到 HS 时序**，
+后面那条 CMD13 是错误路径里的状态查询，同样超时。
+
+### 含义
+
+- 不是"时序切换后失配"，而是**卡/控制器对 CMD6 无响应**。
+- 卡在 CMD0/1/2/3/9/7/8 都正常工作 ⟹ 时钟（400 kHz）、命令/响应、轮询都通。
+- `CONFIG_M7642_FORCE_LOWSPEED` 无效（核心按 `ext_csd.hs_max_dtr` 决定发不发 CMD6，
+  不看 host caps），**这个开关留着没有意义**，应删除（或改成"让驱动清掉
+  `ext_csd.hs_max_dtr`"的实现）。
+
+### 下一步（下个会话按此顺序）
+
+1. **静态对比厂驱动的 HS 准备流程**：`eMMC_hal_speed.c` 里 HS 相关的
+   `eMMC_pads_switch()` / `EMMC_PLL` / `CLKGEN0 reg_ckg_fcie` 写入，**在发 CMD6 之前**
+   应该由谁完成？主线只会在 CMD6 成功之后调 `set_ios`，所以如果厂商硬件要求"先配好
+   pad/PLL 再发 CMD6"，那主线这条路永远走不通 ⟹ 需要在驱动的 `request` 里对
+   CMD6(EXT_CSD write) 做预处理，或让 `set_ios` 在 `MMC_TIMING_MMC_HS` 到来前就生效。
+2. **确认 CMD6 是否被发出**：在驱动 `request` 里对 `opcode==6` 打印
+   `FCIE_SD_MODE`/`FCIE_SD_STATUS` 与命令 FIFO 内容，判断是"命令没发出去"还是
+   "发出去了卡不回"。
+3. 若确实是 pad/PLL 前置要求，再考虑"永远停在低速"的替代方案：清
+   `card->ext_csd.hs_max_dtr`（`init_card` 钩子），让核心跳过 CMD6 —— 这样即使没有
+   HS 也能拿到 `mmcblk0` 做只读验证。
