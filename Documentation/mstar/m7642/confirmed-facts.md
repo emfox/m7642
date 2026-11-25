@@ -7250,3 +7250,38 @@ dd:      33554432 bytes copied  ✓
 4. `CONFIG_CFG80211` / `MAC80211`
 
 **二分计划**：先关 `NETDEVICES`（保留 eMMC 的 cache 修复），看 `/init` 是否能跑起来。
+
+## 36.12 二分：WiFi 栈和 NETDEVICES 都不是"卡在 /init 之前"的原因（2026-11-26 17:xx）
+
+### 两次可信实验（四项校验全通过）
+
+| 镜像 | 差异 | 烧写 | 结果 |
+|---|---|---|---|
+| `early1` | WiFi 栈全开 | 四项校验 ✓ | 回到 Android (+70s)，报告页空 ✗ |
+| `nonetdev` | `NETDEVICES`/`WLAN`/`MT7663U`/`CFG80211`/`MAC80211` 全关 | 四项校验 ✓ | 回到 Android (+80s)，报告页空 ✗ |
+
+⟹ **两者都在 `/init` 之前卡住** ✗
+
+### 已排除
+
+- WiFi 栈（`MT7663U` + `mt7615` USB）
+- `CONFIG_NETDEVICES`（整个 `drivers/net/` 子树）
+- `CONFIG_CFG80211` / `CONFIG_MAC80211`
+
+### 剩余嫌疑（按可能性）
+
+1. **`CONFIG_M7642_DISABLE_CACHE`** —— 它改的是 `->init_card()`，在 eMMC 卡初始化时执行；
+   若 `cache_size=0` 让卡进入某种未预期的状态，可能卡在那里
+2. **`m7642-restart.c`（arch_initcall）** —— 它 `ioremap(0x1f000000, 0xa00000)`；
+   如果这块映射有问题，initcall 可能挂住
+3. 更早的改动：`arch/arm64/kernel/m7642-dtb.S` 内建 DTB、DTS 的 bootargs 改动
+
+### 下一轮（若还有）
+
+最省事的二分：**去掉 `CONFIG_M7642_DISABLE_CACHE`**（回到原来的 eMMC 初始化路径），
+其余不变，再跑一次 `early1`。若 `/init` 能跑起来 ⟹ 就是它。
+
+### 一个重要的方法论收获
+
+**四项校验（本地 md5 → 推送 md5 → dd 字节数 → 槽前 4K md5）** 让"烧写是否可信"
+第一次变成可判定的事。今天大半时间浪费在不可信的烧写上，这一步之后所有结论才有意义。
