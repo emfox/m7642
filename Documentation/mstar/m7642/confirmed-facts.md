@@ -7318,3 +7318,51 @@ dd:      33554432 bytes copied  ✓
 
 四次校验（本地 md5 → 推送 md5 → dd 字节数 → 槽前 4K md5）让烧写**可判定**。
 在此之前，十几个"结论"都建立在不知道跑的是哪个镜像的基础上。
+
+## 36.14 配置 diff 结论：差异不在配置里（2026-11-26 18:xx）
+
+### 对比对象
+
+当前 `.config` vs `probes/configs/m7642-735-clean.config`（17:17 那份）
+
+### 新增启用的项（40+ 条，绝大多数是 WiFi 栈的连带）
+
+- 大量 `CONFIG_CRYPTO_*`、`CONFIG_ASN1`、`CONFIG_BPF`、`CONFIG_CPU_RMAP` 等
+  —— 都是 `CFG80211`/`MAC80211` 拉进来的，而 WiFi 栈已用 `nonetdev` 排除过 ✓
+- **`CONFIG_BOOTPARAM_HUNG_TASK_PANIC=1`**
+- **`CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC=1`**
+  —— 这两个是早期为调试 eMMC 加的（"probe 卡住就 panic"）
+  **本轮已用 `nolockpanic` 镜像排除**：关掉后仍然卡在 `/init` 之前 ✗
+
+### 被移除的项（只有一条）
+
+- `CONFIG_DEFAULT_HUNG_TASK_TIMEOUT=120` —— 而该符号的默认值本来就是 120，
+  无实质影响 ✓
+
+### 结论
+
+**当前配置与 17:17 那份实质等价** ⟹ "卡在 /init 之前"的原因**不在配置里** ✗
+⟹ 只可能在**内核源码 / 二进制**层面：
+
+1. `arch/arm64/kernel/m7642-restart.c`（新增文件，含 `arch_initcall`）
+2. `arch/arm64/boot/dts/mstar/*` 的 DTS 改动（bootargs、emac 节点）
+3. `probes/handoff/tramp-postmmu.S` 的改动（`save1/2/3` 槽、`restore` 槽）
+4. `drivers/mmc/host/mstar-mci/` 的 `M7642_*` 选项组合
+
+### 至此累计排除（全部在**四项校验通过**的可信烧写下）
+
+| 变量 | 镜像 | 结果 |
+|---|---|---|
+| WiFi 栈全开 | `early1` | 卡 ✗ |
+| `NETDEVICES`+WiFi+`CFG80211`+`MAC80211` 关 | `nonetdev` | 卡 ✗ |
+| 再去 `M7642_DISABLE_CACHE` | `nocache` | 卡 ✗ |
+| 撤销 ramoops 地址 + 最简 `/init` | `simple2` | 卡 ✗ |
+| 关掉两个 panic-on-lockup | `nolockpanic` | 卡 ✗ |
+| 配置层面（新增/移除项） | 静态 diff | 实质等价 ✗ |
+
+### 下一次最快的三步
+
+1. **用 `base15` 的 initramfs + 当前内核**：把变量从"内核"切到"initramfs"上再排除一次
+2. **临时去掉 `m7642-restart.c`**（从 Makefile 拿掉）重新构建 —— 它是"近期新增的
+   `arch_initcall`"，最可疑
+3. 若都不行，用**二分 git 提交**（`git -C linux-git log --oneline` 找 `base15` 对应的提交）
