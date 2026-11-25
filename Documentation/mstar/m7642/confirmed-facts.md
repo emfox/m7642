@@ -8094,3 +8094,38 @@ m7642_panic_dump()   /* 给 tramp 调："the trampoline calls this instead"
 1. **eMMC**（唯一真持久介质）—— 但写不落盘，且已确认 `pwrite`/`fsync` 都返回成功却不到卡
 2. **ramoops 保留区**（`0x41900000..0x41A00000`）—— 它是 Android 唯一不会清零的内存；
    目前 console zone 被 Android 自己的日志覆盖，**record zone 还没试过正确写法**
+
+## 36.28 record zone 也失败：我们的写入根本没落地（2026-11-27 02:4x）
+
+### 实验 `rz`
+
+用已验证的路线（`adb reboot recovery`，槽全 md5 = 镜像 ✓）跑一个 `/init`：
+`mmap("/dev/mem", 0x41900000)` → 写 `sig=DBGC|start=n|size=n|"====<sec>.<nsec>\n"+dmesg` → `reboot()`
+
+结果：
+- 盒子**没回来** ✗（内核挂住，说明 `/init` 没走到 `reboot()`）
+- record zone `0x41900000` 读回：`sig=DBGC`、`start=size=0`、数据区 **`ff`** ✗
+  ⟹ **我们的写入一个字节都没落地** ✗（`ff` 是擦除/初始态）
+
+### 因此当前的核心障碍（重新表述）
+
+**我们的内核里，`/init` 对 DRAM 的写入似乎完全无效** ✗：
+- `0x23081000` / `0x23082000` / `0x230a0000`（System RAM）⟹ 读回全零
+- `0x41900000` / `0x41940000` / `0x41980000`（ramoops 保留区）⟹ 只有 `sig` 留下、数据和 start/size 归零
+
+⟹ 这与 §36.16 的 `memtest` 结论**冲突** ✗
+  （那次 `memtest` 判定 TRUE，说明"写+同启动内读回"是成功的）
+⟹ 可能的解释：
+1. `memtest` 的 TRUE 是**误判**（例如 `mmap` 成功但写被丢弃，读回命中的是未初始化的同页）
+2. 我们的内核在 `mmap("/dev/mem")` 之后的**第一次写**就出错/挂住
+3. `mmap` 本身返回 `MAP_FAILED`，探针走了 `goto out`（代码里没有区分这两种情况）
+
+### 下一步（下次第一件事）
+
+**把 `/init` 里 `/dev/mem` 那一段的失败点拆出来，用 1-bit 通道逐段验证**：
+1. `open("/dev/mem")` 是否 >= 0
+2. `mmap(...)` 是否 != MAP_FAILED
+3. `msync()` 是否返回 0
+4. **同启动内**读回是否等于写入值（这才是 `memtest` 做过的那一步）
+
+四步分别用一个 1-bit 条件测，就能定位到底哪一步断掉。
