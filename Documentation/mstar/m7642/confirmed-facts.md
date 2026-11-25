@@ -5196,3 +5196,41 @@ REG_ADDR(REG_SW_RESET_CPU_AEON)  = AEON_SW_RESET;    /* 再置（保持） */
   （复位后 mboot 又引导 recovery ⟹ 短暂循环），最终仍回到了 Android ✓
 - 建议后续在  里先清 BCB（misc 分区）再 reboot，可以让这条路径更干净
   —— 但这需要 eMMC 写路径（§34.80），所以优先级仍在写路径上
+
+## 34.85 静态定位：写路径唯一的非对称点是 BIT_ADMA_EN（2026-11-25 19:4x，用户已下班，纯静态）
+
+### 编译开关现状
+
+```
+ENABLE_EMMC_ASYNC_IO = 0    ⟹ 异步/workqueue 写路径不编
+ENABLE_FCIE_ADMA     = 0    ⟹ ADMA 描述符准备代码不编
+ENABLE_UMA           = 1
+```
+
+### 读写路径的关键差异
+
+| | 起始 SD_CTRL | 完成等待 |
+|---|---|---|
+| 读 | `BIT_SD_DAT_EN\|BIT_ERR_DET_ON`（**无 ADMA**） | `BIT_DMA_END\|BIT_ERR_STS` —— 工作 ✓ |
+| 写 | `BIT_SD_DTRX_EN\|BIT_SD_DAT_DIR_W\|**BIT_ADMA_EN**\|BIT_ERR_DET_ON` | 同样的等待 —— 卡住 ✗ |
+
+写路径**无条件置了 `BIT_ADMA_EN`**，而 ADMA 描述符的准备代码因为 `ENABLE_FCIE_ADMA=0`
+根本没编进去 ⟹ 控制器被要求走 ADMA、却没有任何有效描述符 ⟹ 永远等不到 DMA 完成。
+而在置这个位之前，代码**已经**把直连 MIU DMA 的地址/长度写好了 ⟹ 正确做法是**去掉这个位**。
+
+这与观察完全吻合：**读正常、写卡死**；且与 eMMC 速率/legacy 无关（两者都卡）。
+
+### 已实现
+
+`CONFIG_M7642_WRITE_NO_ADMA`：在写路径把 `BIT_ADMA_EN` 去掉（带 `pr_info` 打印实际写入的
+`FCIE_SD_CTRL`），保留 `#else` 分支以复现原行为。已 `olddefconfig` 确认符号进入
+`include/generated/autoconf.h` ✓。
+
+### 待验证 / 注意
+
+- 目标文件里 `mstar_mci_dma_write` **不是独立符号**（被内联），但 `eMMC Err: w timeout`
+  字符串存在 ⟹ 写路径确实编译在内 ✓；不过我加的 `M7642 write: ...` 字符串在 `.o` 里
+  **没找到** ✗ ⟹ **需要确认这个分支真的被编译进去了**（下次上机前用 `objdump` 或直接看
+  运行时日志里的那行 `M7642 write:` 来确认）
+- 若确认生效：eMMC 写应当恢复正常 ⟹ 立刻解锁"跨断电持久化打点"⟹ 第 2 项（15–20 秒死亡）
+  和第 5 项（根文件系统）都能继续
