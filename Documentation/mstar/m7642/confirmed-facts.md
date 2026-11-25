@@ -7673,3 +7673,68 @@ Android 实测参数：`mem_size=0x100000`、`record=console=pmsg=0x40000`、
 往 **`0x41980000`**（真正的 console zone）写一次；或者用 cmdline 把
 **我们内核的** ramoops 直接指到那个地址和尺寸，让内核代码替我们记账
 （这样格式和边界一定合法）。
+
+## 36.21 ★ 打通"读厂内核完整日志"；我们的记录仍被 zap（2026-11-27 00:0x）
+
+### 方案 B（让内核代劳）成功写入、且**能跨 Android 启动存活**
+
+cmdline 改成正对 Android 的 console zone：
+
+```
+ramoops.mem_address=0x41980000 ramoops.mem_size=0x40000 ramoops.console_size=0x40000
+```
+
+静态验证（都通过）：
+- `persistent_ram_buffer_map` 里 `pfn_valid()` 为真 ⟹ 走 `vmap`，**不调用 `request_mem_region`** ⟹ 不会与 System RAM 冲突
+- `record_size=0` ⟹ `ramoops_init_przs` 提前返回 ⟹ console 就从 `mem_address` 开始
+- `buffer_size = size - 12` = `0x40000 - 12`，与 Android 完全一致
+
+实测：`0x41980000` 读回 `sig=DBGC`、`start=size=0x1a6d`（6989 字节）、数据以 `[  ` 开头 ✓
+**记录被接受、内容合法、而且跨 Android 启动存活** ✓✓
+
+### 读出来的内容
+
+**是厂内核（4.9）自己的启动日志**（不是我们的）：
+
+```
+[    0.000000] -(0)[0:swapper] zone DMA, srart 0x20200000, end 0x100000000
+[    0.000000] -(0)[0:swapper] default_cma buffer belongs to zone(DMA), size is 8 MiB
+[    0.000000] -(0)[0:swapper]     start 0x41000000, end 0x41800000
+[    0.785915]  (3)[1:swapper/0] ==RTC== MDrv_RTC_Init, 86
+[    1.079146]  (0)[1:swapper/0] Waiting for MMC done ... ...
+[    1.083281]  (0)[1:swapper/0] [AT][KR][start init][3072]
+```
+
+⟹ **console zone 会被 Android 每次启动继续追加/覆盖** ⟹ 我们写的记录被它的启动日志盖掉
+
+### 换 record zone（0x41900000）也不行
+
+按 `pstore_dump` 的头格式写（`snprintf("%s#%d Part%u\n", why, oopscount, part)`
+⟹ `"Oops#1 Part1\n"`），结果仍是 `sig` 留下、`start`/`size` 被清零 ✗
+
+### 结论
+
+| 能力 | 状态 |
+|---|---|
+| 读 **厂内核**的完整启动日志 | ✅ **已打通**（`probeRW addr=0x4198000c`，按 0x1000 分块读） |
+| 写**我们自己的**记录并让 Android 保留 | ❌ 两种 zone 都被 zap |
+
+### 但打通的那一半已经有实用价值
+
+厂内核日志给出了**第一手的保留区/CMA 布局**：
+
+```
+zone DMA        0x20200000 .. 0x100000000
+CMA (default)   0x41000000 .. 0x41800000   (8 MiB)
+heap RETURN     0x27400000 .. 0x2B400000   (64 MiB)
+```
+
+这些对第 2 项（PM51 保活）和 eMMC 写（DMA 缓冲）的分析都是有用材料，
+而且**随时可以再取一份最新的**（只要跑一次我们的内核 + 读回）。
+
+### 下一步
+
+1. 用这条已打通的读取路径，把厂内核日志**完整**取一份存进仓库（按 0x1000 分块，
+   约 7 KB，几次读取即可）
+2. 再想办法让**我们的**记录存活 —— 候选：写 `record #1`（`0x41940000`）、
+   或先 `zap` 后立刻写、或改用 `pmsg` zone（`0x419C0000`，它有独立的记录格式）
