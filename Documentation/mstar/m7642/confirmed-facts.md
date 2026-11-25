@@ -3120,3 +3120,51 @@ python3 tools/host/mkbootimg.py -k <Image> -r <initrd.cpio.gz> -o out.img ...
 ```
 实测（旧内核 + 新 ramdisk）`android up`、stash 校验通过，可用于快速迭代用户态代码。
 但**交付形态仍是"源码 + 配置 + 脚本可复现构建"**，不是二进制。
+
+## 34.41 ★★★★★ framebuffer 修好：fb0 + fbcon 上屏（2026-11-25 11:0x）
+
+### 症状
+
+```
+simple-framebuffer chosen:framebuffer@2d100000: No memory resource
+probe with driver simple-framebuffer failed with error -22   (-EINVAL)
+Warning: unable to open an initial console.
+```
+
+⟹ 没有 `fb0` ⟹ 没有 fbcon ⟹ cmdline 里的 `console=tty0` 落空。
+
+### 三个根因（都要修）
+
+1. **节点在 `/chosen` 下**：`/chosen` 没有 `ranges`，`reg` 无法翻译成 `IORESOURCE_MEM`
+   ⟹ `platform_get_resource()` 返回 NULL ⟹ `simplefb_probe` 报 "No memory resource" 并返回 -EINVAL。
+   **修法**：把 `framebuffer@2d100000` 从 `/chosen` 移到**根节点**下（根是地址空间，`reg` 可直接翻译）。
+   （曾试 `memory-region = <&framebuffer>`，资源能解析，但引出第 2 个问题。）
+2. **保留内存被内核先映射**：`reserved-memory` 里那块非 `no-map` 区域会被内核映射，
+   随后 simplefb 的 `ioremap_wc()` 因属性冲突失败 ⟹
+   `simplefb: cannot reserve video memory at [mem 0x2d100000-0x2d8e8fff]`
+   ⟹ `probe failed with error -12`（-ENOMEM，栈里是 `simplefb_probe+0x204`）。
+   **修法**：给 reserved-memory 节点加 **`no-map`**（显示控制器自己扫那块内存，CPU 不需要默认映射）。
+3. **驱动选择**：`CONFIG_FB_SIMPLE`（fbdev，直接读 DT 属性）与 `CONFIG_DRM_SIMPLEDRM` **互斥**
+   （`depends on !DRM_SIMPLEDRM`）。内核里跟 `simple-framebuffer` 同名的还有
+   `drivers/firmware/sysfb.c` 的 shim，它靠 `screen_info`（EFI 提供），mboot 不给 ⟹ -EINVAL。
+   **修法**：`CONFIG_FB_SIMPLE=y` + `# CONFIG_DRM_SIMPLEDRM is not set`（`fbcon` 保持 =y）。
+
+### 结果（真机日志）
+
+```
+OF: reserved mem: 0x2d100000..0x2d8e8fff (8100 KiB) nomap non-reusable framebuffer@2d100000
+simple-framebuffer 2d100000.framebuffer: framebuffer at 0x2d100000, 0x7e9000 bytes
+simple-framebuffer 2d100000.framebuffer: format=a8r8g8b8, mode=1920x1080x32, linelength=7680
+Console: switching to colour frame buffer device 240x67
+simple-framebuffer 2d100000.framebuffer: fb0: simplefb registered!
+```
+
+⟹ 屏幕成为控制台（`console=tty0`），内核日志直接上电视屏。
+
+### 排查过程中同时修好的仪器问题（否则全是假阴性）
+
+- **tramp 落点必须是零填充**：`mk-multi.sh` 新增断言，区域非零就报错退出。
+  （2026-11-25 两次把 blob 盖到活代码上，表现成"内核挂死"。）
+- **`resolve-params.py` 必须识别裸镜像/容器**：payload 基址对裸 Image 是 0、对容器是 page_size；
+  之前写死 2048，导致所有偏移错 0x800。
+- **对齐补丁点**只取 `ckpt.py` 的 `zfix_align`（`__pi_early_map_kernel+0x3c`）并校验 `0x92405279`。

@@ -62,9 +62,28 @@ if w != want:
     sys.exit("mk-multi: align site %#x holds %#010x, expected %#010x" % (off, w, want))
 PY
 USER_TRAMP_AT=${TRAMP_AT:-}
-KADDR=${KADDR:-0x20280000} KERNEL="$KERNEL" TRAMP_AT=${USER_TRAMP_AT:-$SLOT_OFF} ./build-postmmu.sh >/dev/null
-. ./tramp-entries.env
 TRAMP_AT=${USER_TRAMP_AT:-$SLOT_OFF}
+
+# The trampoline must land on padding.  If it overwrites live code the kernel
+# dies in head.S and every probe silently "hangs" -- learned the hard way twice
+# on 2026-11-25 (a hardcoded tramp_at that was padding in an old build but code
+# in this one).
+python3 - "$IMAGE" "$TRAMP_AT" <<'PY'
+import sys
+img, at = sys.argv[1], int(sys.argv[2], 0)
+need = 0x880
+d = open(img, "rb").read()
+seg = d[at:at + need]
+if len(seg) < need:
+    sys.exit("mk-multi: tramp at %#x runs past the image" % at)
+nz = sum(1 for b in seg if b)
+if nz:
+    sys.exit("mk-multi: tramp region %#x..%#x is not free (%d non-zero bytes)"
+             % (at, at + need, nz))
+PY
+
+KADDR=${KADDR:-0x20280000} KERNEL="$KERNEL" TRAMP_AT="$TRAMP_AT" ./build-postmmu.sh >/dev/null
+. ./tramp-entries.env
 
 # The 2 MB-alignment fix is only needed because the image is loaded at
 # 0x20280000 (base + 0x80000).  NO_ALIGN=1 builds without it, for the
