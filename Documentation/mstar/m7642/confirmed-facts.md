@@ -4523,3 +4523,50 @@ CONFIG_XFS_FS   = y          ← 镜像 7,158,272 B（比 ext4 的 7,035,392 B �
 3. 若确认是"体积阈值"，检查是否与 **2 MB 对齐/`.rodata` 布局**有关
    （当初"内建 DTB 在 `.init` 段 + `free_initmem` 毒化"就是同一类布局坑，
    当时用"DTB 移出 `.init`"解决；这次要确认 DTB/`_end` 在镜像变大后是否跨过了某个边界）。
+
+## 34.68 ext4 变异来源的配置级排查：RELR 是红鲱鱼，BUFFER_HEAD 关不掉（2026-11-25 16:2x）
+
+### 配置差分（基线 vs 开 ext4）
+
+用 `KCONFIG_CONFIG` 生成两份临时配置做 diff，过滤掉编译器/工具链探测项后，
+**真正影响构建**的新增只有两个：
+
+```
++ CONFIG_RELR=y
++ CONFIG_BUFFER_HEAD=y
+（其余是 EXT4_FS / EXT4_USE_FOR_EXT2 / JBD2 / CRC16 / FS_MBCACHE —— 文件系统实现本身）
+```
+
+### 逐个排除
+
+- **`CONFIG_RELR` 是红鲱鱼**：真实 `.config` 里**根本没有这个符号**
+  （它只在"用 `KCONFIG_CONFIG` 另生成一份"的流程里冒出，属于临时文件的默认值差异）。
+  直接在真实配置里 `scripts/config -e RELR` 也**不生效**。
+- **`CONFIG_BUFFER_HEAD=y` 关不掉**：它在真实配置里由 `EXT4_FS` **select**，
+  sed 改成 `# … is not set` 后再跑 `olddefconfig` 又会被重新打开。
+
+### 地址/布局核查（零成本，已排除）
+
+两种配置下的关键符号（VA，`_text` = PA 0x20280000）：
+
+| 符号 | 可用基线 | 开 ext4 |
+|---|---|---|
+| `_etext` | `…80360000` | `…803d0000` |
+| `__init_begin` | — | `…804d0000` |
+| `__init_end` | — | `…80610000` |
+| `_end` | `…806b0000`（PA 0x20930000） | `…80730000`（PA **0x209b0000**） |
+
+对照关键物理地址：stub `0x21680000`、报告页 `0x23080000`、framebuffer `0x2d100000`。
+开 ext4 后 `_end` = 0x209b0000，与上述任何一个都相距 >1 MB ⟹ **不存在地址冲突** ✓
+（`mk-multi` 打印的 `IMAGE_END_PA=0x209b0000` 也正好等于 `_end`，自洽 ✓）。
+
+### 当前判断
+
+- 不是文件系统特有的（XFS 表现相同，§34.67）
+- 不是 RELR、不是地址冲突、不是 initramfs
+- 剩下的差异是 **`CONFIG_BUFFER_HEAD=y` + JBD2/CRC16/MBCACHE 这些被 select 的核心改动**
+  ⟹ 下一步应针对 `BUFFER_HEAD` 打开后**核心块层/内存层的早期路径**做二分
+  （它是 7.x 新引入的"buffer_head 可选"开关，会影响 `mpage`/`block`/`iomap` 与
+  部分 `__init` 路径）
+- 取证通道已可用（§34.66），但当前失败形态下 `kmsg_dump` 拿到的日志长度为 0
+  ⟹ 失败发生在 printk 环形缓冲产生内容之前，属于**极早期**（`start_kernel` 最前段）
