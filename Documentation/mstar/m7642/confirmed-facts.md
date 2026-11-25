@@ -5461,3 +5461,41 @@ HAL 需要 `mstar_pm_base`，而厂头只给了 ARM（0xFD000000）和 MIPS（0x
    16 位窗口 **0x1F204000**、32 位窗口 **0x1F3A4200**）
 2. 上机看 probe：不挂 + 出现 `eth0` 就是实质进展
 3. 网络通了 ⟹ 第 2 项获得一条不依赖 eMMC 的数据出口
+
+## 34.92 ★ 第 4 项里程碑：mstar-emac 驱动已链入内核（2026-11-25 23:xx）
+
+### 最终能构建成功的组合
+
+| 措施 | 说明 |
+|---|---|
+| `drivers/net/Makefile` 里**直接按路径引用**两个目标文件 | 这个树里 `obj-y += <dir>/` 形式始终不生效；直接列文件才行 |
+| 开启 `CONFIG_NET/INET/ETHERNET/PACKET/UNIX/IPV6` | **我们内核原本完全没开网络** ⟹ 这才是 `netif_carrier_off`/`eth_type_trans`/`netif_rx` 等未定义的根因 |
+| 给 `CONFIG_MII` 加提示词并开启 | 它是**隐藏符号**（`tristate` 无 prompt），`scripts/config` 设不了 ⟹ 那四个 `mii_*` 函数缺失 |
+| `mstar_pm_base` 改为与 eMMC 驱动**共用** | 两边都定义会 "multiple definition"；emac 侧改成 `extern`，只在未映射时才 ioremap |
+| 厂内辅助函数桩 | `Chip_Flush_Memory_Range`、`Chip_Inv_Cache_Range_VA_PA`（签名须与 `chip_setup.h` 一致）、`memblock_size_of_first_region` |
+
+### 验证
+
+```
+nm vmlinux | grep mstar
+  __initcall__kmod_mdrv_emac_v3__676_4653_mstar_emac_drv_init_module6
+  Mstar_emac_driver
+  mstar_emac_drv_init_module
+  mstar_ethtool_ops
+  mstar_pm_base
+strings vmlinux | grep "RIU window"
+  mstar-emac: RIU window mapped at %#lx
+  mstar-emac: reusing RIU window at %#lx
+```
+
+`vmlinux` 从 7.6 MB → **10.2 MB**（网络栈 + 驱动）。**链接干净，无未定义符号。**
+
+### 下一轮
+
+1. 写 **DTS 节点**（数据全部就绪）：
+   - `compatible = "mstar-emac"`
+   - `interrupts`：SPI **9**（emac）、SPI **105**（emac_man）
+   - 寄存器：16 位窗口 **0x1F204000**、32 位窗口 **0x1F3A4200**
+2. 上机初测：看 `probe` 是否挂、是否出现 `eth0`
+3. 注意：**开网络后内核变大了 2.5 MB**，`_end` 位置会变 ⟹ 探针的 `KIMAGE_OFFSET` 等常数
+   需要重新核算（§34.x 有记录这个坑）
