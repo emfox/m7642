@@ -3478,3 +3478,21 @@ EMMC_PLL 1X = 0xB, 2X = 0xC（写进 BIT2..5）
 2. 在驱动里加一次性自检：`reg_ckg_fcie_syn` 必须是 `0x0001`（厂版 `eMMC_platform.c:1630`
    本来就有这个自检，只是被日志级别挡住了）；
 3. 回到 eMMC 主流程：CMD6 能过之后，`mmcblk0` 应该出现，再进 P3（只读分区）。
+
+## 34.47 eMMC：HAL_MIN 实验（跳过 M7322 的 PLL/pad 写）挂死，无数据（2026-11-25 12:1x）
+
+按 §34.46 的结论做了第一版改动（`CONFIG_M7642_HAL_MIN`）：
+
+1. `eMMC_pads_switch()` 直接返回（不再写 `chiptop_0x6E/6F/50` 与 `emmcpll_0x*`）；
+2. `eMMC_PlatformInit()` 跳过 1.8V/PLL 写（`reg_emmc_test`、`emmcpll_0x45`），只打印当前值；
+3. `eMMC_clock_setting()` 里把 `reg_ckg_fcie_syn` 强制写成 `0x0001`（设备实测值）。
+
+两次上机（`m7642-halmin.img` / 加 lockup→panic 之后的 `halmin2.img`）都是
+**120/150 s 内 Android 没起来、无 stash 记录** ⟹ 内核挂死，且挂死点在**中断关闭**的路径
+（lockup/hung-task 检测器都没能触发 panic）。
+
+⟹ 这一版**不可用**，且**没有产出任何数据**（DRAM 里的日志页随插座复位丢失）。
+下一步必须改成"最小单点改动"再试，例如：
+- 只做 (3)：`reg_ckg_fcie_syn` 强制 `0x0001`，其余完全保持原样（一行改动，风险最低）；
+- 或者只做 (1) 的一半：仅跳过 `emmcpll_0x*` 的写，保留 `chiptop_0x6E/6F/50`；
+- 每一步都先静态确认"如果在 x 处挂死，会损失什么"，避免再出现"零数据"的发数。

@@ -556,3 +556,24 @@ runnner 还必须**校验槽内 md5**（按镜像真实长度、4096 对齐、�
 - 所有"不交接"的实验都要在几十秒内完成，否则机器会睡；
 - 想让内核长期驻留，需要处理 PM51 / 待机路径（vendor 内核里由 PM 驱动喂状态机）；
 - 恢复仍然是 `tools/host/socket.sh recover`（OFF → 10 s → ON → 3 s → IR POWER）。
+
+### "挂死"无法被任何内核检测器救回（2026-11-25 实测）
+
+eMMC bring-up 期间试过把"卡住"转成"panic"，好让 panic 探针接手拿日志：
+
+```
+CONFIG_DEBUG_KERNEL=y
+CONFIG_SOFTLOCKUP_DETECTOR=y   CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC=1
+CONFIG_DETECT_HUNG_TASK=y      CONFIG_BOOTPARAM_HUNG_TASK_PANIC=1   (timeout 30)
+```
+
+**实测无效**：装了这个内核照样"挂死 + 无 Android + 记录为空"。
+原因：那几个检测器都靠**定时器中断**驱动，而这台机器上遇到的挂死多数发生在
+**中断被关掉**的路径里（`setup_arch` 的 `msr daif,#0xc0` 窗口、驱动锁内轮询等），
+中断不来 ⟹ 检测器永远不跑 ⟹ 没有人 panic。
+
+**结论（再次确认）**：不存在"挂了还能自动回来 + 记录还在"的路径。
+⟹ 每一发都要当成有预算：**优先设计会返回的探针**，把可能挂死的动作拆到最小，
+并且在动手前用静态分析把候选压到 1–2 个。
+
+（这套配置本身无害，留在 `.config` 里可以兜住"中断正常但任务卡住"的情况。）
