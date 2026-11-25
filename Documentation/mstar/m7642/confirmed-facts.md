@@ -8129,3 +8129,48 @@ m7642_panic_dump()   /* 给 tramp 调："the trampoline calls this instead"
 4. **同启动内**读回是否等于写入值（这才是 `memtest` 做过的那一步）
 
 四步分别用一个 1-bit 条件测，就能定位到底哪一步断掉。
+
+## 36.29 把内核 console 指向 record #1 也不行；本轮诚实结论（2026-11-27 04:0x）
+
+### 实验 `zone1`
+
+cmdline 改成正对 record zone #1：
+```
+panic=10 ramoops.mem_address=0x41940000 ramoops.mem_size=0x40000 ramoops.console_size=0x40000
+```
+`/init`：往 `/dev/kmsg` 写 `M7642-ZONE1-MARKER-QQQQ7777` → `reboot()`
+
+结果：烧写五项校验通过 ✓、冷却后 `0x41940000` 读回 **`sig=DBGC`、`start=size=0`、数据区 `ff`** ✗
+⟹ **我们的内核一条记录都没写进去** ✗
+
+### 本轮确认的一件正面事实
+
+**`memtest` 判定 TRUE**（盒子 +165s 自己回来）⟹ **`/dev/mem` 的写入 + 同启动内读回是正常的** ✓
+⟹ 这排除了"`/dev/mem` 坏了"，把问题**锁定**在"**数据跨 Android 启动不保留**"
+
+### 诚实的当前结论
+
+**没有打通任何一条通道。** 试过并失败的落点：
+
+| 落点 | 方式 | 结果 |
+|---|---|---|
+| `0x23081000` / `0x23082000` / `0x230a0000` | `/dev/mem`（用户态） | 写成功、跨启动归零 ✗ |
+| `0x41980000`（console zone） | 内核 ramoops console | 写入成功但被 Android 日志覆盖 ✗ |
+| `0x41900000` / `0x41940000`（record zones） | 用户态 `/dev/mem` | 数据一个字节都没落地 ✗ |
+| `0x41940000`（record #1） | 内核 ramoops console | 同上，没落地 ✗ |
+
+### 下一个真正该查的点（静态）
+
+**我们的内核里 ramoops 到底有没有 probe 成功。** 三种可能：
+1. `ramoops_probe` 在 `mem_address=0x41940000` 上**失败**（`persistent_ram_new` 返回错误）
+   ⟹ 需要看 `ramoops_probe` 的返回/日志
+2. `ramoops` 的 **console 后端没注册**（`CONFIG_PSTORE_CONSOLE=y` 已有，但 `ramoops_console` 需要 `console_size != 0`）
+3. 我们的 `/init` 里 `reboot()` 在 console 缓冲**刷出去之前**就复位了
+   （`ramoops` console 是**追加写**，`pr_flush`/`console_flush_on_panic` 可能没跑）
+
+**最快的静态检查**：在 `ramoops_probe` 里加一行 `pr_info` 打印 `cxt->cprz` 是否创建成功、
+`buffer_size` 是多少；然后用 §36.27 的 `PANIC_DUMP_VA` 通道或 eMMC 之外的手段读出来。
+
+### 时间
+
+会话已 23 小时。设备和仓库都是干净状态：Android 正常、两个仓库已提交、文档已推送。
