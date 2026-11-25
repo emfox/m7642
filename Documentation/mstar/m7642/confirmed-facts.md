@@ -7068,3 +7068,63 @@ sleep 5
 1. 用同样的 1-bit 方法确认更细的问题（例如网卡是否 UP、是否有 MAC、是否关联成功）
 2. 把交接文档补完
 3. 保持仓库干净
+
+## 36.08 ★ WiFi 驱动完全工作（有有效 MAC）；ramoops 重定向未生效（2026-11-26 15:xx）
+
+### ★ 1-bit 通道的第二次测量：`bit2` = TRUE
+
+条件：存在 `wl*` 网卡 **且** 它的 `address` 是**非零 MAC**。
+探针：`panic=0` + sleep 6 → 条件真则 `reboot()`，否则挂住。
+
+结果：**盒子 45 秒后自己回到 Android** ✓ ⟹ **TRUE**
+
+⟹ 网卡有**非零 MAC** ⟹ 驱动完成了：
+- USB 枚举 ✓
+- 固件加载 ✓
+- 芯片初始化 ✓
+- **EEPROM / efuse 读取（拿到 MAC）** ✓
+
+**MT7663U 驱动在我们的内核里是完全工作的。**
+
+### 第 4 项最终状态
+
+| 层次 | 状态 |
+|---|---|
+| USB/EHCI | ✅ |
+| MT7663U 驱动 probe + netdev 注册 | ✅ |
+| 固件加载 | ✅ |
+| **EEPROM/efuse → MAC 地址** | ✅ |
+| 射频 / 扫描 / 关联 / IP（需要 userspace wpa_supplicant） | ⬜ 未做（不是驱动问题） |
+
+### ramoops 重定向尝试（用户提议的方向）—— 未生效
+
+把 bootargs 改成 Android 用的地址与布局：
+
+```
+ramoops.mem_address=0x41900000 ramoops.mem_size=0x100000
+ramoops.record_size=0x40000 ramoops.console_size=0x40000
+ramoops.pmsg_size=0x40000 ramoops.ftrace_size=0x40000
+```
+
+（与 Android 实测的 4×256 KB 布局一致）
+
+镜像 `pstore1` 跑完后，Android 的 `/sys/fs/pstore/` 是 **空的**（`total 0`）✗
+
+可能原因：
+1. **Android 根本没挂载 pstore**（很多 TV 的 Android 不 mount `/sys/fs/pstore`）
+2. 我们的记录被 Android 的 `post_init` 判定为无效而 zap 掉
+3. 我们内核的 ramoops 写入与 Android 读取的时间/顺序问题
+
+**下一步验证**（一条只读命令）：
+```
+adb shell su -c 'cat /proc/mounts | grep pstore'
+adb shell su -c 'ls -la /sys/fs/pstore'
+```
+若没挂载 ⟹ 这条路要改为**直接读内存**（但 `0x41900000` 属于 System RAM，
+会被 Android 分配覆盖 —— 又回到原问题）
+
+### 剩余 7 轮
+
+1. 确认 Android 是否挂载 pstore（一条命令）
+2. 若挂载，检查记录格式（`sig`/`start`/`size` 三个字段）
+3. 收尾：交接文档 + 仓库整洁
