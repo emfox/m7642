@@ -4835,3 +4835,41 @@ tvcertificate / impdata / persist / tcluserdata / tclconfig   →  ext4
    且 `console=tty0 console=ttyS0` 双控制台一直在跑，是"几十秒后才出事"的典型嫌疑
 3. 关 `CONFIG_PRINTK` 之外的中断/定时源逐个排除（RCU、workqueue、hrtimer）
 4. 用**不带 dump 的探针**（dump 本身会让某些情形挂死，§34.73）读 stash 判断 panic/挂死
+
+## 34.75 长时运行死亡：排除 fbcon（2026-11-25 16:5x）
+
+关掉 `CONFIG_FRAMEBUFFER_CONSOLE` / `CONFIG_VT` / `CONFIG_VT_CONSOLE`（消除
+`fb_flashcursor` 的 ~200 ms 延迟工作与双控制台），同样的 30 秒 `/init`：
+
+**仍然失败**（80 W、无 adb、报告空）⟹ **不是 fbcon** ✗
+
+### 长时运行死亡的完整排除清单（截至本轮）
+
+| 假设 | 排除依据 |
+|---|---|
+| PM51 切电 | 失败时插座 80 W（待机 11 W） |
+| CPU 空闲路径（PSCI idle/WFI） | 忙等同样失败；`ARM_PSCI_CPUIDLE` 本就没开 |
+| mstar-mci 后台活动 | 整块去掉 mmc 驱动同样失败 |
+| lockup / hung-task 检测器（20/30 s 阈值） | 四个开关全关仍失败 |
+| fbcon / VT 控制台 | 全关仍失败 |
+| ext4 / 其他文件系统代码 | 配置里没有文件系统时同样失败（早期测试） |
+| DMA mask / eMMC | 与 eMMC 完全无关（去掉驱动也失败） |
+
+**临界点：15 秒能活，30 秒必死**（≈ 20–25 秒之间）。
+
+### 剩余可疑方向
+
+1. **某个 20 秒左右的定时器/延迟工作**：RCU（`rcu_gp`/`rcu_sched`）、workqueue、
+   `hrtimer`、`clocksource` 校验（`clocksource_watchdog` 默认每 0.5 s 一次，
+   若 clocksource 不稳会 disable 并可能连带问题）
+2. **`CONFIG_HZ`/定时中断丢失**：若定时器中断在某个点后不再来，`schedule`/`sleep` 会
+   永久阻塞 —— 与"15 s 能完成、30 s 完不成"非常吻合（越睡越久越容易错过）
+3. **PM51 的"心跳"**：虽然切电没发生，但 PM51 可能先发中断/改变某个寄存器状态，
+   让内核侧的驱动（ir/pm/wdt）在 ~20 s 时出问题
+
+### 建议的下一次实验（信息量最大）
+
+**测"定时器是否还在跑"**：`/init` 里每 1 秒写一个递进的标记到 DRAM（第 N 秒写 N），
+跑 60 秒后（或挂死后被恢复前）—— 但 DRAM 会丢，所以改成：`/init` 每秒 `write()` 一次
+到报告页，然后用**探针在 20 秒处**做一次 `save`（记录当时的时间戳）⟹ 两次记录的时间差
+直接告诉我们定时器有没有停。
