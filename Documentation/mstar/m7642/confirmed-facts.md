@@ -7605,3 +7605,71 @@ dmesg: avc: denied { read } ... dev="pstore" tclass=dir permissive=1
 `mem_size=0x40000`、`console_size=0x3fff4`），让**内核的 `persistent_ram` 代码**
 替我们做记账 —— 这样格式一定合法。
 之前试过指向 `0x41900000` 但**尺寸/布局不匹配**，现在有了精确参数可以重试。
+
+## 36.20 ★ ramoops 真实 zone 布局（由厂内核代码推导，不是猜的）（2026-11-26 23:3x）
+
+### 用户的问题点出了要害
+
+> "ramoops 这种东西不应该是公开有标准或者规范的吗，难道每个内核或者厂家自己实现一套？"
+
+**对，ramoops 是标准的上游 pstore 子系统**，有文档
+(`Documentation/admin-guide/ramoops.rst`) 和固定的盘上格式：
+
+```c
+struct persistent_ram_buffer {
+    uint32_t sig;      /* 0x43474244 "DBGC" */
+    atomic_t start;
+    atomic_t size;
+    uint8_t  data[0];
+};
+```
+
+而且**厂内核 4.9 与 7.3 的 `ram_core.c` 这段逐字节一致**（已静态核对）。
+
+⟹ **格式不会错**，我上一轮怀疑"格式/语义不对"是多余的 ✗
+**没有标准的只是"zone 放在哪、多大"** —— 那来自启动参数。
+
+### 从 `fs/pstore/ram.c` 推导出的真实布局
+
+```c
+dump_mem_sz = size - console_size - ftrace_size - pmsg_size - tvmsg_size;
+max_dump_cnt = dump_mem_sz / record_size;
+ramoops_init_przs(...)                  /* record zones: max_dump_cnt 个 */
+ramoops_init_prz(... console_size ...)  /* 然后 console */
+ramoops_init_prz(... ftrace_size ...)   /* 然后 ftrace */
+ramoops_init_prz(... pmsg_size ...)     /* 最后 pmsg */
+```
+
+Android 实测参数：`mem_size=0x100000`、`record=console=pmsg=0x40000`、
+**`ftrace_size=0`**、`ecc=0`、`dump_oops=0`、`mem_type=0`
+
+⟹ `dump_mem_sz = 0x100000 - 0x40000 - 0 - 0x40000 = 0x80000`
+⟹ `max_dump_cnt = 0x80000 / 0x40000 = 2`
+
+**真实布局**：
+
+| 地址 | zone |
+|---|---|
+| `0x41900000` | record #0 |
+| `0x41940000` | **record #1** |
+| `0x41980000` | **console** |
+| `0x419C0000` | pmsg |
+
+### 这解释了我之前的全部失败
+
+我一直往 **`0x41940000`** 写"console 格式"的记录 —— 但那实际是
+**record #1（dmesg 区）**，那里**必须带 `====` 的 kmsg 头**，我没带
+⟹ 被 `post_init` 判无效并 zap ✓（读回时 sig=`DBGC` 保留、size 归零，
+正是 `persistent_ram_zap` 的行为 ✓）
+
+### 另一个重要的运维事实
+
+**Android 会把 recovery 分区还原成原厂内容**：测试后槽里又出现 `8575bff3`
+（原厂镜像），而不是我们刷的 `609d72b5`。
+⟹ **每次测试必须"刷完立刻重启"**，不能刷完再等 —— 期间分区可能已被还原。
+
+### 下一步
+
+往 **`0x41980000`**（真正的 console zone）写一次；或者用 cmdline 把
+**我们内核的** ramoops 直接指到那个地址和尺寸，让内核代码替我们记账
+（这样格式和边界一定合法）。
