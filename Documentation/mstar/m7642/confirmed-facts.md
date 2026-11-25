@@ -4291,3 +4291,45 @@ ext4 超级块（§34.61）。⟹ 因果关系明确。
 3. 挂载本身的实现路径：`system` 是 ext4、2.5 GiB、4 KiB 块、卷标 `/`；
    分区没有 `mmcblk0p*`（厂商私有布局），所以要么加自定义分区解析，
    要么用 loop 设备带 offset（`CONFIG_BLK_DEV_LOOP` 也要开）。
+
+## 34.63 panic 取证通道（kmsg_dump）：注册成功但处理器不被调用（2026-11-25 15:0x）
+
+### 实现（`CONFIG_M7642_PANIC_LOG`）
+
+在 `mstar_mci_v5.c` 里注册一个 `kmsg_dump` 处理器（7.3.5 的 API：
+`void (*dump)(struct kmsg_dumper *, struct kmsg_dump_detail *)`、
+`struct kmsg_dump_iter`、`kmsg_dump_get_buffer()`），把 printk 环形缓冲写到
+**PA 0x230a0000**（布局 `u32 magic "M764" | u32 len | text`，4 KiB 之外还有 0x10000 空间）。
+选这个地址是因为紧邻已验证能存活的 stash 页（0x23080000/0x23081000/0x23082000）。
+
+### 实测
+
+```
+<6>[0.187] M7642: panic log channel armed (-> 0x230a0000)     ← 注册成功 ✓
+读 0x230a0000: magic=0x0                                       ← 处理器的面包屑都没写 ✗
+```
+
+为了区分"处理器没被调用"和"kmsg API 失败"，在处理器开头加了硬编码面包屑
+（先写 magic + `0xffffffff`，再取日志）：**面包屑也没出现** ⟹
+**处理器根本没被调用**。
+
+### 原因分析
+
+我们的检查点探针在 **`panic()` 入口**就用 `bl` 接管了（保存现场 → 写 stash →
+`restore` 恢复原指令）。`panic()` 里 `kmsg_dump(KMSG_DUMP_PANIC)` 的调用
+在我们这条接管/恢复路径下**没有被执行到** ⟹ 处理器不会被调用。
+
+### 有用的结论
+
+- `kmsg_dump` 机制本身、以及 0x230a0000 这个页的位置都可用（注册成功、无副作用）；
+- 要真正抓到 panic 文本，得改探针：在 `restore` 路径里**主动调用**
+  `kmsg_dump(KMSG_DUMP_PANIC)`，或者不拦 `panic()` 入口而改为拦更早的 `oops`/`die`；
+- 另一条更简单的路：把 `console=tty0` 的 framebuffer 内容在 panic 前 dump 到 DRAM
+  （fbcon 已在画控制台，`/dev/fb0` 的 smem 是 PA 0x2d100000，属保留区、交接后可能存活）。
+
+### 本轮其它结论（回顾）
+
+- eMMC 全功能可用（§34.60 逐字节校验、§34.58 写路径）
+- `system` 是 ext4、2.5 GiB、4 KiB 块（§34.61）
+- `CONFIG_EXT4_FS=y` 会让内核在 `/init` 之前 panic，与 mmc/init 无关（§34.62）
+- panic 取证通道：机制就位，触发路径还需要改探针（§34.63）
