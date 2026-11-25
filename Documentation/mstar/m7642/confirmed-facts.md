@@ -8325,3 +8325,44 @@ memory@54400000: 0x54400000 + ...
 **"盒子回来" 只能证明 `/init` 的 `reboot()` 被执行**，而 `/init` 的条件来自
 `/dev/mem` 读 `0x23081000`。这次那个读**成功**了（否则 `ok=0` 会挂住），
 所以 `PORM` 确实存在 ⟹ **probe 成功是可信的** ✓
+
+## 36.33 静态链条全部打通；`cc` 的 FALSE 可能是假阴性（2026-11-27 08:0x）
+
+### 静态链条（每一环都确认了）
+
+| 环节 | 依据 |
+|---|---|
+| `ramoops_probe` 成功 | 1-bit 自报 `PORM`（实测） |
+| `cprz` 创建 | `ram.c:793` `ramoops_init_prz("console", ...)` |
+| console flag | `ram.c:827` `if (cxt->console_size) cxt->pstore.flags \|= PSTORE_FLAGS_CONSOLE` |
+| read/write 指针 | `ram.c:448-449` 静态初始化，两者都设 ⟹ `pstore_register` 的 `if (!psi->read \|\| !psi->write)` 通过 |
+| `pstore_register_console` | `platform.c:518` 调用 |
+| `pstore_console.name` | `psinfo->name = "ramoops"`（`ram.c:446`）⟹ 非空 |
+| nbcon 分派 | **`printk.c` 里 `con->write(...)` 仍然被调用**（legacy `!CON_NBCON` 路径存在）⟹ nbcon 不是问题 |
+| 两个 write 函数 | `pstore_console_write` 无守卫；`ramoops_pstore_write` 的 console 分支只判 `!cxt->cprz` |
+
+### 所以 `cc` 判 FALSE 很可能是**假阴性**
+
+`cc` 的判据是 `/init` 用 **`/dev/mem`** 读 `0x41940000` 的 `size` 字段。
+但 `0x41940000` 现在是 **`no-map` 保留区** ⟹ `devmem_is_allowed()` 可能**拒绝**访问
+⟹ `/dev/mem` 读回 0 ⟹ **误判成"没写"** ✗
+
+旁证：**Android** 侧用 `probeRW`（走 `ioremap`，不走 `/dev/mem`）读同一个地址
+**能读到 `sig=DBGC`** ✓ ⟹ 那块内存本身是可读的。
+
+### 结论
+
+**"console 没写"这个结论不可信** ✗ ⟹ 需要换一种**不依赖我们内核 `/dev/mem`** 的判据。
+
+### 下一步（判据改造）
+
+1. 在 **`ramoops_pstore_write` 的 console 分支里**加一行自报：写成功后把
+   `cxt->cprz->buffer->size` 拷到 `0x23081000[1]`（普通 System RAM，`/dev/mem` 能读）
+   ⟹ `/init` 读那里就能判断，不再依赖访问 `no-map` 区
+2. 或者更简单：**让 `/init` 直接把 `0x23081000` 的值编码进 1-bit 通道**
+   （每次测一个 bit）
+
+### 教训
+
+**用 `/dev/mem` 读 `no-map` 保留区会得到 0，不能当"没数据"的证据。**
+这一条值得写进纪律。
