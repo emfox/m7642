@@ -99,6 +99,9 @@ for spec in "$@"; do
 	kva)     tgt=$TRAMP_KVA_ENTRY ;;
 	save)    tgt=$(( TRAMP_AT + 0x400 )) ;;
 	restore) tgt=$(( TRAMP_AT + 0x500 )) ;;
+	save1)   tgt=$(( TRAMP_AT + 0x900 )) ;;
+	save2)   tgt=$(( TRAMP_AT + 0x960 )) ;;
+	save3)   tgt=$(( TRAMP_AT + 0x9c0 )) ;;
 	readout) tgt=$(( TRAMP_AT + 0x600 )) ;;
 	count)   tgt=$(( TRAMP_AT + 0x700 )) ;;
 	regdump) tgt=$(( TRAMP_AT + 0x800 )) ;;

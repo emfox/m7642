@@ -490,3 +490,78 @@ _start_regdump:
 	sub	x16, x16, x17
 	mov	x5, xzr
 	br	x16
+
+/* --------------------------------------------------------------------- *
+ * save1: same as _start_save, but records into stash slot 1
+ * (SAVE_VA + 0x100) so several checkpoints can be logged in one boot.
+ * --------------------------------------------------------------------- */
+	.org	0x900
+	.globl	_start_save1
+_start_save1:
+	movz	x16, #(SAVE_VA & 0xffff)
+	movk	x16, #((SAVE_VA >> 16) & 0xffff), lsl #16
+	movk	x16, #((SAVE_VA >> 32) & 0xffff), lsl #32
+	movk	x16, #((SAVE_VA >> 48) & 0xffff), lsl #48
+	add	x16, x16, #0x100
+	mrs	x17, tcr_el1
+	str	x17, [x16, #0x18]
+	mrs	x17, ttbr0_el1
+	str	x17, [x16, #0x20]
+	movz	w17, #0x374d
+	movk	w17, #0x3436, lsl #16		/* "M764" */
+	str	w17, [x16, #0x10]
+	movz	w17, #0x3153	/* 'S1' tag */
+	str	w17, [x16, #0x14]
+	dsb	sy
+	mov	x0, #0xc0
+	ret
+
+/* --------------------------------------------------------------------- *
+ * save2: same as _start_save, but records into stash slot 2
+ * (SAVE_VA + 0x200) so several checkpoints can be logged in one boot.
+ * --------------------------------------------------------------------- */
+	.org	0x960
+	.globl	_start_save2
+_start_save2:
+	movz	x16, #(SAVE_VA & 0xffff)
+	movk	x16, #((SAVE_VA >> 16) & 0xffff), lsl #16
+	movk	x16, #((SAVE_VA >> 32) & 0xffff), lsl #32
+	movk	x16, #((SAVE_VA >> 48) & 0xffff), lsl #48
+	add	x16, x16, #0x200
+	mrs	x17, tcr_el1
+	str	x17, [x16, #0x18]
+	mrs	x17, ttbr0_el1
+	str	x17, [x16, #0x20]
+	movz	w17, #0x374d
+	movk	w17, #0x3436, lsl #16		/* "M764" */
+	str	w17, [x16, #0x10]
+	movz	w17, #0x5302	/* 'S2' tag */
+	str	w17, [x16, #0x14]
+	dsb	sy
+	mov	x0, #0xc0
+	ret
+
+/* --------------------------------------------------------------------- *
+ * save3: same as _start_save, but records into stash slot 3
+ * (SAVE_VA + 0x300) so several checkpoints can be logged in one boot.
+ * --------------------------------------------------------------------- */
+	.org	0x9c0
+	.globl	_start_save3
+_start_save3:
+	movz	x16, #(SAVE_VA & 0xffff)
+	movk	x16, #((SAVE_VA >> 16) & 0xffff), lsl #16
+	movk	x16, #((SAVE_VA >> 32) & 0xffff), lsl #32
+	movk	x16, #((SAVE_VA >> 48) & 0xffff), lsl #48
+	add	x16, x16, #0x300
+	mrs	x17, tcr_el1
+	str	x17, [x16, #0x18]
+	mrs	x17, ttbr0_el1
+	str	x17, [x16, #0x20]
+	movz	w17, #0x374d
+	movk	w17, #0x3436, lsl #16		/* "M764" */
+	str	w17, [x16, #0x10]
+	movz	w17, #0x5303	/* 'S3' tag */
+	str	w17, [x16, #0x14]
+	dsb	sy
+	mov	x0, #0xc0
+	ret

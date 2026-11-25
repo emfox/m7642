@@ -4672,3 +4672,50 @@ SAVE_PA=0x23088000 SAVE_VA=0xffffffc082e08000 KERNEL=$O WORLD_VA=0 \
 3. 若走升级路线，下一步实验顺序：
    `start_kernel`(槽A) → `setup_arch`(槽B，已有 d0) → `mm_init`(槽C) → `rest_init`(槽D)，
    看最后一个被写到的槽，就能把死亡点夹到函数级
+
+## 34.71 ★ 探针的检查点只能挂在"指令编码为 0xc0"的站点（工具硬限制）（2026-11-25 17:0x）
+
+### 多槽机制已实现
+
+给 tramp 加了三个独立 stash 槽，一次启动可同时记录多个检查点、互不覆盖：
+
+| 槽 | tramp 偏移 | stash 位置 | tag |
+|---|---|---|---|
+| `save`（原有，panic 用） | 0x400 | `SAVE_PA + 0x000` | `"SAVE"` |
+| `save1` | 0x900 | `SAVE_PA + 0x100` | `0x3153`（`'S1'`） |
+| `save2` | 0x960 | `SAVE_PA + 0x200` | `0x5302` |
+| `save3` | 0x9c0 | `SAVE_PA + 0x300` | `0x5303` |
+
+`mk-multi.sh` 已支持 `save1|save2|save3` 三个动作；blob 从 2156 → 2564 字节，
+三个站点分别指向 `0x3c5500 / 0x3c5560 / 0x3c5100` ✓。
+
+### 但把检查点挂到 `start_kernel` 就挂死
+
+实验：`start_kernel=save1` + `d0=save2` + `panic=restore` ⟹ **内核挂死**，三槽都读不到。
+
+**原因**：所有 `save` 槽的结尾都是
+
+```asm
+	mov	x0, #0xc0		/* the instruction this checkpoint replaced */
+	ret
+```
+
+即：它们假设被替换的那条指令的编码是 `0xc0`（这正是 `d0` 站点
+`setup_arch+0x128` 处那条指令的编码）。挂到**别的**站点时，
+被 `bl` 覆盖掉的原指令编码不同，而 tramp 不会真正重放它 ⟹ **该处指令丢失** ⟹ 内核行为被破坏 ⟹ 挂死。
+
+⟹ **结论：检查点只能挂在"被替换指令恰好编码为 0xc0"的站点**（实际上只有 `d0` 那一个），
+这是 `mk-mainline-abort.py` + tramp 的设计限制，不是配置或硬件问题。
+
+### 要做任意站点二分，需要先升级工具
+
+`mk-mainline-abort.py` 在打补丁时**读出原指令的 32 位编码**，写进 tramp 的数据表（`TABLE_VA` 已有），
+`save` 槽改为：`ldr x9, [table]` → 用一个"执行单条指令"的落地点把它跑掉（或按指令类型
+生成 `movz/movk` 序列）。做完后任意站点都能挂检查点；在此之前，只有 `d0` 与 panic 两个可用。
+
+### ext4 的最终状态（本轮到此为止的确定结论）
+
+已排除：ext4 自身（XFS 同）、镜像体积/地址冲突、`CONFIG_RELR`、stash 覆盖 `.rodata`（已修）。
+失败发生在 printk 产生内容之前 ⟹ `start_kernel` 最前段或更早。
+**剩余差异**：`CONFIG_BUFFER_HEAD=y`（ext4 强制 select）+ JBD2/CRC16/MBCACHE。
+继续需要上面的工具升级（把检查点挂到 `start_kernel`、`mm_init` 等处做四段二分）。
