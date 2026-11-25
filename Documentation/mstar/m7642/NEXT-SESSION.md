@@ -1,38 +1,54 @@
-# 下次开工的第一件事（2026-11-22 01:5x 写）
+# 当前状态（2026-11-25 10:35）
 
-设备当前状态：**上一发 `prsw` 没回来，设备 ping 不通，需要一次物理断电**
-（拔电源线 → 插回 → 按一下电源键）。boot 槽是厂值 `6272b10dcaf5e9efa40491d87f2c1289`，
-`misc` 的 BCB 已被 `recoverycmd` 里的 `mmc erase.p misc` 擦掉，断电后不会锁 recovery。
+**7.3.5 已启动到用户态**（`kernel_execve` ✅ → `begin_new_exec` ✅ → `ret_to_user` ✅），
+真卡点 = `free_initmem` 的 init 段毒化，已定位并修复；**构建从源码可复现**，实机重测通过。
 
-> **2026-11-22 11:0x 环境变更**：`~/kbuild/` 已清理并迁到 `~/Debian/m7642-build/`
-> （16 GB → 6.6 GB，布局见该目录 `README.md` 与 `paths.md` §1）。4.19 树已删除。
-> `out/` 里的 27 张上机镜像已按源码重建并逐一比过 md5，全部一致。
-> 设备当前是活的（adb 可达），上一发 `ps1` 的挂死已由拔插恢复。
+## 怎么构建、怎么上机
 
-> **2026-11-22 11:4x 停在这里（设备挂死，需一次拔插）**：追 `br x8` 的这一轮，`kva1`
-> 和 `kva4` 都挂，但两次都**不能当结论**——`kva1` 是 MMU 开着写 stash（探针自己的错），
-> `kva4` 是 MMU 开着读内核 VA，挂在它自己那次访存上。零访存对照已建好：
-> **`kva6` = `70d57d95221a0786dc5ec2233456e4a0`**（只 `mrs`，安全），恢复设备后先跑它：
->
-> ```sh
-> cd ~/Debian/m7642/probes/handoff
-> ./run-postmmu.sh ~/Debian/m7642-build/out/m7642-rec-73-kva6.img 70d57d95221a0786dc5ec2233456e4a0 kva6
-> ```
->
-> 记录 `0x23090000` = [x8, SCTLR, TTBR1, TCR]、`0x23090020` = [VBAR, ESR, FAR]。
-> 判读：SCTLR 的 M 位若为 0 ⟹ 那一刻 MMU 其实没开（VA 访存必挂，`br x8` 也必挂）；
-> 若为 1 ⟹ 看 x8 是否等于 `0xffffffc08046805c`（= `__primary_switched` 的内核 VA），
-> 不等就是重定位没填字面量（`0x4555c0` 的 R_AARCH64_RELATIVE）。
-> 之后才轮到 `kva5`（MMU 开着写 DDR 的对照），再决定 VA 到底能不能读。
+```sh
+cd ~/Debian/m7642/probes/handoff
+./mkimage.sh ~/Debian/m7642-build/kernel/linux-735-clean    # make dtbs Image（断言裸 Image）
+KERNEL=~/Debian/m7642-build/kernel/linux-735-clean TRAMP_AT=0x36e000 WORLD_VA=0 \
+    ./mk-multi.sh <tag> d0=save 0x2a22c=restore              # 打补丁 + 容器 + .meta
+tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash 校验判"到达"
+```
 
-> **判据速查（2026-11-22 定）**：
-> - **WDT 不可用**：`wdt_enable`/`HAL_WDT_Start`/`MDrv_WDT_*`/直写寄存器全部实测不咬
->   （`confirmed-facts.md` §34.13）。唯一会 warm reset 的是 `panic()`（厂内核 5 s 心跳狗）。
-> - **stash 可用，但只在同一次启动内有效**：`0x23080000`（交接记录）/`0x23090000`（code1 shim），
->   探针"写记录 → 交接厂内核 → Android 起来 → `probeRW` 读"这条链是好的（今天多次验证）。
-> - **待机 = 切电 = DRAM 全丢**（`M7642SURV1` 记录实测），所以挂了之后靠复位/待机都留不下数据。
-> - **挂了之后能不能自动回来**：不能。屏幕停 logo（AP 带电）= 只能人工拔电；
->   屏幕黑（进了待机）= 红外一次可救。
+- 源码：`linux-git` 分支 `m7642-7.3.5`，HEAD `89315dc65`，工作区干净
+- 构建树：`linux-735-clean`（干净 out-of-tree），config md5 `28f76c24…`
+- 裸 Image md5 `7a52e715…`，System.map md5 `4a08157e…`
+- 已核对探针镜像：`m7642-fix3.img` md5 `b10d6f18e6f239e187a45b82b2a928f1`
+- 补丁清单与全部 md5 见 `confirmed-facts.md` §34.40，镜像旁另有 `.meta`
+
+## 观测手段（两条，都用 stash）
+
+1. **探针交接**：`magic == "M764"` 且 `x30 == site+4` 才算"到达"；"设备回来了"不算。
+2. **用户态 dmesg 通道**：`/init` 用 `syslog(READ_ALL)` 把环缓冲写进 PA `0x23082000`，
+   报告页在 `0x23081000`（长度在偏移 32），然后 `sysrq-c` 触发 panic ⟹ 交接 ⟹ Android 起来后读回。
+
+## 等待与恢复
+
+- 交接链 30–35 s + Android 到 `boot_completed` ~25 s ⟹ **等 120 s** 足够；
+- 没起来就用智能插座 `tools/host/socket.sh recover`（OFF→10 s→ON→3 s→IR POWER），判 ❌；
+- 老文档里"等 ≥300 s"的规则是没有插座时代的产物，**已作废**。
+
+## 下一步（按优先级）
+
+1. **eMMC**：内核日志里有 `eMMC: no SD 1006` —— 厂 `mstar-mci` 的 `subsys_initcall` 确实在跑，
+   只是没认出卡；有了构建链 + 日志通道 + 报告页可以正经推进。
+2. **屏幕控制台**：`simple-framebuffer ... probe with driver simple-framebuffer failed with error -22`
+   —— 报错来自 `drivers/firmware/sysfb.c` 那个同名 shim（mboot 未提供合法 `screen_info`），
+   不是我们的 DT 节点；`CONFIG_FB_SIMPLE` 是与 `CONFIG_DRM_SIMPLEDRM` 互斥的可行路径（需重测）。
+3. **毒化机制**：`free_initmem` 里那段 0xcc memset 为何会挂，仍未收口（已用 `-1` 绕过）。
+
+## 纪律提醒（今晚血账）
+
+`mkimage.sh` 不许把 Image 包成容器（工具自己包，否则嵌套容器）；对齐补丁点只能取
+`__pi_early_map_kernel+0x3c` 并校验 `0x92405279`；设备上的 `dd` 不支持 `conv=fsync`。
+详见 `discipline.md`。
+
+---
+
+# 历史记录（倒序，仅作追溯）
 
 **2026-11-23 晚 ★★★★★ world B 解锁；卡点 = `kmem_cache_init()` 内部**
 

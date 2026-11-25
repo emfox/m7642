@@ -679,8 +679,10 @@ stagecmd    = mmc read.p 0x30000000 boot 0x2000000
 **最可能的原因**：判定脚本只等 **120 s** 的 `sys.boot_completed`。多次非正常掉电后 Android
 可能先修 `/data`，启动时间被拉长 ⟹ **慢启动被误判成「检查点没到」**。
 
-⟹ **以后所有「到达/没到达」判定必须：① 等待窗口 ≥ 300 s；② 记录实际到达时的 uptime；
-③ 关键结论至少重复 2 次一致。** 这条写进 `discipline.md`。
+⟹ 判定规则（2026-11-25 修订，取代旧的"等 ≥300 s"）：① 等待窗口 **120 s**（交接链 30–35 s
++ Android 到 `boot_completed` ~25 s，实测足够）；② 没起来就用智能插座 `socket.sh recover`
+恢复并判 ❌，不靠延长等待；③ 记录到达时的 uptime；④ **"到达"必须由 stash 的
+`magic == "M764"` 且 `x30 == site+4` 证明**。详见 `discipline.md` §2。
 
 ### 21. ★★ 「同一镜像时好时坏」的根因假设：页表池是未清零的 .bss（2026-11-21 19:2x）
 
@@ -1307,7 +1309,7 @@ adb shell su -c '/vendor/bin/busybox insmod /data/local/tmp/fcie.ko; rmmod fcie;
   - `_start_fdt`（offset 0xC0）：code1 shim，先把 mboot 入口寄存器写到 `0x23090000`（`M764`/`FDT `），再 `x0=0x23000000`、跳 `primary_entry`
 - `abort-postmmu.S` → 追加在 Image+0x1400000（handover 在 +0x200 = PA 0x21680200，**在拷贝区 0x20280000..0x21554a00 之外**）：记录 `M764`/`MMMU` + x30 + x0..x4 到 `0x23080000`，拷 `0x30000800→0x20280000`（0x12d4a00 B），清 x3/x4，跳厂入口 `0x21220000`
 - 构建：`probes/handoff/build-postmmu.sh`（从 System.map 取 boot_args/_stext/_end/primary_entry 的 PA 和 KIMAGE_OFFSET，`-D` 给汇编）、`mk-postmmu-images.sh`（含 code1 shim 与 `nop @preserve_boot_args+0x20`）
-- 运行：`probes/handoff/run-postmmu.sh <img> <md5> <tag>`（300 s 判定窗、槽 md5 校验、读 `0x23080000` 与 `0x23090000` 并解码）
+- 运行：`tools/host/probe-run.sh <tag> <expected_x30>`（120 s 判定窗、推送与槽内 md5 双校验、读 `0x23080000` 并用 magic+x30 判到达）。历史 runner `run-postmmu.sh` 已不再使用。
 
 **四张镜像（2026-11-22 01:4x，均含 nop + shim）**
 
