@@ -47,8 +47,10 @@ tools/host/probe-run.sh <tag> 0xffffffc08002a230             # 上机，stash �
    **现在跑在真正的 HS：52 MHz / 8-bit**（§34.57，比 400 kHz 快 130×，数据与厂内核逐位一致）。
    要点：HS 时序只调 `eMMC_clock_setting()`，**不要**调 `eMMC_pads_switch()`
    （它的 `BIT_8BIT_MACRO_EN` + M7322 PLL/pad 写会锁死；BYPASS pad 模式够用）。
-   限制：写路径未验证；HS200/HS400（200 MHz）需要 macro 数据通路，尚未打通；
-   分区表是厂商自有布局。：卡已被**完整识别并初始化**（CID/CSD/EXT_CSD 都读到），
+   **写路径也已验证**（§34.58：写测试扇区 + 读回比对 + 还原，全部正确）。
+   分区表是厂商私有布局（§34.58 有完整 26 个分区的 start/size 表），内核不会自动生成
+   `mmcblk0p*`，要用需自定义解析或用 dm 映射。
+   剩下：HS200/HS400（200 MHz，需 macro 数据通路）。：卡已被**完整识别并初始化**（CID/CSD/EXT_CSD 都读到），
    卡在 **HS_TIMING 切换** —— CMD6(SWITCH) 之后 CMD13 超时 10 s
    （`FCIE_MIE_EVENT` bit4 不来）。低速模式（`CONFIG_M7642_FORCE_LOWSPEED`）绕不过，
    因为 MMC 核心只按 `ext_csd.hs_max_dtr` 决定是否切 HS。
