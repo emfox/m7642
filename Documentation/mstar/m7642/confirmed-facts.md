@@ -3390,3 +3390,91 @@ out_tim:
 3. 若确实是 pad/PLL 前置要求，再考虑"永远停在低速"的替代方案：清
    `card->ext_csd.hs_max_dtr`（`init_card` 钩子），让核心跳过 CMD6 —— 这样即使没有
    HS 也能拿到 `mmcblk0` 做只读验证。
+
+## 34.46 ★★★★ M7642 的真实寄存器值（厂内核下只读 dump）+ 芯片代号的真相（2026-11-25 12:1x）
+
+### 两份 eMMC 代码是「层」，不是「版本」
+
+| 目录 | 角色 | 关键文件 |
+|---|---|---|
+| `drivers/mstar2/drv/mmc/` | **驱动层**（接 Linux MMC 框架） | `mstar_mci_v5.c`、`eMMC_prg.c`、`eMMC_utl.c` |
+| `drivers/mstar2/hal/m7322/mmc/` | **HAL 层**（碰寄存器） | `eMMC_platform.c`（平台/时钟初始化）、`eMMC_hal_speed.c`（时序表 + pad/PLL）、`eMMC_reg_v5.h` |
+
+两层必须都要；时钟、时序、pad 全在 HAL。
+
+### "m7322" 是**芯片代号**，而且不是我们的芯片
+
+- `m7322`/M7332 = MStar 给 **MT9653** 那一代的内部代号。
+- 我们这棵厂 4.9.118 树里：**0 个文件**提到 `m7642`/`m7632`，6 个文件提到 `m7322`/`m7332`；
+  `drivers/mstar2/hal/` 下**只有 `m7322/`**；用的是 `t22_defconfig`（提到 M7221/M7322/M7621/M7622/M7821）。
+  ⟹ **这棵树是 M7322 家族的通用 TV 内核，不是 65S535D 的内核**。
+- 谱系（`confirmed-facts.md` §A）：`m5621 → m7332 → m7632 → m7642 → mt5862`
+  ⟹ M7322/M7332 是**更早的同族兄弟**，M7642 在 m7632 之后。
+- HAL 里**没有按芯片分支的 `#if`**（查过）⟹ 编进去的就是 M7322 的常量。
+
+### 设备身份（再一次确认）
+
+| 项 | 值 |
+|---|---|
+| 产品 | TCL / 雷鸟 **65S535D Pro** |
+| SoC | **MStar M7642**（= MT9652 / MT9669 一系） |
+| 板级串 | `Board=MT167B_10AT_MT5888_M7642_CUS19` |
+| Android | 9，`PPR2.180905.006.A1`，fingerprint `tcl/tcl_m7642/…` |
+
+### ★ 厂内核（Android 运行中）只读 dump 的真实值
+
+用 `probeRW.ko op=r` 读物理地址（纯读，零风险，不刷机）：
+
+**FCIE0（0x1F222600 起，16 位寄存器、4 字节步进）**
+
+| 寄存器 | idx | 地址 | 厂内核实测 |
+|---|---|---|---|
+| `FCIE_MIE_EVENT` | 0x00 | 0x1F222600 | `0x0000` |
+| `FCIE_MIE_INT_EN` | 0x01 | 0x1F222604 | `0x0000` |
+| `FCIE_MIE_FUNC_CTL` | 0x07 | 0x1F22261C | `0x0002` |
+| `FCIE_CMD_RSP_SIZE` | 0x0A | 0x1F222628 | `0x0505` |
+| `FCIE_SD_MODE` | 0x0B | 0x1F22262C | **`0x0004`** |
+| `FCIE_SD_CTRL` | 0x0C | 0x1F222630 | `0x022e` |
+| `FCIE_SD_STATUS` | 0x0D | 0x1F222634 | `0xff00` |
+| `FCIE_BOOT_CONFIG` | 0x0E | 0x1F222638 | `0x0003` |
+| `FCIE_DDR_MODE` | 0x0F | 0x1F22263C | `0x1100` |
+| `FCIE_RESERVED_FOR_SW` | 0x10 | 0x1F222640 | **`0x0003`**（版本握手） |
+| `FCIE_RST` | 0x3F | 0x1F2226FC | `0x0001` |
+| `FCIE_NC_FUN_CTL` | 0x63 | 0x1F22278C | **`0x0000`** |
+
+**时钟 / PAD / PLL**
+
+| 寄存器 | 地址 | 厂内核实测 | 我们的内核 |
+|---|---|---|---|
+| `CLKGEN0+0x64` `reg_ckg_fcie` | 0x1F201790 | **`0x00f0`** | `0x6400` ✗ |
+| `CLKGEN2+0x0C` `reg_ckg_fcie_syn` | 0x1F201430 | **`0x0001`** | `0x0003` ✗ |
+| `PAD_CHIPTOP+0x43` `emmc_rstz` | 0x1F203D0C | `0x0000` | |
+| `PAD_CHIPTOP+0x50` `BIT_ALL_PAD_IN` | 0x1F203D40 | `0x0000` | |
+| `PAD_CHIPTOP+0x6E` eMMC/NAND 模式 | 0x1F203DB8 | **`0x0000`** | `0x0001` ✗ |
+| `PAD_CHIPTOP+0x6F` NAND mode | 0x1F203DBC | `0x0000` | |
+| `EMMC_PLL+0x1A` `reg_emmc_test` | 0x1F247E68 | **`0x0035`** | `0x00f4` ✗ |
+| `EMMC_PLL+0x45` | 0x1F247F14 | `0x00ff` | |
+
+### `reg_ckg_fcie` 位解码（本驱动定义）
+
+```
+BIT0 = CLK_GATING      BIT1 = CLK_INVERSE
+BIT2..5 = BIT_CLKGEN_FCIE_MASK（分频字段）
+BIT6 = CLK_SRC_SEL
+EMMC_PLL 1X = 0xB, 2X = 0xC（写进 BIT2..5）
+```
+
+- 设备 `0x00f0` = `BIT6`（选 eMMC PLL 源）+ `(0xC<<2)`（**PLL 2X**）+ bit7 ⟹ 合法且高效配置 ✓
+- 我们 `0x6400` = bit10/13/14 ⟹ **不符合任何位定义**，等于时钟闸门配置无效 ✗
+
+⟹ CMD6（切 HS）之后卡按更高时钟工作，而主机侧时钟源/分频是错的，所以再也收不到响应。
+这与"HAL 是 M7322 的常量"完全吻合。
+
+### 下一步
+
+1. 以这张表为准，改 HAL 里 M7642 不匹配的常量：
+   `eMMC_PlatformInit()` / `eMMC_pads_switch()` / `eMMC_clock_setting()` 里
+   `reg_ckg_fcie`、`reg_ckg_fcie_syn`、`reg_emmc_test`、`PAD_CHIPTOP+0x6E` 的写入；
+2. 在驱动里加一次性自检：`reg_ckg_fcie_syn` 必须是 `0x0001`（厂版 `eMMC_platform.c:1630`
+   本来就有这个自检，只是被日志级别挡住了）；
+3. 回到 eMMC 主流程：CMD6 能过之后，`mmcblk0` 应该出现，再进 P3（只读分区）。
