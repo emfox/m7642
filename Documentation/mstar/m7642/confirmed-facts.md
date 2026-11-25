@@ -6227,3 +6227,49 @@ adb shell su -c 'cat /proc/iomem'
 1. 读 Android 的 `/proc/iomem`（只读、零风险、一条命令）
 2. 从中挑一块"reserved 且在 DRAM 内"的区域作为报告页
 3. 改探针的 `REPORT_PA` 到该地址，重测 —— 这才是解 §35.08"被覆盖"问题的正确办法
+
+## 35.10 ★★ 找到探针数据的正确落脚点：`persistent_ram` @ 0x41900000（2026-11-26 07:xx）
+
+### Android 的真实物理内存布局（`/proc/iomem`，只读获得）
+
+```
+20200000-417fffff : System RAM            (512 MB)
+  20280000-2121ffff : Kernel code
+  213a0000-217d0fff : Kernel data
+41900000-4193ffff : persistent_ram        ← 256 KB
+41940000-4197ffff : persistent_ram        ← 256 KB
+41980000-419bffff : persistent_ram        ← 256 KB
+419c0000-419fffff : persistent_ram        ← 256 KB
+54400000-9d9fffff : System RAM            (1.1 GB)
+180000000-1bfffffff : System RAM          (1 GB，高地址)
+```
+
+### 两个决定性结论
+
+1. **探针报告页 `0x23081000` 落在 `System RAM` 内**（0x20200000–0x417fffff）
+   ⟹ 它就是普通内核可用内存 ⟹ 被 Android 分配并清零
+   ⟹ **完全印证了 §35.08**：不是我们没写，是写完之后被覆盖 ✓
+2. **`0x41900000–0x419FFFFF` 是 `persistent_ram`**
+   ⟹ 这是**专门用来跨重启保留数据**的区域（Android 用它做 ramoops/pstore）
+   ⟹ **正是探针数据该放的地方** ✓✓
+
+另外注意：`0x41800000`–`0x418fffff`、`0x41a00000`–`0x543fffff`、`0x9da00000` 以上
+**不是 System RAM** ⟹ 那些地址不可写（写进去可能挂，这也解释了多点探针为何失败）
+
+### 下一步（明确）
+
+把探针的报告页/日志页从 `0x23081000` / `0x23082000` 挪到：
+
+```
+报告页  0x41900000   (persistent_ram 第 1 块)
+日志页  0x41940000   (第 2 块)
+```
+
+同时保留一份写到 0x23081000（作为对照，验证"旧位置确实被覆盖"）。
+
+这样只要交接回来，数据就**一定还在**（persistent_ram 的设计目的就是如此）。
+
+### 备注
+
+写入 persistent_ram 会破坏 Android 的 pstore/ramoops 内容 ——
+但那是崩溃日志缓冲，对我们无害，而且我们本来就要用它。
