@@ -5499,3 +5499,52 @@ strings vmlinux | grep "RIU window"
 2. 上机初测：看 `probe` 是否挂、是否出现 `eth0`
 3. 注意：**开网络后内核变大了 2.5 MB**，`_end` 位置会变 ⟹ 探针的 `KIMAGE_OFFSET` 等常数
    需要重新核算（§34.x 有记录这个坑）
+
+## 34.93 首次网络上机：emac probe 把内核挂住了（2026-11-25 23:xx）
+
+### 做了什么
+
+1. **DTS 节点**（`arch/arm64/boot/dts/mstar/m7642-tcl-65s535d.dts`）：
+
+   ```
+   emac: ethernet@1f204000 {
+       compatible = "mstar-emac";
+       interrupts = <GIC_SPI 9 IRQ_TYPE_LEVEL_HIGH>;
+       status = "okay";
+   };
+   ```
+
+   寄存器窗口不用描述 —— 厂驱动里是硬编码的（RIU 0x1F204000 / XIU32 0x1F3A4200，
+   相对 `mstar_pm_base`）= 厂 DTB 里的节点也只有 `compatible`，与此一致 ✓
+
+2. **IRQ 改成 DT 获取**：厂驱动用的是硬编码 `MAC_IRQ = E_IRQ_EMAC`（厂内枚举值），
+   在 DT 平台上无效。在 probe 里加 `platform_get_irq(pdev, 0)` 覆盖它 ✓
+
+3. DTB 构建成功（4,134 字节，节点确认在里面）✓、vmlinux 10.2 MB ✓、
+   镜像 `net1`（md5 `5a2db578…`）✓
+
+### 结果
+
+上机后：设备 `回到 Android (+35s)`，但报告 **ver=0**、日志 **0 行** ✗
+⟹ 内核在 `/init` 的 **8 秒睡眠**完成之前就死了 ⟹ 比已知的 15–20 秒死亡**更早**
+⟹ **高度怀疑 emac probe 挂住**（它一启动就会读写 EMAC/RIU 寄存器）
+
+### 下一步：定位 probe 挂在哪
+
+方法：在 `mstar_emac_drv_probe()` → `MDev_EMAC_init()` 这条路径上**逐段加 `pr_info`**，
+每段一个标记。因为内核死得快、DRAM 报告可能来不及写，标记也能靠 **panic 钩子的 stash**
+（探针本来就工作）拿到最后到达的段。
+
+具体的候选挂点（按可能性）：
+1. **EMAC 时钟/电源没开**：厂内核在 probe 前会通过 `MDrv_SYS_*` 打开 EMAC 的时钟域，
+   我们直接访问寄存器可能挂住总线（MStar 上访问未开时钟的 IP 会挂死，eMMC 那次就踩过）
+2. MDIO/PHY 轮询无超时
+3. `ioremap_wc` 之后的 bounce buffer 初始化
+
+**优先查 1**：在厂内核里找 EMAC 时钟/电源相关的 `MDrv_SYS_*` 调用，确认 probe 前需要做什么 ——
+这和 eMMC 的 `CLKGEN` 是同类问题。
+
+### 附注
+
+- 设备已恢复 ✓
+- 内核大了 2.5 MB 之后，探针的 stash 地址（0x23088000）仍在内核 `_end`（≈0x20C30000）之上 ✓ 安全
