@@ -9464,3 +9464,104 @@ wno76 作业输出：
 
 **WiFi 的瓶颈 100% 在内核的 EHCI 移植**，不在 userspace、不在固件、不在凭据。
 这条路要走通需要若干个驱动移植步骤；在此之前「完全启用 WiFi」做不到。
+
+## 36.57 ★★★★★ MStar EHCI 移植：工作量从"2500 行"降到"一个 PHY 驱动"（2026-11-27 07:5x–08:1x）
+
+用户选择先攻 WiFi。调研后发现两件事，把工作量砍掉了绝大部分。
+
+### 一、DT 早就写好了
+
+`arch/arm64/boot/dts/mstar/m7642.dtsi` 里**四路 EHCI 节点已经存在**：
+
+```dts
+ehci3: usb@1f202600 {
+        compatible = "mstar,m7642-ehci", "generic-ehci";
+        reg = <0x0 0x1f202600 0x0 0x200>;
+        interrupts = <GIC_SPI 36 IRQ_TYPE_LEVEL_HIGH>;
+        phys = <&usb_phy3>;
+        split-registers;
+        status = "disabled";
+};
+usb_phy3: phy@1f202900 {
+        compatible = "mstar,m7642-usb2-phy";
+        reg = <...>, <...>, <...>;   reg-names = "utmi", "usbc", "uhc";
+        #phy-cells = <0>;
+        status = "disabled";
+};
+```
+
+IRQ 自洽性核对：factory DTB 里 `usb_int2 = <0 0x24 4>`（hwirq 36），GIC SPI +32 ⟹
+virq 68，正好等于 `usb.md` 里端口 3 的 68 ✓。端口 3 就是 MT7663 那一路。
+
+### 二、主线 EHCI **已内置** MStar 的 16 位寄存器特性
+
+`drivers/usb/host/ehci.h`（7.3 原生，不是我加的）：
+
+```c
+static inline void __iomem *ehci_split_reg(const __u32 __iomem *regs)
+{
+        unsigned long addr = (unsigned long)regs;
+        return (void __iomem *)((addr & ~0xffUL) + ((addr & 0xffUL) << 1));
+}
+...
+if (ehci->split_regs) {
+        void __iomem *reg = ehci_split_reg(regs);
+        return (readl(reg) & 0xffff) | ((readl(reg + 4) & 0xffff) << 16);
+}
+```
+
+这个公式与厂方 `ehci_readl` **逐字符相同**，而 `ehci_platform.c` 通过 DT 属性
+**`split-registers`** 打开它（`of_property_read_bool(node, "split-registers")`），
+字段注释就是 "32-bit registers in 16-bit halves"。
+
+⟹ **完全不用改 `ehci.h`，不用移植 1350 行 `ehci-mstar.c`，不用管 `struct usb_hcd` 的
+   厂方字段扩展。** 之前估计的"2500 行 + 两个核心头文件改动"全部不需要。
+
+### 三、真正缺的只有 PHY 上电序列 —— 已补上
+
+新增 `drivers/phy/mstar/`：
+
+| 文件 | 内容 |
+|---|---|
+| `m7642-usb-eco.h`（442 行） | 厂方 `ehci-mstar-40932.h` 原样，只把 SoC 私有 `#include` 换成注释。ECO 开关一个没改，因为它们编码了这颗芯片修订版需要哪些勘误 |
+| `m7642-usb-seq.c`（414 行） | 厂方 `MIU_select_setting_ehc` + `Titania3_series_start_ehc` 原文，只改两处：`struct usb_hcd *` → 本地上下文结构、`printk` → `pr_info`。寄存器操作一字未动 |
+| `phy-mstar-m7642-usb2.c` | `struct phy_ops` + 平台驱动，匹配 `mstar,m7642-usb2-phy`，`.init` 里跑上面那段序列 |
+
+配套：`Kconfig`/`Makefile`（`CONFIG_PHY_MSTAR_M7642_USB2`，select `GENERIC_PHY`）、
+板级 DTS 里 `&usb_phy3` / `&ehci3` 置 `okay`。
+
+编译期解决的问题：
+1. 序列里 `MIU_select_setting_ehc` 的 `#if` 开头没被一起抽出 ⟹ 孤立的 `#endif` ⟹ 改为从
+   前一条 `#if` 开始抽，472 行 `#if`/`#endif` 配平
+2. `MSTAR_MIU0_BUS_BASE` / `MSTAR_MIU1_BUS_BASE` 在 ECO 头里被求值，但定义必须放在
+   `#include` 之前（`0x20000000` / `0xA0000000`，与 `mstar_mci` 的 shim 一致）
+3. 结构体名要与序列里的声明一致（`struct usb_utmi_param`）
+
+**结果：内核编译通过（vmlinux 11.0 MB、Image 9.57 MB），DTB 里 `usb@1f202600` 确认是
+`generic-ehci` + `split-registers` + `status = "okay"`。**
+
+### 四、第一次上机：挂住了（待继续）
+
+镜像 `m7642-usb1.img`（md5 `7c46925b`），探针判据"`/sys/bus/usb/devices/usb1` 存在就 reboot"：
+烧写校验通过、07:39:00 重启，之后**设备不在网络上、80 W、adbd 全无** ⟹ 挂住。
+
+已构建对照组 `m7642-usbctl.img`（md5 `ee7908ca`，**同一内核 + 只 `sleep 5` 然后无条件 reboot**），
+用于区分两种可能：
+- 对照组能回来 ⟹ 内核能启动，是 `usb1` 没出现（EHCI 注册失败）
+- 对照组也挂 ⟹ **EHCI/PHY 在启动阶段就挂住，`/init` 根本没运行**
+
+这个对照组**尚未跑完**：宿主机在 08:1x 被关机（用户上班），随后确认 WireGuard 隧道
+（`192.168.250.0/24` + `192.168.0.0/17`）**从未握手成功，`0 B received`** ⟹ 单位这台机器
+完全够不到 192.168.10.0/24，电视也就无法访问。
+
+⟹ **恢复连通性后的第一步：先跑 `runfast.sh usbctl`，不要直接猜 `usb1`。**
+
+### 五、纪律补充（这一轮又踩到的新坑）
+
+1. **`pgrep -f <名字>` / `pkill -f <名字>` 会匹配到包含该字符串的自身命令行**，
+   导致把自己杀掉（本轮踩了 3 次）。必须用括号正则 `runon[e][.]sh` 并排除 `$$`
+2. **宿主机被用户关机/休眠会打断所有后台作业**，且残留脚本会在恢复后继续抢设备
+3. **adb 走的是 WiFi**：一旦 Android 的 WiFi 没关联上，`adb` 和 `ping` 会同时全灭，
+   看上去像"设备死了"，其实电视好好的 —— 判断设备死活必须结合功率读数
+4. 判定循环里 `adbup` 单次最坏要 4 分钟（4 轮 × kill-server/connect/getprop 重试），
+   50 次循环等于一小时 ⟹ 已重写为 `tools/host/runfast.sh`（单次 connect + 密集轮询，4 分钟内出结论）
